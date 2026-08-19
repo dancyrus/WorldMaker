@@ -50,9 +50,40 @@ pub fn machine_name() -> String {
         .unwrap_or_else(|_| "unknown-machine".to_string())
 }
 
+/// Today's UTC date as YYYY-MM-DD, without a date-time dependency
+/// (Hinnant's civil-from-days algorithm).
+pub fn today_utc_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let z = secs.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn civil_date_is_sane() {
+        let d = today_utc_iso();
+        assert_eq!(d.len(), 10);
+        let year: i32 = d[0..4].parse().unwrap();
+        assert!((2026..2100).contains(&year), "year out of range: {d}");
+        assert_eq!(&d[4..5], "-");
+        let month: u32 = d[5..7].parse().unwrap();
+        let day: u32 = d[8..10].parse().unwrap();
+        assert!((1..=12).contains(&month) && (1..=31).contains(&day));
+    }
 
     #[test]
     fn writes_valid_schema() {
