@@ -212,23 +212,79 @@ fn resume_from_keyframe_is_bit_exact() {
     }
     for (i, kf) in resumed.keyframes.iter().enumerate() {
         let orig = &hist.keyframes[mid + 1 + i];
+        let t = orig.t_my;
         assert_eq!(kf.t_my, orig.t_my, "keyframe time mismatch at {i}");
+        assert_eq!(kf.sea_offset_m, orig.sea_offset_m, "sea offset at t={t}");
+        // Every per-cell array — bit-exact means all of them (review finding).
+        assert_eq!(kf.elev_m, orig.elev_m, "elevation diverged at t={t}");
+        assert_eq!(kf.plate_id, orig.plate_id, "plates diverged at t={t}");
+        assert_eq!(kf.flags, orig.flags, "flags diverged at t={t}");
+        assert_eq!(kf.thickness_ckm, orig.thickness_ckm, "thickness at t={t}");
+        assert_eq!(kf.crust_age_my, orig.crust_age_my, "crust age at t={t}");
+        assert_eq!(kf.orogeny_age_my, orig.orogeny_age_my, "orogeny at t={t}");
+        assert_eq!(kf.rift_age_my, orig.rift_age_my, "rift age at t={t}");
+        assert_eq!(kf.buildup_ckm, orig.buildup_ckm, "buildup at t={t}");
+        // Plate-level state, field by field (PlateState is raw f32s).
+        assert_eq!(kf.plates.len(), orig.plates.len(), "plate count at t={t}");
+        for (pk, po) in kf.plates.iter().zip(&orig.plates) {
+            assert_eq!(pk.id, po.id);
+            assert_eq!(pk.alive, po.alive, "plate {} alive at t={t}", pk.id);
+            assert_eq!(pk.pole, po.pole, "plate {} pole at t={t}", pk.id);
+            assert_eq!(
+                pk.speed_deg_my, po.speed_deg_my,
+                "plate {} speed at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.base_speed_deg_my, po.base_speed_deg_my,
+                "plate {} base speed at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.youngest_suture_my, po.youngest_suture_my,
+                "plate {} suture at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.pending_rot, po.pending_rot,
+                "plate {} pending rot at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.pending_deg, po.pending_deg,
+                "plate {} pending deg at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.boundary_cells, po.boundary_cells,
+                "plate {} boundary at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.subducting_cells, po.subducting_cells,
+                "plate {} subducting at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.colliding_cells, po.colliding_cells,
+                "plate {} colliding at t={t}",
+                pk.id
+            );
+        }
+        // Pair-collision timers.
         assert_eq!(
-            kf.elev_m, orig.elev_m,
-            "elevation diverged at t={}",
-            kf.t_my
+            kf.collisions.len(),
+            orig.collisions.len(),
+            "timers at t={t}"
         );
-        assert_eq!(
-            kf.plate_id, orig.plate_id,
-            "plates diverged at t={}",
-            kf.t_my
-        );
-        assert_eq!(kf.flags, orig.flags, "flags diverged at t={}", kf.t_my);
-        assert_eq!(
-            kf.thickness_ckm, orig.thickness_ckm,
-            "thickness diverged at t={}",
-            kf.t_my
-        );
+        for (ck, co) in kf.collisions.iter().zip(&orig.collisions) {
+            assert_eq!((ck.a, ck.b), (co.a, co.b), "timer pair at t={t}");
+            assert_eq!(
+                ck.slow_collision_my, co.slow_collision_my,
+                "timer ({}, {}) at t={t}",
+                ck.a, ck.b
+            );
+        }
     }
 }
 
@@ -248,6 +304,49 @@ fn cancel_stops_the_run() {
     assert!(
         err.downcast_ref::<worldmaker_sim::Cancelled>().is_some(),
         "expected Cancelled, got: {err:#}"
+    );
+}
+
+/// Cancellation must also work MID-run — cancel polled every step, not just
+/// at entry (review finding: the pre-set-flag test alone can't tell the
+/// difference, and the UI Cancel button depends on per-step polling).
+#[test]
+fn cancel_interrupts_a_running_simulation() {
+    use worldmaker_sim::Progress;
+    let progress = std::sync::Arc::new(Progress::new());
+    let worker_progress = progress.clone();
+    let handle = std::thread::spawn(move || {
+        let grid = Arc::new(Grid::build(6));
+        let mut world = WorldState::new(grid);
+        let mut pipe = Pipeline::new();
+        pipe.push(Box::new(TectonicsStage::new(TectonicsParams {
+            span_my: 2000.0, // long enough that it cannot finish first
+            ..TectonicsParams::default()
+        })));
+        let mut ctx = StageContext::new(42);
+        ctx.progress = Some(worker_progress);
+        pipe.run(&ctx, &mut world)
+    });
+    // Wait until the run has demonstrably made progress...
+    let start = std::time::Instant::now();
+    while progress.fraction() <= 0.0 {
+        assert!(
+            start.elapsed().as_secs() < 60,
+            "run never reported progress"
+        );
+        std::thread::yield_now();
+    }
+    // ...then cancel and require a prompt Cancelled result.
+    progress.request_cancel();
+    let result = handle.join().expect("worker panicked");
+    let err = result.expect_err("run should have been cancelled");
+    assert!(
+        err.downcast_ref::<worldmaker_sim::Cancelled>().is_some(),
+        "expected Cancelled, got: {err:#}"
+    );
+    assert!(
+        progress.fraction() < 1.0,
+        "run finished despite cancellation"
     );
 }
 

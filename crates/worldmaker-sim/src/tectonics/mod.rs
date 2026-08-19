@@ -56,8 +56,10 @@ pub const F_BND_TRANSFORM: u32 = 1 << 7;
 /// enough that per-step rotations stay in `det_sin_cos` range.
 pub const DT_MY: f32 = 2.0;
 
-/// Keyframe cadence (My): 10 My per the spec at L6/L7; 20 My at L8+ so a
-/// 2 Gy history stays inside the 1 GB keyframe budget (decision log).
+/// Keyframe cadence (My): 10 My per the spec at L6/L7 — the level the WO's
+/// 1 GB / 2 Gy budget is defined for (measured 527 MB) — and 20 My at L8+ to
+/// keep a maximum-span L8 history in the same ballpark (~1.06 GB at 2 Gy;
+/// recorded, not budgeted). Decision log.
 pub fn keyframe_interval_my(grid_level: u32) -> f32 {
     if grid_level >= 8 {
         20.0
@@ -192,8 +194,11 @@ pub fn run_history(
         Some(r) => SimState::from_keyframe(&world.grid, ctx.master_seed, r.hotspots, r.keyframe),
     };
     let kf_my = keyframe_interval_my(world.grid.level);
-    let total_steps = (params.span_my / DT_MY) as u32;
     let steps_per_keyframe = (kf_my / DT_MY) as u32;
+    // Round the span to whole keyframes: steps past the last snapshot would
+    // be simulated but never captured (review finding).
+    let keyframe_count = ((params.span_my / kf_my).round() as u32).max(1);
+    let total_steps = keyframe_count * steps_per_keyframe;
     let start_step = (sim.t_my / DT_MY) as u32;
 
     // At every keyframe the working state is round-tripped through the

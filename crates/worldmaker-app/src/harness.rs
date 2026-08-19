@@ -292,11 +292,23 @@ fn stability(
         serde_json::json!(history.diagnostics.breakup_count),
     );
     // Land within ±5% (relative) of the 0.29 parameter; plate count 6–24.
+    // The land gate alone is near-tautological (the per-keyframe sea-level
+    // solve pins it), so the quantity the solver CANNOT mask is gated too:
+    // continental-crust inventory drift over the whole run (review finding;
+    // decision log).
+    let cont_start = cont(first);
+    let cont_end = cont(last);
+    let cont_drift = (cont_end - cont_start).abs() / cont_start.max(1e-9);
+    metrics.insert(
+        "stability_cont_drift_rel".into(),
+        serde_json::json!((cont_drift * 1000.0).round() / 1000.0),
+    );
     let target = 0.29;
     let pass = (6..=24).contains(&min_plates)
         && (6..=24).contains(&max_plates)
         && (min_land - target).abs() / target <= 0.05
-        && (max_land - target).abs() / target <= 0.05;
+        && (max_land - target).abs() / target <= 0.05
+        && cont_drift <= 0.05;
     metrics.insert("stability_pass".into(), serde_json::json!(pass));
     pass
 }

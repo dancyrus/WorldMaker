@@ -183,6 +183,27 @@ impl BakeOverlay<'_> {
 /// stored relative to that solution, so 0 means "as solved").
 pub fn bake(layer: Layer, kf: &Keyframe, sea_level_m: f32, overlay: &BakeOverlay) -> Vec<u32> {
     let n = kf.elev_m.len();
+
+    // Plate ids grow monotonically across breakups, so raw id % 24 lets two
+    // alive plates share a color. Rank the ids actually present in this
+    // keyframe instead: at most 24 plates are alive, so ranks never collide.
+    let plate_rank: Vec<u16> = if layer == Layer::Plates {
+        let mut ids: Vec<u16> = kf
+            .plates
+            .iter()
+            .filter(|p| p.alive)
+            .map(|p| p.id as u16)
+            .collect();
+        ids.sort_unstable();
+        let mut rank = vec![0u16; ids.last().map(|&m| m as usize + 1).unwrap_or(1)];
+        for (r, &id) in ids.iter().enumerate() {
+            rank[id as usize] = r as u16;
+        }
+        rank
+    } else {
+        Vec::new()
+    };
+
     let mut out: Vec<u32> = Vec::with_capacity(n);
     (0..n)
         .into_par_iter()
@@ -199,7 +220,11 @@ pub fn bake(layer: Layer, kf: &Keyframe, sea_level_m: f32, overlay: &BakeOverlay
                     } else if flags & F_BND_TRANSFORM != 0 {
                         pack3(BOUNDARY_TRANSFORM)
                     } else {
-                        let base = PLATE_COLORS[kf.plate_id[c] as usize % PLATE_COLORS.len()];
+                        let rank = plate_rank
+                            .get(kf.plate_id[c] as usize)
+                            .copied()
+                            .unwrap_or(kf.plate_id[c]);
+                        let base = PLATE_COLORS[rank as usize % PLATE_COLORS.len()];
                         // Darken oceanic parts so continents read through.
                         let k = if continent { 1.0 } else { 0.55 };
                         pack(base[0] * k, base[1] * k, base[2] * k)

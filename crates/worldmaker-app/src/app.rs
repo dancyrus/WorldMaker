@@ -135,6 +135,8 @@ pub struct WorldApp {
     layer: Layer,
     tool: Tool,
     brush_radius_km: f32,
+    /// The current craton stroke changed the overlay; re-run on stroke end.
+    craton_stroke_dirty: bool,
 
     // Canvas view state.
     globe: GlobeView,
@@ -217,6 +219,7 @@ impl WorldApp {
             layer: Layer::Elevation,
             tool: Tool::None,
             brush_radius_km: 600.0,
+            craton_stroke_dirty: false,
             globe: GlobeView {
                 yaw: 0.0,
                 pitch: 0.35,
@@ -286,9 +289,9 @@ impl WorldApp {
         self.grid_gen += 1;
         self.field_gen += 1;
         self.pick_hint = None;
-        // The paint overlays are per-grid (cell ids change with level).
+        // Craton paint is per-grid (cell ids change with level); hotspot
+        // positions are unit vectors and survive a preset switch.
         self.craton_paint.clear();
-        self.hotspot_overlay = None;
         self.bundle = Arc::new(WorldBundle {
             grid,
             colors: vec![0xff40_4040; self.grid.cell_count() as usize],
@@ -487,12 +490,18 @@ impl WorldApp {
                 if !clicked {
                     return false;
                 }
-                let pos = self.grid.positions[cell as usize];
-                let mut spots = self
+                // Never edit blind: with no overlay AND no finished history
+                // (a run is in flight), there is no hotspot set to add to —
+                // falling through to an empty set would silently replace the
+                // generated hotspots with just this click (review finding).
+                let Some(mut spots) = self
                     .hotspot_overlay
                     .clone()
                     .or_else(|| self.history.as_ref().map(|h| h.hotspots.clone()))
-                    .unwrap_or_default();
+                else {
+                    return false;
+                };
+                let pos = self.grid.positions[cell as usize];
                 let cos_remove = (HOTSPOT_REMOVE_KM / EARTH_RADIUS_KM).cos();
                 let near = spots
                     .iter()
@@ -525,14 +534,23 @@ impl WorldApp {
                 let clicked = response.clicked();
                 if (response.dragged() || clicked) && self.apply_tool(cell, clicked) {
                     self.needs_bake = true;
-                }
-                if matches!(self.tool, Tool::CratonPaint | Tool::CratonErase)
-                    && (response.drag_stopped() || clicked)
-                {
-                    // Stroke finished: re-run history from t=0, same seed.
-                    self.start_job();
+                    if matches!(self.tool, Tool::CratonPaint | Tool::CratonErase) {
+                        self.craton_stroke_dirty = true;
+                    }
                 }
             }
+        }
+        // Stroke end must fire even when the release lands off the map (past
+        // the globe's limb or the projection outline): drag_stopped() is
+        // hover-independent, so check it outside the hit gate (review
+        // finding). Only re-run when the stroke actually changed the overlay.
+        if matches!(self.tool, Tool::CratonPaint | Tool::CratonErase)
+            && (response.drag_stopped() || response.clicked())
+            && self.craton_stroke_dirty
+        {
+            self.craton_stroke_dirty = false;
+            // Stroke finished: re-run history from t=0, same seed.
+            self.start_job();
         }
     }
 
@@ -1148,13 +1166,16 @@ impl eframe::App for WorldApp {
         }
         self.frame_times.push(dt.max(1e-6));
 
-        self.hover = None;
         self.poll_job();
         self.drive_script(ctx);
 
         self.top_bar(root);
         self.side_panel(root);
+        // The readout consumes the hover the canvases wrote LAST frame (the
+        // canvases render after the panels); clear it only afterwards, or the
+        // Some arm is unreachable (review finding).
         self.bottom_panel(root, dt);
+        self.hover = None;
 
         // ----- canvases -----
         egui::CentralPanel::default()
