@@ -96,9 +96,13 @@ axis → craton overlay applied last → hotspots ≥ 15° apart.
 6. **Elevation** (keyframe steps only; never integrated): continent
    150 m/km above 35 km; ocean −(2600 + 365·√age) floored at −5,600;
    trench blend 75% toward −8,500; arc +2,000 m; buildup ×1,000 (ocean) /
-   ×400 (continent) m/km; ±300 m fBm detail. Sea level bisected (40
-   iterations, integer counts) to the ocean-fraction target; elevations
-   stored relative to it; the offset is recorded per keyframe.
+   ×400 (continent) m/km; ±300 m fBm detail. Sea level is bisected (40
+   iterations, integer counts) to the ocean-fraction target ONCE, at the
+   t = 0 anchor; the datum then stays fixed for the whole run, so sea level
+   drifts with the hypsometry and coastlines flood and drain through history
+   (decision log, Dan). Elevations are stored relative to the datum, which
+   rides along in every keyframe — resume stays bit-exact — and the UI
+   sea-level slider is an offset around it.
 
 ## 5. Keyframes
 

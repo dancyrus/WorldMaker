@@ -52,7 +52,11 @@ fn fixed_seed_reproduces_committed_hash() {
 /// docs/results/tectonics-phase1-DESKTOP-VKD81C6.json); Linux CI must
 /// reproduce them bit-for-bit — the sim path uses only IEEE-exact operations
 /// (see worldmaker_core::dmath), and this test is what enforces it.
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x3e0d_ffc9_ef43_510e;
+///
+/// History: elevation regenerated 2026-08-19 when sea level switched from a
+/// per-keyframe re-solve to a fixed t=0 datum (decision log, Dan). The plate
+/// golden was untouched — proof the change was display-datum only.
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xf751_0e72_14ed_5b62;
 const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0x70df_6db8_ec5f_653d;
 
 #[test]
