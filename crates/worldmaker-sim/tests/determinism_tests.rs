@@ -15,8 +15,7 @@ fn elevation_hash(level: u32, seed: u64) -> u64 {
     let mut world = WorldState::new(grid);
     let mut pipe = Pipeline::new();
     pipe.push(Box::new(NoiseElevationStage::default()));
-    pipe.run(&StageContext { master_seed: seed }, &mut world)
-        .unwrap();
+    pipe.run(&StageContext::new(seed), &mut world).unwrap();
     hash_f32_slice(world.fields.get(ELEVATION_FIELD).unwrap())
 }
 
@@ -53,8 +52,7 @@ fn elevation_field_has_no_nans_and_sane_range() {
     let mut world = WorldState::new(grid);
     let mut pipe = Pipeline::new();
     pipe.push(Box::new(NoiseElevationStage::default()));
-    pipe.run(&StageContext { master_seed: 7 }, &mut world)
-        .unwrap();
+    pipe.run(&StageContext::new(7), &mut world).unwrap();
     let elev = world.fields.get(ELEVATION_FIELD).unwrap();
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for &e in elev {

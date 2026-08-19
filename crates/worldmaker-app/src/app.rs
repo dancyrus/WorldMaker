@@ -229,9 +229,7 @@ impl WorldApp {
     /// Re-run the stage pipeline for the current seed and publish a new bundle.
     fn regenerate(&mut self) {
         let t0 = Instant::now();
-        let ctx = StageContext {
-            master_seed: self.master_seed,
-        };
+        let ctx = StageContext::new(self.master_seed);
         if let Err(e) = self.pipeline.run(&ctx, &mut self.world_state) {
             log::error!("pipeline run failed: {e:#}");
             return;

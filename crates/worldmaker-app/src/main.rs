@@ -142,7 +142,7 @@ fn run_determinism_harness(out: &std::path::Path) -> anyhow::Result<()> {
             let mut world = WorldState::new(grid);
             let mut pipe = Pipeline::new();
             pipe.push(Box::new(NoiseElevationStage::default()));
-            pipe.run(&StageContext { master_seed: 42 }, &mut world)?;
+            pipe.run(&StageContext::new(42), &mut world)?;
             hashes.push(hash_f32_slice(world.fields.get(ELEVATION_FIELD).unwrap()));
         }
         metrics.insert(

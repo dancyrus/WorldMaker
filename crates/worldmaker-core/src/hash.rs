@@ -42,6 +42,19 @@ pub fn hash_f32_slice(data: &[f32]) -> u64 {
     h
 }
 
+/// Hash a `u32` slice by little-endian bytes (determinism checks on id and
+/// bitmask fields, e.g. plate ids).
+pub fn hash_u32_slice(data: &[u32]) -> u64 {
+    let mut h = FNV_OFFSET;
+    for &v in data {
+        for b in v.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+    }
+    h
+}
+
 /// SplitMix64: the standard 64-bit mixer, used to derive sub-seeds.
 pub fn splitmix64(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);

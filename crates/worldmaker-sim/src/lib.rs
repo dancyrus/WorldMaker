@@ -7,6 +7,8 @@
 
 pub mod noise_stage;
 pub mod pipeline;
+pub mod tectonics;
 
 pub use noise_stage::NoiseElevationStage;
-pub use pipeline::{Pipeline, Stage, StageContext, WorldState};
+pub use pipeline::{Cancelled, Pipeline, Progress, Stage, StageContext, WorldState};
+pub use tectonics::{TectonicsParams, TectonicsStage};
