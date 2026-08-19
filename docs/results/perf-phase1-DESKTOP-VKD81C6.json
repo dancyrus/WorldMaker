@@ -1,0 +1,17 @@
+{
+  "machine": "DESKTOP-VKD81C6",
+  "date": "2026-08-19",
+  "app_version": "0.1.0",
+  "metrics": {
+    "flat_fps": 1434.9,
+    "fps_grid_level": 7,
+    "fps_vsync_off": true,
+    "globe_fps": 1656.9,
+    "grid_build_ms_L6": 6.2,
+    "grid_build_ms_L7": 17.8,
+    "grid_build_ms_L8": 72.8,
+    "grid_build_ms_L9": 348.6,
+    "layer": "elevation",
+    "split_fps": 1446.6
+  }
+}

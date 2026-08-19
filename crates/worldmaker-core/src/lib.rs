@@ -5,6 +5,7 @@
 //! runs and platforms (transcendental functions are kept out of anything that
 //! feeds a determinism hash).
 
+pub mod dmath;
 pub mod fields;
 pub mod grid;
 pub mod hash;

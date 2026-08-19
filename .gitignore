@@ -2,3 +2,7 @@
 **/*.rs.bk
 *.log
 /logs/
+
+# Dan's personal planning notes (kept local, not part of the repo)
+*v2.md
+*v3.md

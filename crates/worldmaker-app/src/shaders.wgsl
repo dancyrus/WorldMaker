@@ -1,30 +1,10 @@
-// WorldMaker Phase 0 shaders: globe (orthographic 3D) and flat (projected map).
+// WorldMaker shaders: globe (orthographic 3D) and flat (projected map).
 //
-// Both pipelines read the same per-cell elevation storage buffer, so a seed or
-// sea-level change is just a buffer/uniform update. The flat pipeline resolves
-// each fragment to a cell through an equirectangular cell-id lookup texture
-// that depends only on the grid level.
-
-// ---------- shared color ----------
-
-fn palette(elevation_m: f32, sea_level_m: f32) -> vec3<f32> {
-    let e = elevation_m - sea_level_m;
-    if e <= 0.0 {
-        // Ocean: deep abyss -> shallow shelf.
-        let t = clamp(-e / 6000.0, 0.0, 1.0);
-        let shallow = vec3<f32>(0.16, 0.40, 0.55);
-        let deep = vec3<f32>(0.03, 0.10, 0.23);
-        return mix(shallow, deep, sqrt(t));
-    }
-    // Land: lowland green -> upland tan -> rock -> snow.
-    let t = clamp(e / 5500.0, 0.0, 1.0);
-    if t < 0.35 {
-        return mix(vec3<f32>(0.23, 0.44, 0.22), vec3<f32>(0.55, 0.50, 0.28), t / 0.35);
-    } else if t < 0.7 {
-        return mix(vec3<f32>(0.55, 0.50, 0.28), vec3<f32>(0.58, 0.55, 0.52), (t - 0.35) / 0.35);
-    }
-    return mix(vec3<f32>(0.58, 0.55, 0.52), vec3<f32>(0.95, 0.95, 0.97), (t - 0.7) / 0.3);
-}
+// Since Phase 1 both pipelines read one per-cell RGBA8 color buffer baked on
+// the CPU by the active layer (layers.rs) — a layer switch, timeline scrub, or
+// sea-level change is a single buffer update. The flat pipeline resolves each
+// fragment to a cell through an equirectangular cell-id lookup texture that
+// depends only on the grid level.
 
 // ---------- globe ----------
 
@@ -32,17 +12,17 @@ struct GlobeUniforms {
     // Rotation of the planet into camera space (camera looks along -z, so
     // +z is toward the viewer after rotation).
     rot: mat4x4<f32>,
-    // x, y: camera-space -> NDC scale. z: sea level (m). w: unused.
+    // x, y: camera-space -> NDC scale. z, w: unused.
     params: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> globe_u: GlobeUniforms;
-@group(0) @binding(1) var<storage, read> elevation: array<f32>;
+@group(0) @binding(1) var<storage, read> cell_colors: array<u32>;
 
 struct GlobeVsOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) normal_cam: vec3<f32>,
-    @location(1) elev: f32,
+    @location(1) color: vec3<f32>,
 }
 
 @vertex
@@ -52,16 +32,15 @@ fn vs_globe(@builtin(vertex_index) vi: u32, @location(0) position: vec3<f32>) ->
     // Orthographic: depth maps front hemisphere (+z toward viewer) near 0.
     out.pos = vec4<f32>(cam.x * globe_u.params.x, cam.y * globe_u.params.y, 0.5 - cam.z * 0.4, 1.0);
     out.normal_cam = cam;
-    out.elev = elevation[vi];
+    out.color = unpack4x8unorm(cell_colors[vi]).rgb;
     return out;
 }
 
 @fragment
 fn fs_globe(in: GlobeVsOut) -> @location(0) vec4<f32> {
-    let base = palette(in.elev, globe_u.params.z);
     let l = normalize(vec3<f32>(0.35, 0.30, 0.90));
     let shade = 0.72 + 0.28 * max(dot(normalize(in.normal_cam), l), 0.0);
-    return vec4<f32>(base * shade, 1.0);
+    return vec4<f32>(in.color * shade, 1.0);
 }
 
 // ---------- flat map ----------
@@ -70,7 +49,7 @@ struct FlatUniforms {
     // Map center and half-extents in framebuffer pixels.
     center_px: vec2<f32>,
     half_px: vec2<f32>,
-    // x: projection (0 = equirectangular, 1 = Robinson), y: sea level (m),
+    // x: projection (0 = equirectangular, 1 = Robinson), y: unused,
     // z: graticule (0/1), w: unused.
     misc: vec4<f32>,
     // x, y: cell-id texture dimensions.
@@ -78,7 +57,7 @@ struct FlatUniforms {
 }
 
 @group(0) @binding(0) var<uniform> flat_u: FlatUniforms;
-@group(0) @binding(1) var<storage, read> flat_elevation: array<f32>;
+@group(0) @binding(1) var<storage, read> flat_colors: array<u32>;
 @group(0) @binding(2) var cell_ids: texture_2d<u32>;
 
 // Robinson X (parallel length) and Y (parallel distance) every 5 degrees.
@@ -158,8 +137,7 @@ fn fs_flat(in: FlatVsOut) -> @location(0) vec4<f32> {
     let tx = clamp((lon + PI) / (2.0 * PI) * w, 0.0, w - 1.0);
     let ty = clamp((0.5 - lat / PI) * h, 0.0, h - 1.0);
     let cell = textureLoad(cell_ids, vec2<i32>(i32(tx), i32(ty)), 0).r;
-    let elev = flat_elevation[cell];
-    var color = palette(elev, flat_u.misc.y);
+    var color = unpack4x8unorm(flat_colors[cell]).rgb;
 
     if flat_u.misc.z > 0.5 {
         // Graticule every 15 degrees, anti-aliased via screen-space derivatives.

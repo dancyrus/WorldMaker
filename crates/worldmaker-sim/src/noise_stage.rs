@@ -58,8 +58,9 @@ impl Stage for NoiseElevationStage {
 }
 
 /// Fractal Brownian motion: `octaves` layers of value noise, lacunarity 2,
-/// gain 0.5. Output roughly in [-1, 1].
-fn fbm(p: [f32; 3], seed: u64, octaves: u32) -> f32 {
+/// gain 0.5. Output roughly in [-1, 1]. Also used by the tectonics stage as
+/// its low-amplitude elevation detail texture.
+pub(crate) fn fbm(p: [f32; 3], seed: u64, octaves: u32) -> f32 {
     let mut sum = 0.0f32;
     let mut amp = 0.5f32;
     let mut freq = 1.6f32;
