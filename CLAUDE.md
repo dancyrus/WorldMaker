@@ -71,3 +71,9 @@ including GitHub (repo: dancyrus/WorldMaker).
   `RenderPipelineDescriptor` uses `multiview_mask`.
 - Changing anything in the noise/elevation path changes the committed golden
   hash — regenerate it deliberately and log the change; never "fix" the test.
+- PowerShell 5.1 Get-Content|Set-Content pipelines mangle UTF-8 source files
+  (em-dashes become mojibake) — use the Edit tool for file changes, always.
+- The sim path must stay libm-free (use worldmaker-core::dmath); Rust f32::sin
+  etc. differ between MSVC and glibc in the last ulp and break the goldens.
+- rayon float reductions are order-nondeterministic: cross-cell aggregates in
+  sim code must be integer counts or serial id-ordered loops.

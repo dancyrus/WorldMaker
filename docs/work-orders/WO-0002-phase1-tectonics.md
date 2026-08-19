@@ -1,6 +1,11 @@
 # WO-0002 — Phase 1: plate tectonics and the era picker
 
-**Status: OPEN.**
+**Status: COMPLETE (2026-08-19).** Merged to main via PR #2 with green
+blocking CI; tagged v0.2.0. Design pre-reviewed by a 5-lens agent panel;
+implementation reviewed by a 15-agent find/verify pass — 7 confirmed
+findings fixed before merge. All acceptance gates pass
+(docs/results/tectonics-phase1-DESKTOP-VKD81C6.json). Plate drag queued as
+the first item of Phase 2.
 
 Goal: continents that drift, collide, and raise mountains over hundreds of
 millions of years; a live bottom timeline to scrub that history and pick the
@@ -123,17 +128,27 @@ dropdown.
       0.2901–0.2905 (parameter 0.29), 23 sutures, 17 breakups
 - [x] Performance: 1 Gy L7 in 4.2 s (gate ≤60 s); 500 My L7 in 2.2 s;
       keyframes 265 MB (1 Gy) / 527 MB (2 Gy) at L7
-- [ ] All Phase 0 tests still pass; CI green (ubuntu blocking, macOS
-      informational)
+- [x] All Phase 0 tests still pass; CI green (ubuntu blocking: fmt, clippy,
+      tests all pass — the Windows-made tectonic goldens reproduce
+      bit-for-bit on Linux; macOS informational: pass)
 
 ### Wrap-up
-- [ ] CI green on the branch; merged to main; branch deleted
-- [ ] Tag v0.2.0
-- [ ] Roadmap status updated
-- [ ] Screenshots to docs/media/phase1/: plates layer mid-run,
-      continent-continent mountain range, timeline mid-scrub
-- [ ] Plain-English report to Dan: what exists, how to try the timeline and
+- [x] CI green on the branch; merged to main (PR #2); branch deleted
+- [x] Tag v0.2.0
+- [x] Roadmap status updated
+- [x] Screenshots to docs/media/phase1/: plates layer mid-run (plates.png),
+      continent-continent mountain range (mountains.png), timeline mid-scrub
+      (timeline.png), plus globe/flat/split
+- [x] Plain-English report to Dan: what exists, how to try the timeline and
       craton brush, headline numbers, open questions for Phase 2
+
+## Queued to Phase 2
+- Plate drag (first item): drag sets a surface-velocity target, recompute
+  the plate's Euler pole, re-run forward from the viewed keyframe. Must be
+  a hashed "drag overlay" replayed through the stage cache contract so
+  drags survive re-runs (design-review finding). `run_history(ResumeFrom)`
+  already restarts bit-exactly from any keyframe (tested), so only the
+  overlay plumbing and the drag UI remain.
 
 ## Notes
 - Per CLAUDE.md rule 4: subagents/workflows for research and verification.
