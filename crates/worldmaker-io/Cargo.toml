@@ -1,0 +1,15 @@
+[package]
+name = "worldmaker-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Results-JSON writer and save/export stubs for WorldMaker"
+
+[dependencies]
+worldmaker-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]

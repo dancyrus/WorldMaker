@@ -1,0 +1,12 @@
+[package]
+name = "worldmaker-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Geodesic grid, seeded RNG, field storage, and projection math for WorldMaker"
+
+[dependencies]
+rayon = { workspace = true }
+rand = { workspace = true }
+rand_pcg = { workspace = true }
