@@ -1,227 +1,146 @@
-# Phase 1 design: tectonics stage and era picker
+# Phase 1 design: tectonics stage and era picker (as built)
 
-Design of record for WO-0002. Constants marked (log) get decision-log entries
-when finalized. Reference: Cortial et al. 2019, Procedural Tectonic Planets.
+Design of record for WO-0002, updated to the implementation that shipped.
+The pre-implementation draft was reviewed by a five-lens adversarial agent
+panel; every accepted finding is reflected here and in the decision log.
+Reference: Cortial et al. 2019, Procedural Tectonic Planets. Constants live
+in `crates/worldmaker-sim/src/tectonics/step.rs` and the decision log.
 
 ## 1. Data model
 
-### FieldStore gains integer fields
-`FieldStore` adds a parallel `Vec<(String, Vec<u32>)>` store with
-`set_u32 / get_u32 / get_u32_mut / get_or_insert_mut_u32`. Rationale: plate ids
-and the feature bitmask need exact equality and bit ops; f32-encoded ids invite
-silent corruption. Continuous quantities stay f32. (log)
+- `FieldStore` carries u32 integer fields (plate_id, crust_type, features
+  bitmask) beside the f32 fields — exact bit ops, no float-encoded ids.
+- Per-cell state: `elevation_m` (relative to solved sea level),
+  `crust_thickness_km`, `crust_age_my`, `orogeny_age_my`, `rift_age_my`,
+  `hotspot_buildup_km` (f32); `plate_id`, `crust_type`, `features` (u32).
+  Feature bits 0–4: RIDGE, TRENCH, ARC, HOTSPOT, RIFT — all *current status*,
+  rebuilt every step (no fossil flags); bits 5–7: boundary class
+  (divergent/convergent/transform) for display and event gating.
+- Params (all hashed): plate_count 8–24 (12), land_fraction 0.05–0.7 (0.29),
+  tectonic_vigor 0.25–2 (1), span_my 200–2,000 (500), hotspot_count 0–12 (6),
+  craton overlay (sorted `(cell, ±1)`), hotspot overlay (replaces the set).
+- `StageContext.progress`: shared fraction + cancel atomics. A cancelled run
+  returns `Cancelled`; `Pipeline::run` marks a stage dirty *before* running
+  it, so a failed run can never serve a stale cache entry (regression test).
+- `WorldState.history: Option<TectonicsHistory>` — keyframes, hotspots,
+  run diagnostics (continental-inventory flows, suture/breakup counts).
 
-### Per-cell fields written by the tectonics stage ("present" state)
-- f32 `elevation_m` — derived, relative to solved sea level (sea level = 0)
-- f32 `crust_thickness_km`
-- f32 `crust_age_my`
-- f32 `orogeny_age_my`
-- f32 `rift_age_my` — internal rift timer (needed for full-state resume)
-- f32 `hotspot_buildup_km` — advected shield-volcano construction
-- u32 `plate_id`
-- u32 `crust_type` — 0 ocean, 1 continent
-- u32 `features` — bit 0 RIDGE, 1 TRENCH, 2 ARC, 3 HOTSPOT, 4 RIFT,
-  5 BOUNDARY_DIVERGENT, 6 BOUNDARY_CONVERGENT, 7 BOUNDARY_TRANSFORM
-  (boundary bits are display/classification results, recomputed each step)
+## 2. Determinism (the golden-hash contract)
 
-### Params (UI-visible, all hashed into params_hash)
-| param | default | range |
-|---|---|---|
-| plate_count | 12 | 8–24 |
-| land_fraction | 0.29 | 0.05–0.7 |
-| tectonic_vigor | 1.0 | 0.25–2.0 |
-| span_my | 500 | 200–2,000 |
-| hotspot_count | 6 | 0–12 |
-
-Edit overlays (also hashed): craton overlay = sorted `Vec<(cell: u32, i8)>`
-(+1 paint continent, −1 force ocean); hotspot overlay = `Option<Vec<[f32;3]>>`
-(when Some, replaces the generated hotspot set entirely).
-
-### Stage plumbing
-- `StageContext` gains `progress: Option<Arc<Progress>>` where
-  `Progress { fraction: AtomicU32 /* f32 bits */, cancel: AtomicBool }`.
-  Cancel makes the stage return a `Cancelled` error; the pipeline already
-  leaves `last_key` unset on error, so a cancelled run never poisons the cache.
-- `WorldState` gains `history: Option<TectonicsHistory>`; the stage fills it.
-- The app pins "present": `TectonicsStage` gets `present_my: Option<f32>`
-  (param-hashed); when set, the stage decodes that keyframe into the world
-  fields instead of the final one. Downstream stages and exports read fields
-  as usual and never know about time.
-
-## 2. Determinism rules (additions for Phase 1)
-
-- **No platform trig in the sim path.** Rodrigues rotation needs sin/cos of the
-  per-step rotation angle only (|θ| ≤ 1.2 deg/My × 2 My = 2.4° = 0.042 rad).
-  Implement `det_sin_cos(x)` in worldmaker-core as fixed-order Taylor
-  polynomials (x⁷ / x⁶ terms; error « f32 ulp on this range). +, −, ×, /, sqrt
-  are IEEE-exact; libm sin/cos/exp/atan2 are not and are banned from the sim.
-  Orogeny relaxation uses the precomputed literal `exp(−dt/200)` = f32 constant.
-- **Reductions are integer counts or serial loops.** rayon float reductions
-  have nondeterministic order; every cross-cell aggregate in the sim (plate
-  areas, boundary-type fractions, hypsometric bisection) counts integers or
-  runs serially in cell-id order.
-- **RNG keyed by absolute step.** Per-step randomness uses
-  `sub_rng(seed, "phase1-tectonics", &format!("{purpose}-step{n}"))` and
-  per-plate purposes include the plate id. A re-run from keyframe K replays
-  steps K+1.. with identical randomness — resumability without storing RNG
-  state.
-- Advection writes are per-cell pure functions into a double buffer — parallel
-  safe and order-independent.
+- No libm in the sim path. `worldmaker_core::dmath` provides fixed-order
+  Taylor `det_sin_cos` (|x| ≤ 0.75), Irwin–Hall gaussians, cube-rejection
+  unit vectors, raw-bit uniforms; `exp(−dt/200)` is a literal constant.
+  +, −, ×, /, sqrt, round, floor, clamp are IEEE-exact and allowed.
+- All cross-cell reductions are integer counts or serial id-ordered loops;
+  the only atomics are commutative ORs (candidate masks) and integer adds.
+- RNG purposes embed the absolute step index (and plate id), so a resumed
+  run replays identical randomness.
+- **Keyframes are exact state**: at every keyframe the sim round-trips its
+  own f32 arrays through the u16 quantization (round-then-clamp on both
+  sides — rounding makes the encode idempotent), and `PlateState` carries
+  the pending sub-cell rotation plus the previous step's boundary stats.
+  `resume_from_keyframe_is_bit_exact` proves it.
 
 ## 3. Setup (t = 0)
 
-1. **Plate seeds**: farthest-point sampling — first seed uniform-random cell,
-   each next seed maximizes min angular distance (dot products only, serial,
-   ties → lower cell id).
-2. **Ownership**: great-circle Voronoi — every cell assigned to the seed with
-   max dot product (ties → lower plate id). O(N·P) direct loop.
-3. **Cratons**: continental crust target fraction = land_fraction × 1.35
-   (shelf allowance, log). ~20% of plates are drawn oceanic-only (no craton);
-   remaining target cells distributed ∝ plate area × U(0.5, 1.5). Per plate,
-   nucleus center = interior cell farthest from plate boundary; grow by BFS to
-   size. Thickness 35–45 km (peak at nucleus, tapering to 35 at edge), age
-   U(1,500–3,500) My. Craton overlay applied last: painted cells become
-   continent (40 km, 2,000 My), erased cells forced ocean.
-4. **Ocean init**: thickness 7 km, age = 30 + 50·(0.5 + 0.5·dot(x, u)) My for
-   one random unit vector u (smooth ramp; spreading self-organizes it away
-   within the first steps).
-5. **Plate motion**: Euler pole = uniform random unit vector; speed =
-   |N(0.5, 0.15)| × vigor, clamped 0.1–1.2 deg/My.
-6. **Hotspots**: hotspot_count fixed mantle points, uniform random unit
-   vectors (min 15° apart, retry draw), unless the overlay replaces them.
+Farthest-point plate seeds → great-circle Voronoi ownership → per-plate
+Euler pole (uniform) and speed |N(0.5, 0.15)|·vigor → cratons: continental
+target = land_fraction × 1.35 of the sphere, ~20% of plates drawn oceanic,
+per-plate BFS growth from the most interior cell, thickness 35–45 km
+tapering outward, age U(1,500–3,500) My, orogeny_age = age (primordial,
+exempt from relaxation) → ocean: 7 km, age = 30 + 50·ramp along a random
+axis → craton overlay applied last → hotspots ≥ 15° apart.
 
 ## 4. Time step (dt = 2 My)
 
-Per step, double-buffered prev → next:
+1. **Motion**: pole random-walk N(0, 0.6°)/step. Slab pull:
+   `target = base·(1 + f_sub)·(1 − f_coll_sat)` where f_coll saturates at
+   max(5% of boundary, 4 cells) — a continental collision along even a small
+   arc stalls the whole plate (India–Asia; conservation demands it). Braking
+   relax 0.5/step, acceleration 0.15/step; clamp [0.1·(1−f_coll), 1.2] deg/My.
+   Each step's rotation banks into a per-plate pending matrix; advection
+   commits it once the banked angle reaches 0.75 cell — slow plates never
+   freeze to the grid.
+2. **Advection** (forward-scatter + gather): committing plates scatter
+   claims (dst cell + ring) into an atomic per-cell bitmask over ≤ 32 alive
+   plates; each cell then coverage-tests its candidates by back-rotation and
+   `nearest_cell`. 0 covers → ridge crust (unless the cell was
+   transform-classified last step — hex-zigzag gating); 1 cover → copy;
+   overlap → polarity duel: "hard" crust (continent ≥ 30 km) cannot be
+   consumed, two hard plates jam in place (cell frozen, collision recorded);
+   otherwise the hard plate — or the youngest soft crust — overrides and the
+   loser is consumed (TRENCH + slab-pull stats, suppressed at transform
+   cells). Thin continent (< 30 km: island arcs, rifted slivers) is
+   subductible — the continental inventory closes. Fully consumed plates die.
+3. **Classification**: per foreign-neighbor edge, separation =
+   dot(v_n − v_c, ê_c→n) at the edge midpoint in cm/yr; divergent > +0.4,
+   convergent < −0.4, else transform. Feeds display bits, rift driver,
+   collision stats (continent-continent contact, not overlap events — slow
+   contacts must keep reading as collisions or nothing ever sutures).
+4. **Events**: arcs — BFS ring ceil(150/spacing)..floor(250/spacing) from
+   this step's trenches on the overriding plate; growth 0.6 (ocean) / 0.15
+   (continent) km/My, cap 70; oceanic cells convert to continent at 20 km.
+   Collision thickening 0.12 km/My per cm/yr, cap 70, orogeny_age = 0.
+   Rifts: +dt on continent-continent divergence, −2·dt otherwise
+   (hysteresis); thin 0.2 km/My past 20 My; oceanize below 25 km. Sutures:
+   per-pair slow-contact timers (< 0.5 cm/yr accrues, fast resets); at 30 My
+   the smaller plate merges (floor 6). Breakup: a plate over 1/3 of the
+   sphere *or* 1/3 of the world's continental crust (logged deviation —
+   breaks floor-6 gridlock) with suture age > 100 My splits along a random
+   great circle through its continental centroid; the halves get ±0.15
+   deg/My across the plane and the rift line starts mature. Hotspots: 0.8 /
+   0.4 km/My (center/ring), cap 8 km, decaying on the 200 My constant —
+   chains subside as they drift.
+5. **Aging**: ages += dt; inactive non-primordial orogens relax toward
+   38 km (×0.990049834 per step).
+6. **Elevation** (keyframe steps only; never integrated): continent
+   150 m/km above 35 km; ocean −(2600 + 365·√age) floored at −5,600;
+   trench blend 75% toward −8,500; arc +2,000 m; buildup ×1,000 (ocean) /
+   ×400 (continent) m/km; ±300 m fBm detail. Sea level bisected (40
+   iterations, integer counts) to the ocean-fraction target; elevations
+   stored relative to it; the offset is recorded per keyframe.
 
-**F. Motion update** (serial over plates): pole random-walk — rotate pole by
-N(0, 0.6°) about a random tangent axis per step (log). Slab pull:
-`target = base_speed × (1 + 1.0·f_sub) × (1 − 0.7·f_coll)` where f_sub /
-f_coll are the plate's subducting / colliding boundary-cell fractions from the
-previous step (integer counts); `speed += 0.15·(target − speed)`; clamp
-0.1–1.2 deg/My (all constants log).
+## 5. Keyframes
 
-**A. Ownership & advection** (parallel over cells): for cell c at x, candidate
-plates = {owner(c)} ∪ {owner(n): n ∈ neighbors(c)}, deduped, sorted by id.
-For each candidate p: `src = R_p⁻¹·x`, `src_cell = nearest_cell(src, hint=c)`,
-p covers c iff `prev.plate_id[src_cell] == p`.
-- exactly one cover → copy prev fields from src_cell, owner = p
-- none (gap, divergent) → new ocean crust: age 0, 7 km, RIDGE flag,
-  owner = prev owner of c (plates grow at trailing edges)
-- ≥2 (overlap, convergent) → resolve polarity: continent overrides ocean;
-  ocean vs ocean → younger (less dense) overrides; continent vs continent →
-  thicker crust wins the cell (tie → lower plate id), no consumption, both
-  flagged colliding. Owner = overrider, fields from its src_cell. If a loser
-  was oceanic: subduction event (TRENCH flag here; loser's plate logs
-  subducting boundary; consumed crust simply isn't copied anywhere).
-
-**B. Boundary classification** (parallel over cells): for each neighbor pair
-(c, n) with different owners, relative surface velocity
-`v_rel = (ω_a − ω_b) × x` (deg/My converted to cm/yr; 1 deg/My = 11.12 cm/yr
-on Earth radius); normal component along the tangent-projected direction
-c→n. Divergent > +0.4 cm/yr, convergent < −0.4, transform between. Sets the
-three boundary display bits; feeds rift thinning and collision rates.
-
-**C. Events** (mixed, deterministic order):
-- Arc placement: BFS rings from this step's trench cells into the overriding
-  plate; cells at graph distance chosen to land 150–250 km inboard (ring 3 at
-  L7 ≈ 165 km, scaled per level: ring = round(200 km / mean cell spacing)).
-  Arc cells: ARC flag; thickness += 0.15 km/My × dt while active (log);
-  oceanic overrider cells with thickness ≥ 20 km convert to continent
-  (island arc).
-- Continental collision: colliding continental cells (and their 1-ring)
-  thicken at 0.12 km/My per cm/yr of convergence (log), cap 70 km,
-  orogeny_age = 0.
-- Rifting: continental cells on a divergent boundary accumulate rift_age
-  (RIFT flag); after 20 My, thin at 0.2 km/My; below 25 km → convert to
-  ocean crust (age 0, 7 km, ridge).
-- Suturing: per unordered plate pair, track continuous slow-collision time
-  (mean convergence < 0.5 cm/yr while colliding); after 30 My the smaller
-  plate merges into the larger (cells reassigned, poles/speed of survivor
-  kept, suture time recorded). Skipped if plate count is at the floor of 6.
-- Supercontinent breakup: a plate holding > 1/3 of all cells whose youngest
-  suture is > 100 My old (never-sutured counts as ancient) splits: plane
-  through its continental-interior centroid with sub_rng orientation; cells
-  on the far side → new plate id with a diverged Euler pole; continental
-  cells within 1 ring of the plane get RIFT flags and rift_age starts.
-- Hotspots: the cell containing each hotspot point (nearest_cell) and its
-  neighbors gain hotspot_buildup at 0.5 / 0.25 km/My (center/ring, log),
-  cap 4 km; HOTSPOT flag while buildup > 0.5 km. Buildup advects with the
-  crust — drifting plates leave age-progressive chains.
-
-**D. Aging** (parallel per cell): crust_age += dt; orogeny_age += dt;
-inactive orogens (continent, thickness > 38, not thickened this step) relax:
-`thickness = 38 + (thickness − 38) × 0.990049834` (= exp(−2/200), literal).
-
-**E. Elevation derive** (parallel per cell; keyframe steps only — elevation
-never feeds back into dynamics):
-- continent: `elev = 150 m/km × (thickness − 35 km)`
-- ocean: `elev = max(−5600, −(2600 + 365·sqrt(age)))`
-- trench: `elev = 0.75·(−8500) + 0.25·elev` (log)
-- arc relief bonus: +1,500 m (log) — island arcs (20–25 km crust) come up
-  near sea level, some peaks emerge
-- hotspot: `elev += buildup_km × 1000` (ocean) / `× 400` (continent, log)
-- detail noise: `elev += 300 m × fbm(x)` (reuses Phase 0 value-noise fBm,
-  seeded via this stage's sub_rng; low amplitude so coastlines aren't blobby)
-- sea level: bisect offset s (40 fixed iterations, integer counts) so
-  fraction(elev < s) = 1 − land_fraction; store `elev − s`. Solved per
-  keyframe; the UI sea-level slider is an offset around 0.
-
-## 5. Keyframes and history
-
-Every 10 My (every 5th step) plus t=0. Per cell, packed:
-elev i16 (m), plate u16, crust_age u16 (My, saturating), thickness u16
-(km × 100), orogeny_age u16, rift_age u16, buildup u16 (km × 100), flags u16
-(includes crust_type bit 15) = **16 B/cell**. L7 × 2 Gy: 163,842 × 16 × 201
-≈ 527 MB ≤ 1 GB budget. Per keyframe also: per-plate states (pole, speed,
-base_speed, alive, youngest_suture), pair-collision timers, hotspot points,
-solved sea offset, t_my — full state, so a run can restart from any keyframe
-(plate drag, Phase 2 branching).
-
-`TectonicsHistory { dt_my, keyframes: Vec<Keyframe>, hotspots, approx_bytes }`
-lives in `WorldState.history`; the app moves it out after a run.
+Every 10 My (20 My at L8 — 1 GB budget), 16 B/cell: elev i16, plate u16,
+age u16, thickness u16 (×100), orogeny u16, rift u16, buildup u16 (×100),
+flags u16 (features + boundary class + crust_type in bit 15); plus exact
+per-plate state, pair timers, sea offset. Measured: 527 MB for 2 Gy at L7.
+`run_history(resume: Option<ResumeFrom>)` restarts bit-exactly from any
+keyframe — the foundation for plate drag (Phase 2) and branching (Phase 6).
 
 ## 6. App
 
-- **Async sim**: Generate spawns a worker thread (WorldState + Pipeline built
-  there); `Arc<Progress>` shared with UI (progress bar + Cancel button);
-  result posted over mpsc, polled nonblocking each frame. Window stays live.
-- **Timeline**: slider snapped to keyframes, epoch label "t = N My",
-  play/pause (~100 My/s), "Set as present" pins the viewed keyframe (default:
-  final). Present marker drawn on the strip.
-- **Layer rendering — CPU color bake** (log): the renderer's per-cell buffer
-  becomes packed RGBA u32 colors baked on CPU (rayon) from the decoded
-  keyframe: Elevation (hypsometric), Plates (24-color categorical palette;
-  boundary cells overridden by boundary-type color: ridge/trench/transform),
-  Crust age (perceptually uniform sequential, no rainbow), Thickness (debug
-  ramp). Scrub = decode + bake + one buffer upload (~1 ms at L7) — instant.
-  Sea-level slider re-bakes (still live). WGSL palette code is removed; globe
-  keeps its normal-based shading; palettes become testable Rust.
-- **Craton brush**: paint mode with radius slider; hit position via the
-  existing per-canvas inverse mappings → `nearest_cell` → cells within radius
-  (neighbor BFS while dot > cos r). Editing jumps the view to t=0 to show
-  nuclei; on stroke end, re-run from t=0 (same seed — layout and motions
-  repeat, new continents ride along).
-- **Hotspot placement**: click adds a hotspot (or removes the nearest within
-  300 km); overlay replaces the generated set; re-run.
-- **Plate drag**: attempted only if brush + hotspots are green; drag vector at
-  hit point → recompute that plate's Euler pole to satisfy the surface
-  velocity; re-run **from the currently viewed keyframe** (full-state
-  restart). Otherwise queued to Phase 2.
+- Sim on a worker thread (`SimJob`: Progress + mpsc); progress bar and a
+  working Cancel; starting a run drops the old history first (never two in
+  memory). The stage publishes the final keyframe; the app pins any other
+  "present" by decoding that keyframe into the world fields — never a re-sim.
+- Timeline: integer keyframe slider (inherent snap), epoch readout,
+  play/pause at 100 My/s, Set-as-present + present marker.
+- Rendering: per-cell RGBA8 colors baked on the CPU per (layer, keyframe,
+  sea offset) into one storage buffer; globe interpolates vertex colors with
+  its Lambert shade, flat looks colors up through the cell-id raster.
+  Layers: Elevation (hypsometric), Plates (24 categorical + boundary bands
+  by type), Crust age (viridis on ocean age, gray continents), Thickness
+  (batlow); Climate greyed out.
+- Craton brush/eraser (radius 150–2,000 km, neighbor flood on the grid,
+  both canvases through `nearest_cell`): paints a per-level overlay shown at
+  t = 0; stroke end re-runs from t = 0 with the same seed. Hotspot tool:
+  click adds, click-near removes (300 km); the overlay replaces the
+  generated set. Plate drag: queued to Phase 2 (hashed drag-overlay design).
 
-## 7. Goldens & tests
+## 7. Verification
 
-- NoiseElevationStage leaves the app pipeline but its unit golden stays
-  (unchanged code, still passes). New committed goldens: tectonics final
-  `elevation_m` hash and `plate_id` hash, L6 seed 42 defaults; regenerating
-  them is a deliberate, logged act.
-- Unit tests: det_sin_cos accuracy; keyframe encode/decode roundtrip;
-  boundary classification on hand-built two-plate cases; sea-level bisection;
-  rigid advection of a single-plate sphere shifts fields coherently; suture
-  floor of 6; craton overlay determinism.
-- Acceptance harness: `--tectonics-results <file>` headless runs: default
-  500 My L7 (timed), 1 Gy L7 (timed, ≤ 60 s), 2 Gy L6 (stability: plate count
-  6–24, land fraction ±5%), age-depth bins vs cooling curve (±10%),
-  hypsometry bimodality (2-means split + Ashman's D > 2, log), arc-trench
-  adjacency (≥95% within 400 km on the overriding side), determinism double
-  run, keyframe memory bytes.
+- Unit/integration: dmath accuracy + reproducibility; keyframe roundtrip +
+  saturation; pipeline cache (including the cancel-poisoning regression);
+  sanity of a short run (land fraction, plate band, ridges/trenches, ocean
+  age self-organization); same-seed hash equality; bit-exact resume; craton
+  overlay determinism + plate-layout invariance; cache reaction to overlays;
+  golden hashes for the default L6 world (elevation + plate ids) that Linux
+  CI must reproduce bit-for-bit.
+- Acceptance harness (`--tectonics-results`, results JSON committed):
+  age-depth bins vs cooling curve, 2-means + Ashman's D bimodality,
+  arc-trench adjacency (same-plate trench within 400 km), determinism
+  double-run, 2 Gy L6 stability (plate band, land fraction, continental
+  inventory, sutures/breakups), timings (500 My / 1 Gy / 2 Gy) and keyframe
+  memory vs budgets.
