@@ -13,7 +13,10 @@ pub struct FieldStore {
 
 impl FieldStore {
     pub fn new(cell_count: u32) -> Self {
-        FieldStore { cell_count, fields: Vec::new() }
+        FieldStore {
+            cell_count,
+            fields: Vec::new(),
+        }
     }
 
     #[inline]
@@ -27,16 +30,23 @@ impl FieldStore {
         if let Some(idx) = self.fields.iter().position(|(n, _)| n == name) {
             return &mut self.fields[idx].1;
         }
-        self.fields.push((name.to_string(), vec![0.0; self.cell_count as usize]));
+        self.fields
+            .push((name.to_string(), vec![0.0; self.cell_count as usize]));
         &mut self.fields.last_mut().unwrap().1
     }
 
     pub fn get(&self, name: &str) -> Option<&[f32]> {
-        self.fields.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_slice())
+        self.fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_slice())
     }
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut [f32]> {
-        self.fields.iter_mut().find(|(n, _)| n == name).map(|(_, v)| v.as_mut_slice())
+        self.fields
+            .iter_mut()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_mut_slice())
     }
 
     /// Replace or insert a whole field. Panics if the length doesn't match the

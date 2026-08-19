@@ -25,7 +25,10 @@ pub struct WorldState {
 impl WorldState {
     pub fn new(grid: Arc<Grid>) -> Self {
         let cell_count = grid.cell_count();
-        WorldState { grid, fields: FieldStore::new(cell_count) }
+        WorldState {
+            grid,
+            fields: FieldStore::new(cell_count),
+        }
     }
 }
 
@@ -68,7 +71,10 @@ impl Pipeline {
 
     /// Append a stage. Order of registration is execution order.
     pub fn push(&mut self, stage: Box<dyn Stage>) {
-        self.slots.push(StageSlot { stage, last_key: None });
+        self.slots.push(StageSlot {
+            stage,
+            last_key: None,
+        });
     }
 
     /// Forget cached results for the named stage and everything after it.
@@ -83,7 +89,11 @@ impl Pipeline {
 
     /// Run all stages in order, skipping any whose cache key is unchanged.
     /// Returns the ids of the stages that actually ran.
-    pub fn run(&mut self, ctx: &StageContext, world: &mut WorldState) -> anyhow::Result<Vec<&'static str>> {
+    pub fn run(
+        &mut self,
+        ctx: &StageContext,
+        world: &mut WorldState,
+    ) -> anyhow::Result<Vec<&'static str>> {
         let mut ran = Vec::new();
         let mut upstream_key: u64 = FNV_OFFSET;
         let mut upstream_dirty = false;
@@ -139,8 +149,16 @@ mod tests {
         let runs_a = StdArc::new(AtomicUsize::new(0));
         let runs_b = StdArc::new(AtomicUsize::new(0));
         let mut pipe = Pipeline::new();
-        pipe.push(Box::new(CountingStage { id: "a", params: 1, runs: runs_a.clone() }));
-        pipe.push(Box::new(CountingStage { id: "b", params: 1, runs: runs_b.clone() }));
+        pipe.push(Box::new(CountingStage {
+            id: "a",
+            params: 1,
+            runs: runs_a.clone(),
+        }));
+        pipe.push(Box::new(CountingStage {
+            id: "b",
+            params: 1,
+            runs: runs_b.clone(),
+        }));
 
         let ctx = StageContext { master_seed: 42 };
         pipe.run(&ctx, &mut world).unwrap();

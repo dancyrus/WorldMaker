@@ -42,23 +42,31 @@ impl Grid {
     /// Build the grid at the given subdivision level (0..=9 supported;
     /// presets use 6..=9).
     pub fn build(level: u32) -> Grid {
-        assert!(level <= 9, "subdivision level {level} not supported (max 9)");
+        assert!(
+            level <= 9,
+            "subdivision level {level} not supported (max 9)"
+        );
         let (positions64, triangles) = build_icosphere(level);
         let n = positions64.len();
         debug_assert_eq!(n as u32, cell_count_for_level(level));
 
-        let positions: Vec<[f32; 3]> =
-            positions64.iter().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]).collect();
+        let positions: Vec<[f32; 3]> = positions64
+            .iter()
+            .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+            .collect();
 
         let (neighbor_offsets, neighbors) = build_csr_neighbors(&positions64, &triangles);
 
         let mut lat = vec![0f32; n];
         let mut lon = vec![0f32; n];
-        lat.par_iter_mut().zip(lon.par_iter_mut()).enumerate().for_each(|(i, (la, lo))| {
-            let p = positions64[i];
-            *la = p[2].clamp(-1.0, 1.0).asin() as f32;
-            *lo = p[1].atan2(p[0]) as f32;
-        });
+        lat.par_iter_mut()
+            .zip(lon.par_iter_mut())
+            .enumerate()
+            .for_each(|(i, (la, lo))| {
+                let p = positions64[i];
+                *la = p[2].clamp(-1.0, 1.0).asin() as f32;
+                *lo = p[1].atan2(p[0]) as f32;
+            });
 
         Grid {
             level,
@@ -86,7 +94,9 @@ impl Grid {
 
     /// Number of pentagon cells (neighbor count 5). Always 12 on a valid grid.
     pub fn pentagon_count(&self) -> usize {
-        (0..self.cell_count()).filter(|&c| self.neighbors_of(c).len() == 5).count()
+        (0..self.cell_count())
+            .filter(|&c| self.neighbors_of(c).len() == 5)
+            .count()
     }
 
     /// The cell whose center is nearest to the given unit vector — i.e. the
@@ -197,7 +207,11 @@ fn build_icosphere(level: u32) -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
     ];
     // Enforce outward CCW winding programmatically rather than trusting the table.
     for f in &mut faces {
-        let (v0, v1, v2) = (verts[f[0] as usize], verts[f[1] as usize], verts[f[2] as usize]);
+        let (v0, v1, v2) = (
+            verts[f[0] as usize],
+            verts[f[1] as usize],
+            verts[f[2] as usize],
+        );
         let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
         let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
         let nrm = [
@@ -205,7 +219,11 @@ fn build_icosphere(level: u32) -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
             e1[2] * e2[0] - e1[0] * e2[2],
             e1[0] * e2[1] - e1[1] * e2[0],
         ];
-        let centroid = [v0[0] + v1[0] + v2[0], v0[1] + v1[1] + v2[1], v0[2] + v1[2] + v2[2]];
+        let centroid = [
+            v0[0] + v1[0] + v2[0],
+            v0[1] + v1[1] + v2[1],
+            v0[2] + v1[2] + v2[2],
+        ];
         if nrm[0] * centroid[0] + nrm[1] * centroid[1] + nrm[2] * centroid[2] < 0.0 {
             f.swap(1, 2);
         }
@@ -282,8 +300,9 @@ fn build_csr_neighbors(verts: &[[f64; 3]], faces: &[[u32; 3]]) -> (Vec<u32>, Vec
     // downstream code relies on) is platform-independent even if atan2 differs
     // in the last ulp. Start each ring at its lowest neighbor id so the stored
     // order is canonical.
-    let ranges: Vec<(usize, usize)> =
-        (0..n).map(|i| (offsets[i] as usize, offsets[i + 1] as usize)).collect();
+    let ranges: Vec<(usize, usize)> = (0..n)
+        .map(|i| (offsets[i] as usize, offsets[i + 1] as usize))
+        .collect();
     // Split `neighbors` into per-vertex mutable chunks for safe parallel sorting.
     let mut chunks: Vec<&mut [u32]> = Vec::with_capacity(n);
     {
@@ -300,7 +319,11 @@ fn build_csr_neighbors(verts: &[[f64; 3]], faces: &[[u32; 3]]) -> (Vec<u32>, Vec
     chunks.par_iter_mut().enumerate().for_each(|(i, ring)| {
         let p = verts[i];
         // Local tangent basis at p (robust: pick the axis least aligned with p).
-        let up = if p[2].abs() < 0.9 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+        let up = if p[2].abs() < 0.9 {
+            [0.0, 0.0, 1.0]
+        } else {
+            [1.0, 0.0, 0.0]
+        };
         let e1 = normalize(cross(up, p));
         let e2 = cross(p, e1); // p × e1 completes a right-handed basis
         ring.sort_by(|&x, &y| {

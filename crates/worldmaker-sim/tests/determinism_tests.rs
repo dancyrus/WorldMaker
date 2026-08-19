@@ -15,7 +15,8 @@ fn elevation_hash(level: u32, seed: u64) -> u64 {
     let mut world = WorldState::new(grid);
     let mut pipe = Pipeline::new();
     pipe.push(Box::new(NoiseElevationStage::default()));
-    pipe.run(&StageContext { master_seed: seed }, &mut world).unwrap();
+    pipe.run(&StageContext { master_seed: seed }, &mut world)
+        .unwrap();
     hash_f32_slice(world.fields.get(ELEVATION_FIELD).unwrap())
 }
 
@@ -49,7 +50,8 @@ fn elevation_field_has_no_nans_and_sane_range() {
     let mut world = WorldState::new(grid);
     let mut pipe = Pipeline::new();
     pipe.push(Box::new(NoiseElevationStage::default()));
-    pipe.run(&StageContext { master_seed: 7 }, &mut world).unwrap();
+    pipe.run(&StageContext { master_seed: 7 }, &mut world)
+        .unwrap();
     let elev = world.fields.get(ELEVATION_FIELD).unwrap();
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for &e in elev {
@@ -57,6 +59,12 @@ fn elevation_field_has_no_nans_and_sane_range() {
         lo = lo.min(e);
         hi = hi.max(e);
     }
-    assert!(lo < -500.0 && hi > 500.0, "elevation range implausible: [{lo}, {hi}]");
-    assert!(lo > -20_000.0 && hi < 20_000.0, "elevation range implausible: [{lo}, {hi}]");
+    assert!(
+        lo < -500.0 && hi > 500.0,
+        "elevation range implausible: [{lo}, {hi}]"
+    );
+    assert!(
+        lo > -20_000.0 && hi < 20_000.0,
+        "elevation range implausible: [{lo}, {hi}]"
+    );
 }
