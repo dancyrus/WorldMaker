@@ -1,0 +1,101 @@
+{
+  "machine": "DESKTOP-VKD81C6",
+  "date": "2026-08-19",
+  "app_version": "0.1.0",
+  "metrics": {
+    "age_depth_bins": [
+      {
+        "age_bin_my": "0-10",
+        "cell_count": 3855,
+        "cooling_curve_m": 3393.8,
+        "err_pct": 1.15,
+        "mean_depth_m": 3354.8
+      },
+      {
+        "age_bin_my": "10-20",
+        "cell_count": 4290,
+        "cooling_curve_m": 3959.5,
+        "err_pct": 0.69,
+        "mean_depth_m": 3932.1
+      },
+      {
+        "age_bin_my": "20-30",
+        "cell_count": 3457,
+        "cooling_curve_m": 4384.8,
+        "err_pct": 0.24,
+        "mean_depth_m": 4374.1
+      },
+      {
+        "age_bin_my": "30-40",
+        "cell_count": 3515,
+        "cooling_curve_m": 4727.7,
+        "err_pct": 0.43,
+        "mean_depth_m": 4707.4
+      },
+      {
+        "age_bin_my": "40-50",
+        "cell_count": 3000,
+        "cooling_curve_m": 5019.2,
+        "err_pct": 0.25,
+        "mean_depth_m": 5006.9
+      },
+      {
+        "age_bin_my": "50-60",
+        "cell_count": 3098,
+        "cooling_curve_m": 5280.8,
+        "err_pct": 0.28,
+        "mean_depth_m": 5265.8
+      },
+      {
+        "age_bin_my": "60-70",
+        "cell_count": 2497,
+        "cooling_curve_m": 5516.3,
+        "err_pct": 0.01,
+        "mean_depth_m": 5516.8
+      },
+      {
+        "age_bin_my": "70-80",
+        "cell_count": 2559,
+        "cooling_curve_m": 5736.6,
+        "err_pct": 2.4,
+        "mean_depth_m": 5599.2
+      }
+    ],
+    "age_depth_max_err_pct": 2.4,
+    "age_depth_within_10pct": true,
+    "all_acceptance_pass": true,
+    "arc_cell_count": 2878,
+    "arc_trench_pass": true,
+    "arc_trench_within_400km_pct": 100.0,
+    "determinism_crust_type_hash_l6_500my_seed42": "0xd5c797a8cc26afb5",
+    "determinism_elevation_hash_l6_500my_seed42": "0x3e0dffc9ef43510e",
+    "determinism_plate_hash_l6_500my_seed42": "0x70df6db8ec5f653d",
+    "determinism_repeat_matches": true,
+    "hotspot_emergent_island_cells": 13,
+    "hotspot_flagged_cells": 558,
+    "hypsometry_ashman_d": 8.52,
+    "hypsometry_bimodal": true,
+    "hypsometry_land_mode_m": 174.0,
+    "hypsometry_ocean_mode_m": -5628.0,
+    "keyframe_bytes_1gy_l7": 264897492,
+    "keyframe_bytes_2gy_l7": 527187816,
+    "keyframe_bytes_2gy_l7_within_1gb": true,
+    "keyframe_bytes_500my_l7": 133753212,
+    "run_1gy_l7_s": 4.23,
+    "run_1gy_l7_within_60s": true,
+    "run_2gy_l6_s": 5.7,
+    "run_2gy_l7_s": 16.88,
+    "run_500my_l7_s": 2.15,
+    "stability_breakup_count": 17,
+    "stability_cont_fraction_end": 0.387,
+    "stability_cont_fraction_start": 0.391,
+    "stability_land_fraction_max": 0.2905,
+    "stability_land_fraction_min": 0.2901,
+    "stability_pass": true,
+    "stability_plate_count_max": 12,
+    "stability_plate_count_min": 6,
+    "stability_sea_offset_end_m": 294.0,
+    "stability_sea_offset_start_m": 165.0,
+    "stability_suture_count": 23
+  }
+}

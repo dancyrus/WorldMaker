@@ -20,15 +20,19 @@ pub const CELL_ID_TEX_W: u32 = 4096;
 pub const CELL_ID_TEX_H: u32 = 2048;
 
 /// Immutable snapshot of the world the renderer draws. Rebuilt (as a new Arc)
-/// when the grid or the elevation field changes.
+/// when the grid or the baked layer colors change.
 pub struct WorldBundle {
     pub grid: Arc<Grid>,
-    pub elevation: Vec<f32>,
+    /// Per-cell RGBA8 colors baked by the active layer (layers.rs). A layer
+    /// switch, timeline scrub, or sea-level nudge is just a rebake + one
+    /// buffer upload.
+    pub colors: Vec<u32>,
     /// Equirectangular raster of cell ids, CELL_ID_TEX_W × CELL_ID_TEX_H.
-    pub cell_ids: Vec<u32>,
+    /// Arc'd: depends only on the grid level, shared across every rebake.
+    pub cell_ids: Arc<Vec<u32>>,
     /// Bumped when the grid (and cell_ids) change.
     pub grid_gen: u64,
-    /// Bumped when the elevation field changes (includes grid changes).
+    /// Bumped when the colors change (includes grid changes).
     pub field_gen: u64,
 }
 
@@ -64,7 +68,6 @@ pub struct GlobeView {
     pub yaw: f32,
     pub pitch: f32,
     pub zoom: f32,
-    pub sea_level_m: f32,
 }
 
 /// View parameters for the flat canvas, in egui points.
@@ -74,7 +77,6 @@ pub struct FlatView {
     /// Pan offset of the map center relative to the rect center, in points.
     pub pan: [f32; 2],
     pub zoom: f32,
-    pub sea_level_m: f32,
     pub graticule: bool,
 }
 
@@ -148,7 +150,7 @@ pub struct SceneResources {
     vertex_buf: Option<wgpu::Buffer>,
     index_buf: Option<wgpu::Buffer>,
     index_count: u32,
-    elevation_buf: Option<wgpu::Buffer>,
+    color_buf: Option<wgpu::Buffer>,
     cell_id_tex: Option<wgpu::Texture>,
     globe_bind: Option<wgpu::BindGroup>,
     flat_bind: Option<wgpu::BindGroup>,
@@ -325,7 +327,7 @@ impl SceneResources {
             vertex_buf: None,
             index_buf: None,
             index_count: 0,
-            elevation_buf: None,
+            color_buf: None,
             cell_id_tex: None,
             globe_bind: None,
             flat_bind: None,
@@ -377,7 +379,7 @@ impl SceneResources {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                bytemuck::cast_slice(&world.cell_ids),
+                bytemuck::cast_slice(world.cell_ids.as_slice()),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(CELL_ID_TEX_W * 4),
@@ -395,14 +397,24 @@ impl SceneResources {
         }
 
         if self.field_gen != world.field_gen {
-            self.elevation_buf = Some(device.create_buffer_init(
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("elevation-field"),
-                    contents: bytemuck::cast_slice(&world.elevation),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                },
-            ));
-            let elev = self.elevation_buf.as_ref().unwrap();
+            // Reuse the color buffer when only its contents changed (scrub,
+            // layer switch, sea-level drag): a queue write, no reallocation.
+            let expected_size = (world.colors.len() * 4) as u64;
+            match &self.color_buf {
+                Some(buf) if buf.size() == expected_size && self.grid_gen == world.grid_gen => {
+                    queue.write_buffer(buf, 0, bytemuck::cast_slice(&world.colors));
+                }
+                _ => {
+                    self.color_buf = Some(device.create_buffer_init(
+                        &wgpu::util::BufferInitDescriptor {
+                            label: Some("cell-colors"),
+                            contents: bytemuck::cast_slice(&world.colors),
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        },
+                    ));
+                }
+            }
+            let colors = self.color_buf.as_ref().unwrap();
             self.globe_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("globe-bind"),
                 layout: &self.globe_bind_layout,
@@ -413,7 +425,7 @@ impl SceneResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: elev.as_entire_binding(),
+                        resource: colors.as_entire_binding(),
                     },
                 ],
             }));
@@ -432,7 +444,7 @@ impl SceneResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: elev.as_entire_binding(),
+                        resource: colors.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -476,7 +488,7 @@ impl egui_wgpu::CallbackTrait for GlobeCallback {
             params: [
                 2.0 * radius_px / w_px.max(1.0),
                 2.0 * radius_px / h_px.max(1.0),
-                self.view.sea_level_m,
+                0.0,
                 0.0,
             ],
         };
@@ -553,7 +565,7 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
                     worldmaker_core::Projection::Equirectangular => 0.0,
                     worldmaker_core::Projection::Robinson => 1.0,
                 },
-                self.view.sea_level_m,
+                0.0,
                 if self.view.graticule { 1.0 } else { 0.0 },
                 0.0,
             ],

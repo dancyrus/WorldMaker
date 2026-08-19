@@ -3,6 +3,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod harness;
+mod layers;
 mod render;
 
 use std::path::PathBuf;
@@ -21,6 +23,7 @@ struct Args {
     screenshots_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
+    tectonics_out: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -28,6 +31,7 @@ fn parse_args() -> Args {
         screenshots_dir: None,
         perf_out: None,
         determinism_out: None,
+        tectonics_out: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -35,6 +39,7 @@ fn parse_args() -> Args {
             "--screenshots" => out.screenshots_dir = args.next().map(PathBuf::from),
             "--perf-out" => out.perf_out = args.next().map(PathBuf::from),
             "--determinism-out" => out.determinism_out = args.next().map(PathBuf::from),
+            "--tectonics-results" => out.tectonics_out = args.next().map(PathBuf::from),
             other => log::warn!("ignoring unknown argument: {other}"),
         }
     }
@@ -172,10 +177,19 @@ fn main() {
             log::error!("determinism harness failed: {e:#}");
             std::process::exit(1);
         }
-        // Determinism-only invocation: done without opening a window.
-        if args.perf_out.is_none() && args.screenshots_dir.is_none() {
-            return;
+    }
+    if let Some(tect_out) = &args.tectonics_out {
+        if let Err(e) = harness::run_tectonics_harness(tect_out) {
+            log::error!("tectonics harness failed: {e:#}");
+            std::process::exit(1);
         }
+    }
+    // Headless-only invocation: done without opening a window.
+    if (args.determinism_out.is_some() || args.tectonics_out.is_some())
+        && args.perf_out.is_none()
+        && args.screenshots_dir.is_none()
+    {
+        return;
     }
 
     gpu_preflight();
