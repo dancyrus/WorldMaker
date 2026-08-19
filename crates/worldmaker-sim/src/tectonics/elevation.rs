@@ -72,20 +72,27 @@ pub(super) fn derive_and_solve(sim: &mut SimState, params: &TectonicsParams) {
     }
 
     // Sea-level solve: find s with count(elev < s) = ocean fraction. Integer
-    // counts only, fixed iteration count — deterministic.
-    let n = sim.elev.len();
-    let target_ocean = (((1.0 - params.land_fraction) as f64) * n as f64).round() as usize;
-    let (mut lo, mut hi) = (-9000.0f32, 9000.0f32);
-    for _ in 0..40 {
-        let mid = 0.5 * (lo + hi);
-        let below = sim.elev.par_iter().filter(|&&e| e < mid).count();
-        if below < target_ocean {
-            lo = mid;
-        } else {
-            hi = mid;
+    // counts only, fixed iteration count — deterministic. Solved ONCE, at
+    // the t = 0 anchor; afterwards the datum stays fixed so sea level drifts
+    // naturally with the hypsometry — plenty of young, shallow ocean floor
+    // raises it and floods low continents, an aging seafloor drains them
+    // (decision log, Dan). Anchoring at t = 0 also keeps resume-from-keyframe
+    // bit-exact: the offset rides along in every keyframe.
+    if sim.t_my == 0.0 {
+        let n = sim.elev.len();
+        let target_ocean = (((1.0 - params.land_fraction) as f64) * n as f64).round() as usize;
+        let (mut lo, mut hi) = (-9000.0f32, 9000.0f32);
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            let below = sim.elev.par_iter().filter(|&&e| e < mid).count();
+            if below < target_ocean {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
         }
+        sim.sea_offset_m = 0.5 * (lo + hi);
     }
-    let s = 0.5 * (lo + hi);
+    let s = sim.sea_offset_m;
     sim.elev.par_iter_mut().for_each(|e| *e -= s);
-    sim.sea_offset_m = s;
 }

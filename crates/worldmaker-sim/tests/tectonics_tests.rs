@@ -83,17 +83,32 @@ fn short_run_produces_a_sane_world() {
             land += 1;
         }
     }
-    // The sea-level solve pins land fraction to the parameter (0.29).
+    // Sea level anchors to the parameter at t = 0 and then drifts with the
+    // hypsometry, so the final land fraction sits near — not on — the target.
     let land_frac = land as f32 / n as f32;
     assert!(
-        (land_frac - 0.29).abs() < 0.02,
-        "land fraction {land_frac} far from parameter"
+        (land_frac - 0.29).abs() < 0.05,
+        "land fraction {land_frac} drifted implausibly far from the 0.29 anchor"
     );
 
     // History: 200 My at 10 My cadence = 21 keyframes including t = 0.
     let hist = world.history.as_ref().unwrap();
     assert_eq!(hist.keyframes.len(), 21);
     assert_eq!(hist.hotspots.len(), 6);
+
+    // At the t = 0 anchor the solve is exact; the datum then stays fixed.
+    let kf0 = &hist.keyframes[0];
+    let land0 = kf0.elev_m.iter().filter(|&&e| e >= 0).count() as f32 / n as f32;
+    assert!(
+        (land0 - 0.29).abs() < 0.005,
+        "anchor land fraction {land0} not on the parameter"
+    );
+    assert!(
+        hist.keyframes
+            .iter()
+            .all(|kf| kf.sea_offset_m == kf0.sea_offset_m),
+        "sea datum must stay fixed after the anchor solve"
+    );
 
     // Plate count stays in the specified band.
     let final_kf = hist.keyframes.last().unwrap();
