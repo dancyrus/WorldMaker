@@ -64,3 +64,10 @@ including GitHub (repo: dancyrus/WorldMaker).
   app crate; keep the apt-get step in ci.yml.
 - Windows PowerShell 5.1: no `&&`; `Set-Content` defaults to ANSI — pass
   `-Encoding utf8`.
+- egui 0.36 renamed things: `App::ui(&mut self, ui, frame)` replaces `update`;
+  `egui::Panel::top/bottom(...).show(ui, ...)` replaces TopBottomPanel;
+  `Button::selectable` replaces SelectableLabel. wgpu 30: bind-group layouts
+  are `&[Option<&BindGroupLayout>]`, pipeline layouts use `immediate_size`,
+  `RenderPipelineDescriptor` uses `multiview_mask`.
+- Changing anything in the noise/elevation path changes the committed golden
+  hash — regenerate it deliberately and log the change; never "fix" the test.

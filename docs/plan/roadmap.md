@@ -2,7 +2,7 @@
 
 | Phase | Name | Scope | Status |
 |---|---|---|---|
-| 0 | Walking skeleton | Repo, CI, docs, seeded noise planet in globe and flat canvases with projection dropdown, view switcher, timeline placeholder, presets, determinism and mapping tests. | **In progress** |
+| 0 | Walking skeleton | Repo, CI, docs, seeded noise planet in globe and flat canvases with projection dropdown, view switcher, timeline placeholder, presets, determinism and mapping tests. | **Complete — v0.1.0 (2026-08-19)** |
 | 1 | Tectonics and era picker | Plates, boundaries, orogeny, rifts, hotspots, isostatic elevation, bottom-timeline history scrubbing to choose the present, craton and plate-drag painting. | Not started |
 | 2 | Terrain and rivers | Erosion, flow routing, lakes, sediment, first direct and intent brushes with hard/soft stroke modes, live sea level. | Not started |
 | 3 | Climate | EBM temperatures, winds, gyres, moisture transport, planet knobs driving outcomes, Earth test harness and gate, bias brushes. | Not started |

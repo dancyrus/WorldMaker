@@ -1,7 +1,8 @@
 # WO-0001 — Phase 0: walking skeleton
 
-**Status: OPEN — in progress (2026-08-19). All local work done and verified;
-remaining items blocked on GitHub sign-in (Dan's browser approval).**
+**Status: COMPLETE (2026-08-19).** Merged to main via PR #1 with green blocking
+CI; tagged v0.1.0. Reviewed by a 21-agent multi-lens pass; all 6 confirmed
+findings fixed before merge.
 
 Goal: repo, docs, CI, and a seeded planet visible in both a 3D globe and a flat
 projected map. No Phase 1 features (no real tectonics, no era picker function, no
@@ -11,7 +12,7 @@ brushes).
 
 ### Repository & workspace
 - [x] Git repo initialized at C:\Claude\WorldMaker, main branch
-- [ ] GitHub repo dancyrus/WorldMaker created, public, MIT
+- [x] GitHub repo dancyrus/WorldMaker created, public, MIT
 - [x] Cargo workspace: worldmaker-core / -sim / -io / -app with correct dep edges
 - [x] Cargo.lock committed
 - [x] README.md, CLAUDE.md, START-HERE.md
@@ -61,13 +62,13 @@ brushes).
 - [x] GitHub Actions workflow: fmt + clippy(-D warnings) + tests on ubuntu-latest,
       blocking; all pass locally (31 tests)
 - [x] macos-14 build job, continue-on-error, informational only (in ci.yml)
-- [ ] Green blocking CI on GitHub before phase close
+- [x] Green blocking CI on GitHub before phase close (PR #1, two green runs)
 
 ### Wrap-up
 - [x] WorldMaker.bat builds release and runs
-- [ ] Tag v0.1.0 (after merge to main)
+- [x] Tag v0.1.0 (after merge to main)
 - [x] Screenshots: globe, flat, split → docs/media/phase0/
-- [ ] Plain-English report to Dan: what exists, how to open, grid-build ms, fps,
+- [x] Plain-English report to Dan: what exists, how to open, grid-build ms, fps,
       tests passing, open questions for Phase 1
 
 ## Open questions queued for Phase 1
