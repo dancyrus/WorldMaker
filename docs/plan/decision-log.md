@@ -23,3 +23,4 @@ One line per decision: date, the decision, why/scope, and who made it
 | 2026-08-19 | Dependency addition: flexi_logger — the approved list allows "log plus a file logger"; flexi_logger provides rotating file logs beside the executable. | default |
 | 2026-08-19 | Dependency addition: pollster — one-function futures executor needed to call wgpu's async adapter probe synchronously at startup; no runtime, no transitive weight. | default |
 | 2026-08-19 | Dependency addition: bytemuck — safe byte-casting for GPU vertex/uniform buffers; already in the dependency tree via egui/wgpu, standard for wgpu apps. | default |
+| 2026-08-19 | Noise stage reseeded through sub_rng(seed, stage-id, purpose) instead of an ad-hoc XOR constant, honoring the Stage RNG contract before Phase 1 copies it; elevation golden hash regenerated (review finding). | default |

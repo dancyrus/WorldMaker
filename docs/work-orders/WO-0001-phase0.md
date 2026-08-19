@@ -20,7 +20,8 @@ brushes).
 - [x] This work order
 
 ### worldmaker-core
-- [x] Icosphere grid L6–L9; vertex count = 10·4^L + 2 (tested per level)
+- [x] Icosphere grid L6–L9; vertex count = 10·4^L + 2 (L0–L8 build-tested in CI;
+      L9 covered by an `--ignored` smoke test, run locally, and the perf harness)
 - [x] Goldberg dual: exactly 12 pentagons, rest hexagons (tested)
 - [x] Cell centers as unit vectors + lat/lon; CSR neighbor table (CCW, symmetric)
 - [x] SoA f32 field storage keyed by cell id

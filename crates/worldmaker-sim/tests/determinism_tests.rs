@@ -23,7 +23,10 @@ fn elevation_hash(level: u32, seed: u64) -> u64 {
 /// Produced once on Dan's PC (2026-08-19) and committed; CI on Linux must
 /// reproduce it bit-for-bit, which is what makes this a cross-platform
 /// determinism proof.
-const GOLDEN_HASH_L6_SEED42: u64 = 0x7533_a0e9_ea9a_55b4;
+///
+/// History: regenerated 2026-08-19 when the noise stage switched its seed
+/// derivation to the sanctioned sub_rng path (decision log).
+const GOLDEN_HASH_L6_SEED42: u64 = 0xa86a_7471_79a3_5a46;
 
 #[test]
 fn same_seed_same_hash_twice() {

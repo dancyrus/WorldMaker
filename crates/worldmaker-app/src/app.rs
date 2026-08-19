@@ -166,18 +166,20 @@ impl WorldApp {
             pick_hint: None,
             frame_times: Vec::with_capacity(240),
             last_frame: Instant::now(),
-            script_state: if script.screenshots_dir.is_some() {
-                ScriptState::Shot {
-                    stage: 0,
-                    frames: 0,
-                    requested: false,
-                }
-            } else if script.perf_out.is_some() {
+            // Perf runs first when both flags are given; its completion chains
+            // into the screenshot script so neither output is silently lost.
+            script_state: if script.perf_out.is_some() {
                 ScriptState::Perf {
                     stage: 0,
                     frames: 0,
                     started: None,
                     fps: Vec::new(),
+                }
+            } else if script.screenshots_dir.is_some() {
+                ScriptState::Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
                 }
             } else {
                 ScriptState::Idle
@@ -458,7 +460,16 @@ impl WorldApp {
                     } else {
                         let fps_taken = std::mem::take(fps);
                         self.write_perf_results(&fps_taken);
-                        self.script_state = ScriptState::Closing;
+                        // Chain into screenshots if both flags were given.
+                        self.script_state = if self.script.screenshots_dir.is_some() {
+                            ScriptState::Shot {
+                                stage: 0,
+                                frames: 0,
+                                requested: false,
+                            }
+                        } else {
+                            ScriptState::Closing
+                        };
                     }
                 }
             }

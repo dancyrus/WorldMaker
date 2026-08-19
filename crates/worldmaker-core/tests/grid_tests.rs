@@ -24,6 +24,16 @@ fn vertex_count_matches_formula_per_level() {
     assert_eq!(cell_count_for_level(9), 2_621_442);
 }
 
+/// L9 (2.6M cells) is too heavy for every CI run; execute explicitly with
+/// `cargo test --release -- --ignored`. The perf harness also builds it.
+#[test]
+#[ignore = "heavy: 2.6M-cell build; run with --ignored"]
+fn generates_l9_without_panic() {
+    let g = Grid::build(9);
+    assert_eq!(g.cell_count(), cell_count_for_level(9));
+    assert_eq!(g.pentagon_count(), 12);
+}
+
 #[test]
 fn generates_l6_through_l8_without_panic() {
     for level in 6..=8 {

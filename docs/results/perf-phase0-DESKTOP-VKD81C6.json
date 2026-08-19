@@ -3,15 +3,15 @@
   "date": "2026-08-19",
   "app_version": "0.1.0",
   "metrics": {
-    "flat_fps": 2040.5,
+    "flat_fps": 2224.7,
     "fps_grid_level": 7,
     "fps_vsync_off": true,
-    "globe_fps": 1884.7,
-    "grid_build_ms_L6": 7.8,
-    "grid_build_ms_L7": 19.6,
-    "grid_build_ms_L8": 78.2,
-    "grid_build_ms_L9": 457.8,
+    "globe_fps": 2130.7,
+    "grid_build_ms_L6": 5.1,
+    "grid_build_ms_L7": 18.8,
+    "grid_build_ms_L8": 76.9,
+    "grid_build_ms_L9": 377.1,
     "render_mesh_decimated": false,
-    "split_fps": 1994.6
+    "split_fps": 2041.8
   }
 }

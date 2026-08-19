@@ -98,10 +98,15 @@ const STEP_RAD: f32 = 0.08726646259971647; // 5 degrees
 
 // Invert normalized map coords -> (lat, lon); w = 1 when inside the outline.
 fn map_invert(proj: f32, mx: f32, my: f32) -> vec3<f32> {
-    if abs(my) > 1.0 || abs(mx) > 1.0001 {
+    if abs(my) > 1.0 {
         return vec3<f32>(0.0, 0.0, 0.0);
     }
     if proj < 0.5 {
+        // Strict gate, matching core Projection::invert exactly, so the
+        // rendered map and the CPU cursor readout agree on every pixel.
+        if abs(mx) > 1.0 {
+            return vec3<f32>(0.0, 0.0, 0.0);
+        }
         return vec3<f32>(my * PI * 0.5, mx * PI, 1.0);
     }
     // Robinson: |y| -> |lat| by inverse-interpolating the Y column.
