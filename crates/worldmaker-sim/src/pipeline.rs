@@ -6,6 +6,7 @@
 //! changes (or an upstream stage re-ran). Later phases add edit overlays and
 //! keyframed history on the same skeleton.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use worldmaker_core::hash::{fnv1a_continue, FNV_OFFSET};
@@ -16,16 +17,25 @@ pub struct StageContext {
     pub master_seed: u64,
 }
 
+static NEXT_WORLD_ID: AtomicU64 = AtomicU64::new(1);
+
 /// The world being built: the grid plus all per-cell fields produced so far.
 pub struct WorldState {
     pub grid: Arc<Grid>,
     pub fields: FieldStore,
+    /// Unique per instance: cached stage outputs live in this world's fields,
+    /// so the pipeline's cache is only valid against the same instance.
+    id: u64,
 }
 
 impl WorldState {
     pub fn new(grid: Arc<Grid>) -> Self {
         let cell_count = grid.cell_count();
-        WorldState { grid, fields: FieldStore::new(cell_count) }
+        WorldState {
+            grid,
+            fields: FieldStore::new(cell_count),
+            id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
+        }
     }
 }
 
@@ -51,8 +61,13 @@ struct StageSlot {
 }
 
 /// Fixed-order pipeline with per-stage cache keys and downstream dirtying.
+///
+/// Cache entries describe fields written into the last `WorldState` this
+/// pipeline ran against; handing in a different world invalidates everything
+/// (the outputs live in the world, not in the pipeline).
 pub struct Pipeline {
     slots: Vec<StageSlot>,
+    last_world: Option<u64>,
 }
 
 impl Default for Pipeline {
@@ -63,12 +78,18 @@ impl Default for Pipeline {
 
 impl Pipeline {
     pub fn new() -> Self {
-        Pipeline { slots: Vec::new() }
+        Pipeline {
+            slots: Vec::new(),
+            last_world: None,
+        }
     }
 
     /// Append a stage. Order of registration is execution order.
     pub fn push(&mut self, stage: Box<dyn Stage>) {
-        self.slots.push(StageSlot { stage, last_key: None });
+        self.slots.push(StageSlot {
+            stage,
+            last_key: None,
+        });
     }
 
     /// Forget cached results for the named stage and everything after it.
@@ -83,10 +104,17 @@ impl Pipeline {
 
     /// Run all stages in order, skipping any whose cache key is unchanged.
     /// Returns the ids of the stages that actually ran.
-    pub fn run(&mut self, ctx: &StageContext, world: &mut WorldState) -> anyhow::Result<Vec<&'static str>> {
+    pub fn run(
+        &mut self,
+        ctx: &StageContext,
+        world: &mut WorldState,
+    ) -> anyhow::Result<Vec<&'static str>> {
         let mut ran = Vec::new();
         let mut upstream_key: u64 = FNV_OFFSET;
-        let mut upstream_dirty = false;
+        // A different WorldState instance means none of our cached outputs
+        // exist in it — everything is dirty regardless of matching keys.
+        let mut upstream_dirty = self.last_world != Some(world.id);
+        self.last_world = Some(world.id);
         for slot in &mut self.slots {
             let mut key = upstream_key;
             key = fnv1a_continue(key, slot.stage.id().as_bytes());
@@ -139,8 +167,16 @@ mod tests {
         let runs_a = StdArc::new(AtomicUsize::new(0));
         let runs_b = StdArc::new(AtomicUsize::new(0));
         let mut pipe = Pipeline::new();
-        pipe.push(Box::new(CountingStage { id: "a", params: 1, runs: runs_a.clone() }));
-        pipe.push(Box::new(CountingStage { id: "b", params: 1, runs: runs_b.clone() }));
+        pipe.push(Box::new(CountingStage {
+            id: "a",
+            params: 1,
+            runs: runs_a.clone(),
+        }));
+        pipe.push(Box::new(CountingStage {
+            id: "b",
+            params: 1,
+            runs: runs_b.clone(),
+        }));
 
         let ctx = StageContext { master_seed: 42 };
         pipe.run(&ctx, &mut world).unwrap();
@@ -159,5 +195,31 @@ mod tests {
         pipe.run(&ctx2, &mut world).unwrap();
         assert_eq!(runs_a.load(Ordering::SeqCst), 2);
         assert_eq!(runs_b.load(Ordering::SeqCst), 3);
+    }
+
+    /// The cache must not survive a change of WorldState: outputs live in the
+    /// world, so a fresh world with an identical cache key still needs every
+    /// stage to run.
+    #[test]
+    fn fresh_world_invalidates_cache() {
+        let grid = Arc::new(Grid::build(2));
+        let runs = StdArc::new(AtomicUsize::new(0));
+        let mut pipe = Pipeline::new();
+        pipe.push(Box::new(CountingStage {
+            id: "a",
+            params: 1,
+            runs: runs.clone(),
+        }));
+        let ctx = StageContext { master_seed: 42 };
+
+        let mut world_a = WorldState::new(grid.clone());
+        pipe.run(&ctx, &mut world_a).unwrap();
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+
+        // Same seed, same grid level, but a different world instance.
+        let mut world_b = WorldState::new(grid);
+        let ran = pipe.run(&ctx, &mut world_b).unwrap();
+        assert_eq!(ran, vec!["a"], "stage must re-run against a fresh world");
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
     }
 }

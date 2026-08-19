@@ -12,12 +12,26 @@ fn vertex_count_matches_formula_per_level() {
             cell_count_for_level(level),
             "cell count wrong at level {level}"
         );
-        assert_eq!(g.triangles.len() as u64, 20 * 4u64.pow(level), "face count wrong at L{level}");
+        assert_eq!(
+            g.triangles.len() as u64,
+            20 * 4u64.pow(level),
+            "face count wrong at L{level}"
+        );
     }
     assert_eq!(cell_count_for_level(6), 40_962);
     assert_eq!(cell_count_for_level(7), 163_842);
     assert_eq!(cell_count_for_level(8), 655_362);
     assert_eq!(cell_count_for_level(9), 2_621_442);
+}
+
+/// L9 (2.6M cells) is too heavy for every CI run; execute explicitly with
+/// `cargo test --release -- --ignored`. The perf harness also builds it.
+#[test]
+#[ignore = "heavy: 2.6M-cell build; run with --ignored"]
+fn generates_l9_without_panic() {
+    let g = Grid::build(9);
+    assert_eq!(g.cell_count(), cell_count_for_level(9));
+    assert_eq!(g.pentagon_count(), 12);
 }
 
 #[test]
@@ -38,7 +52,10 @@ fn pentagon_count_is_12_and_degrees_are_5_or_6() {
         assert!(deg == 5 || deg == 6, "cell {c} has degree {deg}");
         if deg == 5 {
             pentagons += 1;
-            assert!(c < 12, "pentagons must be the 12 original icosahedron vertices");
+            assert!(
+                c < 12,
+                "pentagons must be the 12 original icosahedron vertices"
+            );
         }
     }
     assert_eq!(pentagons, 12);
@@ -139,6 +156,9 @@ fn latlon_conversion_roundtrips() {
         let p = latlon_to_unit(g.lat[c as usize], g.lon[c as usize]);
         let q = g.positions[c as usize];
         let dot = p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
-        assert!(dot > 0.999_99, "lat/lon of cell {c} does not point back at it (dot {dot})");
+        assert!(
+            dot > 0.999_99,
+            "lat/lon of cell {c} does not point back at it (dot {dot})"
+        );
     }
 }

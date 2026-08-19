@@ -11,3 +11,4 @@ worldmaker-core = { workspace = true }
 rayon = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+rand.workspace = true

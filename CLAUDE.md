@@ -21,7 +21,7 @@ including GitHub (repo: dancyrus/WorldMaker).
 5. No network calls, no telemetry in the app. Cargo.lock is committed.
 6. Approved deps: eframe/egui, wgpu, rayon, rand, rand_pcg, serde, serde_json,
    image, log + a file logger, anyhow, thiserror. Anything else needs one line of
-   why in docs/plan/decision-log.md (current additions: flexi_logger, pollster).
+   why in docs/plan/decision-log.md (current: flexi_logger, pollster, bytemuck).
 7. Determinism: one u64 master seed; PCG sub-streams keyed by (seed, stage, purpose);
    fixed iteration order; no HashMap iteration in sim paths; no fast-math.
 8. Performance budgets benchmark to Dan's PC only (i7-12700KF, RTX 3080).

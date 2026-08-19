@@ -62,7 +62,10 @@ fn globe_and_flat_agree_on_cell_under_latlon() {
 #[test]
 fn mapping_edge_cases() {
     let g = Grid::build(5);
-    let poles = [(std::f32::consts::FRAC_PI_2, 0.0), (-std::f32::consts::FRAC_PI_2, 0.0)];
+    let poles = [
+        (std::f32::consts::FRAC_PI_2, 0.0),
+        (-std::f32::consts::FRAC_PI_2, 0.0),
+    ];
     for (lat, lon) in poles {
         let cell = g.nearest_cell(latlon_to_unit(lat, lon), None);
         for proj in Projection::ALL {

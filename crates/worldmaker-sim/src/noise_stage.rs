@@ -6,10 +6,12 @@
 //! polynomial smoothing touch the data), so the elevation field hashes
 //! bit-identically across platforms — that hash is a committed regression test.
 
+use rand::RngCore;
 use rayon::prelude::*;
 
 use crate::pipeline::{Stage, StageContext, WorldState};
 use worldmaker_core::hash::splitmix64;
+use worldmaker_core::rng::sub_rng;
 
 /// Name of the field this stage writes.
 pub const ELEVATION_FIELD: &str = "elevation_m";
@@ -35,9 +37,11 @@ impl Stage for NoiseElevationStage {
     }
 
     fn run(&self, ctx: &StageContext, world: &mut WorldState) -> anyhow::Result<()> {
-        // Sub-seed for this stage, derived the same way sub_rng derives streams;
-        // the lattice hash consumes it directly.
-        let seed = splitmix64(ctx.master_seed ^ 0x7761_6c6b_5f30_5f65); // "walk_0_e"
+        // Base seed for the noise lattice, drawn through the one sanctioned
+        // RNG path: a PCG sub-stream keyed by (master seed, stage id, purpose).
+        // The lattice hash then consumes this u64 directly (value noise needs
+        // random access by coordinate, not a sequential stream).
+        let seed = sub_rng(ctx.master_seed, self.id(), "lattice-noise").next_u64();
         let grid = world.grid.clone();
         let octaves = self.octaves;
         let out = world.fields.get_or_insert_mut(ELEVATION_FIELD);
