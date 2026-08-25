@@ -27,6 +27,21 @@ including GitHub (repo: dancyrus/WorldMaker).
 8. Performance budgets benchmark to Dan's PC only (i7-12700KF, RTX 3080).
    Measure, don't guess.
 
+## Machine note — 2026-08-25
+
+Dan's PC (i7-12700KF/RTX 3080) is packed for a move until ~mid-September 2026.
+Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
+- Wherever rule 8 or an open order says numbers are measured "on Dan's PC",
+  record them on this Mac instead, machine-labelled (Daniels-MacBook-Air).
+  They are records, not pass/fail gates; re-measure PC-gated numbers when the
+  PC is back.
+- WO-0003's preset decisions stand; its session records Air timings for them.
+- The macOS CI job stays informational.
+- Proven 2026-08-25: full test suite + all goldens pass on Apple Silicon
+  bit-for-bit; sim wall times ~15% faster than the PC; rendering 7–25x slower
+  in raw fps but ≥55 fps in every view. Dan opens the app by double-clicking
+  WorldMaker.command.
+
 ## Layout
 
 - crates/worldmaker-core — grid, RNG, fields, projections. No internal deps.
@@ -77,3 +92,14 @@ including GitHub (repo: dancyrus/WorldMaker).
   etc. differ between MSVC and glibc in the last ulp and break the goldens.
 - rayon float reductions are order-nondeterministic: cross-cell aggregates in
   sim code must be integer counts or serial id-ordered loops.
+- The workspace built and passed every test on Apple Silicon unmodified — the
+  libm-free dmath + serial-reduction design holds: Windows-made goldens
+  reproduce bit-for-bit on ARM.
+- macOS sets neither COMPUTERNAME nor HOSTNAME for non-interactive processes;
+  machine_name() falls back to `hostname -s`, else results files say
+  "unknown-machine".
+- macOS trackpad pinch reaches egui as zoom_delta (ctrl+scroll maps there
+  too), never smooth_scroll_delta — canvases must fold both into zoom.
+- A .command Finder launcher runs in a fresh Terminal that may lack cargo on
+  PATH: export ~/.cargo/bin explicitly, and detach the app with `&` + disown
+  so closing the Terminal window doesn't kill it.
