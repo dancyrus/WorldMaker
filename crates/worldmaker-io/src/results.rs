@@ -42,12 +42,21 @@ impl ResultsFile {
 }
 
 /// The local machine's name, for labelling results files.
-/// Windows sets COMPUTERNAME; most Unixes set HOSTNAME (CI sets neither
-/// reliably, hence the fallback).
+/// Windows sets COMPUTERNAME; some Unix shells export HOSTNAME; macOS (and
+/// non-interactive Unix shells) set neither, so ask the OS directly.
 pub fn machine_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown-machine".to_string())
+    if let Ok(name) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
+        if !name.trim().is_empty() {
+            return name.trim().to_string();
+        }
+    }
+    if let Ok(out) = std::process::Command::new("hostname").arg("-s").output() {
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    "unknown-machine".to_string()
 }
 
 /// Today's UTC date as YYYY-MM-DD, without a date-time dependency

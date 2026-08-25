@@ -564,9 +564,13 @@ impl WorldApp {
             self.globe.pitch = (self.globe.pitch + d.y * k).clamp(-1.55, 1.55);
         }
         if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                self.globe.zoom = (self.globe.zoom * (scroll * 0.002).exp()).clamp(0.4, 50.0);
+            // Trackpad pinch (and ctrl+scroll) arrives as zoom_delta, wheel /
+            // two-finger scroll as smooth_scroll_delta; egui never reports the
+            // same gesture in both, so combining them is safe.
+            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let factor = (scroll * 0.002).exp() * pinch;
+            if factor != 1.0 {
+                self.globe.zoom = (self.globe.zoom * factor).clamp(0.4, 50.0);
             }
         }
 
@@ -614,10 +618,11 @@ impl WorldApp {
             self.flat_pan[1] += d.y;
         }
         if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
+            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let factor = (scroll * 0.002).exp() * pinch;
+            if factor != 1.0 {
                 let old_zoom = self.flat_zoom;
-                let new_zoom = (old_zoom * (scroll * 0.002).exp()).clamp(0.5, 80.0);
+                let new_zoom = (old_zoom * factor).clamp(0.5, 80.0);
                 if let Some(pos) = response.hover_pos() {
                     // Keep the map point under the cursor fixed while zooming.
                     let c = rect.center();

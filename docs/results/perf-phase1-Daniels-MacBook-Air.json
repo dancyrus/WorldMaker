@@ -1,0 +1,17 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-25",
+  "app_version": "0.1.0",
+  "metrics": {
+    "flat_fps": 55.6,
+    "fps_grid_level": 7,
+    "fps_vsync_off": true,
+    "globe_fps": 214.9,
+    "grid_build_ms_L6": 11.2,
+    "grid_build_ms_L7": 28.2,
+    "grid_build_ms_L8": 87.8,
+    "grid_build_ms_L9": 384.4,
+    "layer": "elevation",
+    "split_fps": 91.1
+  }
+}
