@@ -158,6 +158,10 @@ pub struct WorldApp {
 
 impl WorldApp {
     pub fn new(cc: &eframe::CreationContext<'_>, script: Script) -> Self {
+        // Match egui's ctrl/cmd+scroll zoom rate (default 1/200) to the
+        // canvases' plain-scroll rate so both zoom at the same speed.
+        cc.egui_ctx
+            .options_mut(|o| o.input_options.scroll_zoom_speed = 0.002);
         let render_state = cc
             .wgpu_render_state
             .as_ref()
@@ -569,7 +573,9 @@ impl WorldApp {
             // same gesture in both, so combining them is safe.
             let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             let factor = (scroll * 0.002).exp() * pinch;
-            if factor != 1.0 {
+            // is_finite: two coincident touch points make zoom_delta() 0/0 = NaN,
+            // and NaN would stick in the zoom state forever (clamp propagates it).
+            if factor.is_finite() && factor > 0.0 && factor != 1.0 {
                 self.globe.zoom = (self.globe.zoom * factor).clamp(0.4, 50.0);
             }
         }
@@ -620,7 +626,7 @@ impl WorldApp {
         if response.hovered() {
             let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             let factor = (scroll * 0.002).exp() * pinch;
-            if factor != 1.0 {
+            if factor.is_finite() && factor > 0.0 && factor != 1.0 {
                 let old_zoom = self.flat_zoom;
                 let new_zoom = (old_zoom * factor).clamp(0.5, 80.0);
                 if let Some(pos) = response.hover_pos() {
