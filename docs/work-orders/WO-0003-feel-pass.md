@@ -26,13 +26,13 @@ unchecked box.
 
 ## Stage U — understand (no code changes)
 
-- [ ] Reader (a): app.rs input handling + UI state mapped
-- [ ] Reader (b): render.rs / shaders.wgsl / layers.rs, incl. CPU palette bake
-- [ ] Reader (c): tectonics/ incl. setup.rs seeding + ±300 m fBm in elevation.rs
-- [ ] Reader (d): goldens, determinism tests, harness.rs, results-JSON schema
-- [ ] docs/plan/feel-pass-design.md assembled from reader findings
-- [ ] BEFORE screenshots from main @ 9d5d272 → docs/media/feel-pass/before/
-      (Standard L7, app default seed, final era)
+- [x] Reader (a): app.rs input handling + UI state mapped
+- [x] Reader (b): render.rs / shaders.wgsl / layers.rs, incl. CPU palette bake
+- [x] Reader (c): tectonics/ incl. setup.rs seeding + ±300 m fBm in elevation.rs
+- [x] Reader (d): goldens, determinism tests, harness.rs, results-JSON schema
+- [x] docs/plan/feel-pass-design.md assembled from reader findings
+- [x] BEFORE screenshots from main @ 9d5d272 → docs/media/feel-pass/before/
+      (Standard L7, seed "cyrus", final era 500 My; 6 views committed)
 
 ## Stage D — design
 
