@@ -5,6 +5,7 @@
 mod app;
 mod harness;
 mod layers;
+mod pending_edits;
 mod render;
 
 use std::path::PathBuf;
