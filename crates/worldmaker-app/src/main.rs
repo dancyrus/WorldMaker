@@ -7,6 +7,7 @@ mod harness;
 mod layers;
 mod pending_edits;
 mod render;
+mod worldgen;
 
 use std::path::PathBuf;
 use std::sync::Arc;

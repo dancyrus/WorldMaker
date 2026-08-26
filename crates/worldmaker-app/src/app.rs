@@ -12,8 +12,8 @@ use eframe::egui;
 use worldmaker_core::grid::{latlon_to_unit, Grid};
 use worldmaker_core::hash::seed_from_text;
 use worldmaker_core::Projection;
-use worldmaker_sim::tectonics::{TectonicsHistory, TectonicsParams, TectonicsStage};
-use worldmaker_sim::{Cancelled, Pipeline, Progress, StageContext, WorldState};
+use worldmaker_sim::tectonics::{TectonicsHistory, TectonicsParams};
+use worldmaker_sim::{Cancelled, Progress, WorldState};
 
 use crate::layers::{self, BakeOverlay, Layer};
 use crate::render::{
@@ -323,15 +323,9 @@ impl WorldApp {
         let seed = self.master_seed;
         let params = self.current_params();
         std::thread::spawn(move || {
-            let mut world = WorldState::new(grid);
-            let mut pipeline = Pipeline::new();
-            pipeline.push(Box::new(TectonicsStage::new(params)));
-            let mut ctx = StageContext::new(seed);
-            ctx.progress = Some(worker_progress);
             let t0 = Instant::now();
-            let result = pipeline
-                .run(&ctx, &mut world)
-                .map(|_| (world, t0.elapsed().as_secs_f64()));
+            let result = crate::worldgen::build_world(grid, seed, params, Some(worker_progress))
+                .map(|(world, _params_hash)| (world, t0.elapsed().as_secs_f64()));
             let _ = tx.send(result);
         });
         self.job = Some(SimJob {
