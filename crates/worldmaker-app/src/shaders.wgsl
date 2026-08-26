@@ -49,6 +49,7 @@ const CAT_CONTINENT: u32 = 65536u; // 1 << 16
 
 // Overlay-word bits (pending_edits.rs, frozen in feel-pass-design.md D1).
 const OVERLAY_TINT_MASK: u32 = 0xFu;
+const OVERLAY_FORCE_OUTLINE: u32 = 16u; // 1 << 4
 const OVERLAY_ALPHA_SHIFT: u32 = 8u;
 
 // Cell centers as tightly packed floats (array<f32>, indexed 3c..3c+2, so no
@@ -263,8 +264,7 @@ fn resolve_fragment(
     }
 
     // Pending-edit overlay tint, composited from the winner cell's word at
-    // the word's alpha (leg 2: tint only; the region outline lands in leg 3
-    // on the bisector machinery above).
+    // the word's alpha.
     let ow = overlay[cid_win];
     let code = ow & OVERLAY_TINT_MASK;
     if code != 0u {
@@ -281,6 +281,29 @@ fn resolve_fragment(
             alpha = 160.0; // frozen renderer default
         }
         color = mix(color, tint, alpha / 255.0);
+    }
+
+    // Pending-overlay region outline (feel-pass-design.md D1, d3a section
+    // 7.4): the debug bisector-margin machinery above, keyed on overlay
+    // words. For each non-winner candidate whose word differs from the
+    // winner's (or where either sets FORCE_OUTLINE), a crisp ~1.8 px white
+    // line on the true Voronoi edge, on both canvases. The margins and
+    // their fwidths are computed unconditionally (smooth, uniform control
+    // flow); only `line` is gated, so a zeroed overlay leaves `line` at 0
+    // and mix(color, ., 0) - i.e. the exact leg-2 bytes.
+    let d_win_o = dot(p, pos3(cid_win));
+    var line_o = 0.0;
+    for (var k = 0u; k < 3u; k = k + 1u) {
+        let cid = cid_arr[k];
+        let m_k = d_win_o - dot(p, pos3(cid));
+        let aa = max(1.8 * fwidth(m_k), 1e-9);
+        let ow_k = overlay[cid];
+        if cid != cid_win && (ow_k != ow || ((ow_k | ow) & OVERLAY_FORCE_OUTLINE) != 0u) {
+            line_o = max(line_o, 1.0 - smoothstep(0.0, aa, m_k));
+        }
+    }
+    if line_o > 0.0 {
+        color = mix(color, vec3<f32>(1.0, 1.0, 1.0), line_o * 0.9);
     }
     return color;
 }
