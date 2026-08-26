@@ -3,9 +3,16 @@
 //!
 //! `SceneResources` lives in the egui renderer's callback resources. Each
 //! frame the UI submits a `GlobeCallback` / `FlatCallback` carrying the
-//! current `WorldBundle` (grid + elevation + cell-id raster) and view
-//! parameters; `prepare` uploads whatever changed (tracked by generation
-//! counters) and `paint` draws into egui's render pass.
+//! current `WorldBundle` (grid + per-cell shading values + overlay + cell-id
+//! hint raster) and view parameters; `prepare` uploads whatever changed
+//! (tracked by generation counters) and `paint` draws into egui's render
+//! pass.
+//!
+//! Since WO-0003 Fix 3 (d3a) both canvases shade PER FRAGMENT: the CPU bakes
+//! per-cell scalar VALUES (layers::bake_values), the palette lives in a GPU
+//! LUT baked from the same Rust ramps, and sea level / Detail / debug flags
+//! are pure uniform writes. The globe draws unindexed (corner-fetch from
+//! storage) so every fragment knows its triangle's three corner cells.
 
 use std::sync::Arc;
 
@@ -14,26 +21,40 @@ use eframe::wgpu::util::DeviceExt;
 
 use worldmaker_core::Grid;
 
+use crate::boundaries::BoundarySet;
+use crate::layers::{self, Layer};
+
 /// Width of the equirectangular cell-id lookup raster. Depends only on the
 /// grid level, so seed and sea-level changes never touch it.
 pub const CELL_ID_TEX_W: u32 = 4096;
 pub const CELL_ID_TEX_H: u32 = 2048;
 
-/// Immutable snapshot of the world the renderer draws. Rebuilt (as a new Arc)
-/// when the grid or the baked layer colors change.
+/// Immutable snapshot of the world the renderer draws. Republished (as a new
+/// Arc) by rebake; the three generations tell `sync_world` what to re-upload.
 pub struct WorldBundle {
     pub grid: Arc<Grid>,
-    /// Per-cell RGBA8 colors baked by the active layer (layers.rs). A layer
-    /// switch, timeline scrub, or sea-level nudge is just a rebake + one
-    /// buffer upload.
-    pub colors: Vec<u32>,
-    /// Equirectangular raster of cell ids, CELL_ID_TEX_W × CELL_ID_TEX_H.
-    /// Arc'd: depends only on the grid level, shared across every rebake.
+    /// Per-cell shading record for the active layer (layers::bake_values):
+    /// x = f32 scalar bits, y = category word (d3a §2.2). Arc'd so an
+    /// overlay-only republish is free for the values.
+    pub values: Arc<Vec<[u32; 2]>>,
+    /// A↔C overlay words, one per cell (feel-pass-design.md § D1). Rebuilt
+    /// independently of values on every rebake.
+    pub overlay: Vec<u32>,
+    /// Equirectangular *hint* raster, CELL_ID_TEX_W × CELL_ID_TEX_H R32Uint.
+    /// Arc'd: depends only on the grid level. Leg 3 demotes it from flat
+    /// truth to walk hint (d3a §4).
     pub cell_ids: Arc<Vec<u32>>,
+    /// Smoothed plate-boundary ribbons for the viewed keyframe (d3a §8);
+    /// empty when the layer draws none. Extraction + drawing land in leg 3.
+    pub boundaries: Arc<BoundarySet>,
     /// Bumped when the grid (and cell_ids) change.
     pub grid_gen: u64,
-    /// Bumped when the colors change (includes grid changes).
-    pub field_gen: u64,
+    /// Bumped when `values` changes (layer switch, scrub, new history).
+    /// Always bumps with grid_gen.
+    pub values_gen: u64,
+    /// Bumped when `overlay` changes (any pending-stroke mutation).
+    /// Always bumps with grid_gen.
+    pub overlay_gen: u64,
 }
 
 impl WorldBundle {
@@ -122,11 +143,85 @@ pub fn rotate_inv(m: &[[f32; 4]; 4], v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+// ----- live shading parameters (uniform-only view controls) -----
+
+/// `layer_flags` bit layout (shader must match): bits 0..=3 layer id
+/// (0 elevation, 1 plates, 2 crust age, 3 thickness); bit 8 debug true-cell
+/// boundaries; bit 9 debug legacy one-cell boundary bands.
+pub const LF_DEBUG_CELL_BOUNDS: u32 = 1 << 8;
+pub const LF_DEBUG_LEGACY_BANDS: u32 = 1 << 9;
+
+/// Shared shading sub-struct embedded in both uniform blocks (d3a §6).
+/// Sea level, Detail, layer and debug flags travel here — pure LIVE view
+/// controls: writing them costs one uniform upload, never a rebake, and the
+/// render-only guard test proves the world-building path cannot see them.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ShadeParams {
+    /// Master seed low/high u32 lanes — the u64 never passes through f32.
+    pub seed_lo: u32,
+    pub seed_hi: u32,
+    pub layer_flags: u32,
+    /// Render-detail fBm octave count (sweep default; leg 4 finalizes).
+    pub octaves: u32,
+    pub sea_level_m: f32,
+    /// Detail slider t × the default amplitude, meters. 0 = detail off.
+    pub detail_amp_m: f32,
+    /// Mean cell angular spacing sqrt(4π / cell_count), radians; the shader
+    /// derives the base noise frequency from it.
+    pub detail_cell_rad: f32,
+    pub _pad: f32,
+}
+
+/// Pack the live view controls into the uniform sub-struct. This is the one
+/// funnel through which Detail and sea level reach the GPU — the guard test
+/// in worldgen.rs packs two extreme variants and proves the world-building
+/// path is unaffected.
+pub fn pack_shade_params(
+    master_seed: u64,
+    layer_flags: u32,
+    octaves: u32,
+    sea_level_m: f32,
+    detail_amp_m: f32,
+    cell_count: u32,
+) -> ShadeParams {
+    ShadeParams {
+        seed_lo: (master_seed & 0xffff_ffff) as u32,
+        seed_hi: (master_seed >> 32) as u32,
+        layer_flags,
+        octaves,
+        sea_level_m,
+        detail_amp_m,
+        detail_cell_rad: (4.0 * std::f32::consts::PI / cell_count.max(1) as f32).sqrt(),
+        _pad: 0.0,
+    }
+}
+
+/// Build the `layer_flags` word for the active layer + debug toggles.
+pub fn layer_flags(layer: Layer, debug_cell_bounds: bool, debug_legacy_bands: bool) -> u32 {
+    let id = match layer {
+        Layer::Elevation => 0u32,
+        Layer::Plates => 1,
+        Layer::CrustAge => 2,
+        Layer::Thickness => 3,
+    };
+    id | if debug_cell_bounds {
+        LF_DEBUG_CELL_BOUNDS
+    } else {
+        0
+    } | if debug_legacy_bands {
+        LF_DEBUG_LEGACY_BANDS
+    } else {
+        0
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GlobeUniforms {
     rot: [[f32; 4]; 4],
     params: [f32; 4],
+    shade: ShadeParams,
 }
 
 #[repr(C)]
@@ -136,6 +231,7 @@ struct FlatUniforms {
     half_px: [f32; 2],
     misc: [f32; 4],
     tex: [f32; 4],
+    shade: ShadeParams,
 }
 
 pub struct SceneResources {
@@ -145,85 +241,103 @@ pub struct SceneResources {
     flat_bind_layout: wgpu::BindGroupLayout,
     globe_uniform: wgpu::Buffer,
     flat_uniform: wgpu::Buffer,
+    /// 256×8 palette LUT baked once from layers.rs's Rust ramps; the same
+    /// texture view is entered in BOTH bind groups.
+    _palette_tex: wgpu::Texture,
+    palette_view: wgpu::TextureView,
 
     // World-dependent resources (recreated when generations change).
-    vertex_buf: Option<wgpu::Buffer>,
-    index_buf: Option<wgpu::Buffer>,
-    index_count: u32,
-    color_buf: Option<wgpu::Buffer>,
+    positions_buf: Option<wgpu::Buffer>,
+    tri_ids_buf: Option<wgpu::Buffer>,
+    /// 3 × triangle count: the unindexed globe draw's vertex count.
+    vertex_count: u32,
+    values_buf: Option<wgpu::Buffer>,
+    overlay_buf: Option<wgpu::Buffer>,
     cell_id_tex: Option<wgpu::Texture>,
     globe_bind: Option<wgpu::BindGroup>,
     flat_bind: Option<wgpu::BindGroup>,
     grid_gen: u64,
-    field_gen: u64,
+    values_gen: u64,
+    overlay_gen: u64,
+}
+
+fn storage_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn uniform_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
 }
 
 impl SceneResources {
-    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target_format: wgpu::TextureFormat,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("worldmaker-shaders"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders.wgsl").into()),
         });
 
+        // Binding slots are shared between the two pipelines wherever the
+        // WGSL module shares the resource (positions 1, values 3, overlay 4,
+        // palette 5): module-scope vars serve both entry points, so shared
+        // resources must agree on slots; per-canvas resources (uniforms at 0,
+        // tri_ids / cell_ids at 2) may reuse each other's slots because no
+        // single entry point touches both.
         let globe_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globe-bind-layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                storage_entry(1, wgpu::ShaderStages::VERTEX_FRAGMENT), // positions
+                storage_entry(2, wgpu::ShaderStages::VERTEX),          // tri_ids
+                storage_entry(3, wgpu::ShaderStages::FRAGMENT),        // cell_values
+                storage_entry(4, wgpu::ShaderStages::FRAGMENT),        // overlay
+                texture_entry(5, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         });
 
         let flat_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("flat-bind-layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                uniform_entry(0, wgpu::ShaderStages::FRAGMENT),
+                storage_entry(1, wgpu::ShaderStages::FRAGMENT), // positions
+                texture_entry(2, wgpu::TextureSampleType::Uint), // cell_ids hint
+                storage_entry(3, wgpu::ShaderStages::FRAGMENT), // cell_values
+                storage_entry(4, wgpu::ShaderStages::FRAGMENT), // overlay
+                texture_entry(5, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         });
 
@@ -245,11 +359,9 @@ impl SceneResources {
                 module: &shader,
                 entry_point: Some("vs_globe"),
                 compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 12,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                })],
+                // Unindexed corner-fetch draw: no vertex buffers at all — the
+                // vertex shader pulls corner ids + positions from storage.
+                buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -317,6 +429,44 @@ impl SceneResources {
             mapped_at_creation: false,
         });
 
+        // Palette LUT: baked once from the Rust ramps, uploaded once, bound
+        // to both pipelines. Rgba8Unorm (NOT -srgb): bytes pass through, all
+        // color math stays in sRGB-encoded space (d3a §2.3 / D4).
+        let palette_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("palette-lut"),
+            size: wgpu::Extent3d {
+                width: layers::LUT_W,
+                height: layers::LUT_ROWS,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &palette_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &layers::bake_palette_lut(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(layers::LUT_W * 4),
+                rows_per_image: Some(layers::LUT_ROWS),
+            },
+            wgpu::Extent3d {
+                width: layers::LUT_W,
+                height: layers::LUT_ROWS,
+                depth_or_array_layers: 1,
+            },
+        );
+        let palette_view = palette_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
         SceneResources {
             globe_pipeline,
             flat_pipeline,
@@ -324,39 +474,42 @@ impl SceneResources {
             flat_bind_layout,
             globe_uniform,
             flat_uniform,
-            vertex_buf: None,
-            index_buf: None,
-            index_count: 0,
-            color_buf: None,
+            _palette_tex: palette_tex,
+            palette_view,
+            positions_buf: None,
+            tri_ids_buf: None,
+            vertex_count: 0,
+            values_buf: None,
+            overlay_buf: None,
             cell_id_tex: None,
             globe_bind: None,
             flat_bind: None,
             grid_gen: 0,
-            field_gen: 0,
+            values_gen: 0,
+            overlay_gen: 0,
         }
     }
 
     /// Upload whatever parts of the world changed since the last frame.
     fn sync_world(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, world: &WorldBundle) {
-        if self.grid_gen != world.grid_gen {
+        let grid_changed = self.grid_gen != world.grid_gen;
+        if grid_changed {
             let grid = &world.grid;
-            let flat_positions: &[f32] = bytemuck::cast_slice(&grid.positions);
-            self.vertex_buf = Some(
+            self.positions_buf = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("cell-positions"),
+                    contents: bytemuck::cast_slice(&grid.positions),
+                    usage: wgpu::BufferUsages::STORAGE,
+                },
+            ));
+            self.tri_ids_buf = Some(
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("globe-vertices"),
-                    contents: bytemuck::cast_slice(flat_positions),
-                    usage: wgpu::BufferUsages::VERTEX,
+                    label: Some("globe-tri-ids"),
+                    contents: bytemuck::cast_slice(&grid.triangles),
+                    usage: wgpu::BufferUsages::STORAGE,
                 }),
             );
-            let indices: &[u32] = bytemuck::cast_slice(&grid.triangles);
-            self.index_buf = Some(
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("globe-indices"),
-                    contents: bytemuck::cast_slice(indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                }),
-            );
-            self.index_count = indices.len() as u32;
+            self.vertex_count = (grid.triangles.len() * 3) as u32;
 
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("cell-id-texture"),
@@ -392,29 +545,64 @@ impl SceneResources {
                 },
             );
             self.cell_id_tex = Some(tex);
-            // Elevation buffer is recreated below (field_gen always bumps with
-            // grid_gen); bind groups are rebuilt after that.
+            self.grid_gen = world.grid_gen;
+            // values_gen and overlay_gen always bump with grid_gen, so the
+            // right-sized buffers are recreated below and bind groups rebuilt.
         }
 
-        if self.field_gen != world.field_gen {
-            // Reuse the color buffer when only its contents changed (scrub,
-            // layer switch, sea-level drag): a queue write, no reallocation.
-            let expected_size = (world.colors.len() * 4) as u64;
-            match &self.color_buf {
-                Some(buf) if buf.size() == expected_size && self.grid_gen == world.grid_gen => {
-                    queue.write_buffer(buf, 0, bytemuck::cast_slice(&world.colors));
+        let mut rebind = grid_changed;
+        if self.values_gen != world.values_gen {
+            let bytes: &[u8] = bytemuck::cast_slice(world.values.as_slice());
+            match &self.values_buf {
+                // Reuse the buffer when only contents changed (scrub, layer
+                // switch): a queue write, no reallocation.
+                Some(buf) if buf.size() == bytes.len() as u64 && !grid_changed => {
+                    queue.write_buffer(buf, 0, bytes);
                 }
                 _ => {
-                    self.color_buf = Some(device.create_buffer_init(
+                    self.values_buf = Some(device.create_buffer_init(
                         &wgpu::util::BufferInitDescriptor {
-                            label: Some("cell-colors"),
-                            contents: bytemuck::cast_slice(&world.colors),
+                            label: Some("cell-values"),
+                            contents: bytes,
                             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         },
                     ));
                 }
             }
-            let colors = self.color_buf.as_ref().unwrap();
+            self.values_gen = world.values_gen;
+            rebind = true;
+        }
+
+        if self.overlay_gen != world.overlay_gen {
+            let bytes: &[u8] = bytemuck::cast_slice(world.overlay.as_slice());
+            match &self.overlay_buf {
+                Some(buf) if buf.size() == bytes.len() as u64 && !grid_changed => {
+                    queue.write_buffer(buf, 0, bytes);
+                }
+                _ => {
+                    self.overlay_buf = Some(device.create_buffer_init(
+                        &wgpu::util::BufferInitDescriptor {
+                            label: Some("cell-overlay"),
+                            contents: bytes,
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        },
+                    ));
+                }
+            }
+            self.overlay_gen = world.overlay_gen;
+            rebind = true;
+        }
+
+        if rebind {
+            let positions = self.positions_buf.as_ref().unwrap();
+            let tri_ids = self.tri_ids_buf.as_ref().unwrap();
+            let values = self.values_buf.as_ref().unwrap();
+            let overlay = self.overlay_buf.as_ref().unwrap();
+            let cell_id_view = self
+                .cell_id_tex
+                .as_ref()
+                .unwrap()
+                .create_view(&wgpu::TextureViewDescriptor::default());
             self.globe_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("globe-bind"),
                 layout: &self.globe_bind_layout,
@@ -425,15 +613,26 @@ impl SceneResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: colors.as_entire_binding(),
+                        resource: positions.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: tri_ids.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: values.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: overlay.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&self.palette_view),
                     },
                 ],
             }));
-            let tex_view = self
-                .cell_id_tex
-                .as_ref()
-                .unwrap()
-                .create_view(&wgpu::TextureViewDescriptor::default());
             self.flat_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("flat-bind"),
                 layout: &self.flat_bind_layout,
@@ -444,16 +643,26 @@ impl SceneResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: colors.as_entire_binding(),
+                        resource: positions.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&tex_view),
+                        resource: wgpu::BindingResource::TextureView(&cell_id_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: values.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: overlay.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&self.palette_view),
                     },
                 ],
             }));
-            self.grid_gen = world.grid_gen;
-            self.field_gen = world.field_gen;
         }
     }
 }
@@ -462,6 +671,7 @@ impl SceneResources {
 pub struct GlobeCallback {
     pub world: Arc<WorldBundle>,
     pub view: GlobeView,
+    pub shade: ShadeParams,
     /// Canvas rect in points: (center x, center y, width, height).
     pub rect_points: [f32; 4],
 }
@@ -491,6 +701,7 @@ impl egui_wgpu::CallbackTrait for GlobeCallback {
                 0.0,
                 0.0,
             ],
+            shade: self.shade,
         };
         queue.write_buffer(&r.globe_uniform, 0, bytemuck::bytes_of(&uniforms));
         Vec::new()
@@ -503,14 +714,13 @@ impl egui_wgpu::CallbackTrait for GlobeCallback {
         resources: &egui_wgpu::CallbackResources,
     ) {
         let r: &SceneResources = resources.get().expect("SceneResources missing");
-        let (Some(vb), Some(ib), Some(bind)) = (&r.vertex_buf, &r.index_buf, &r.globe_bind) else {
+        let Some(bind) = &r.globe_bind else { return };
+        if r.vertex_count == 0 {
             return;
-        };
+        }
         render_pass.set_pipeline(&r.globe_pipeline);
         render_pass.set_bind_group(0, bind, &[]);
-        render_pass.set_vertex_buffer(0, vb.slice(..));
-        render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..r.index_count, 0, 0..1);
+        render_pass.draw(0..r.vertex_count, 0..1);
     }
 }
 
@@ -523,6 +733,7 @@ pub fn globe_radius_px(w: f32, h: f32, zoom: f32) -> f32 {
 pub struct FlatCallback {
     pub world: Arc<WorldBundle>,
     pub view: FlatView,
+    pub shade: ShadeParams,
     /// Canvas rect in points: (center x, center y, width, height).
     pub rect_points: [f32; 4],
 }
@@ -571,6 +782,7 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
                 0.0,
             ],
             tex: [CELL_ID_TEX_W as f32, CELL_ID_TEX_H as f32, 0.0, 0.0],
+            shade: self.shade,
         };
         queue.write_buffer(&r.flat_uniform, 0, bytemuck::bytes_of(&uniforms));
         Vec::new()
@@ -635,5 +847,16 @@ mod tests {
             pitch.sin(),
         ];
         assert!(close(rotate(&m, ground), [0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn shade_params_pack_seed_as_u32_lanes_and_uniform_sizes_match_wgsl() {
+        let sp = pack_shade_params(0xdead_beef_1234_5678, 1, 5, -120.0, 220.0, 163_842);
+        assert_eq!(sp.seed_lo, 0x1234_5678);
+        assert_eq!(sp.seed_hi, 0xdead_beef);
+        // WGSL struct sizes the Rust mirrors must match (d3a §6).
+        assert_eq!(std::mem::size_of::<ShadeParams>(), 32);
+        assert_eq!(std::mem::size_of::<GlobeUniforms>(), 112);
+        assert_eq!(std::mem::size_of::<FlatUniforms>(), 80);
     }
 }

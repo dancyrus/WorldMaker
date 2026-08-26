@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod boundaries;
 mod harness;
 mod layers;
 mod pending_edits;

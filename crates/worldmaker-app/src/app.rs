@@ -15,10 +15,13 @@ use worldmaker_core::Projection;
 use worldmaker_sim::tectonics::{TectonicsHistory, TectonicsParams};
 use worldmaker_sim::{Cancelled, Progress, WorldState};
 
-use crate::layers::{self, BakeOverlay, Layer};
+use crate::boundaries::BoundarySet;
+use crate::layers::{self, Layer};
+use crate::pending_edits;
 use crate::render::{
-    flat_base_half_extents, globe_radius_px, globe_rotation, rotate_inv, FlatCallback, FlatView,
-    GlobeCallback, GlobeView, SceneResources, WorldBundle,
+    flat_base_half_extents, globe_radius_px, globe_rotation, layer_flags, pack_shade_params,
+    rotate_inv, FlatCallback, FlatView, GlobeCallback, GlobeView, SceneResources, ShadeParams,
+    WorldBundle,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -62,6 +65,9 @@ enum Tool {
 
 /// Timeline playback speed while "Play" is on, in My per real second.
 const PLAY_MY_PER_SECOND: f32 = 100.0;
+/// Render-detail fBm octaves (provisional; WO-0003 leg 4's octave/amplitude
+/// sweep finalizes this default).
+const DETAIL_DEFAULT_OCTAVES: u32 = 5;
 /// Hotspot tool: clicking within this range of an existing hotspot removes it.
 const HOTSPOT_REMOVE_KM: f32 = 300.0;
 const EARTH_RADIUS_KM: f32 = 6371.0;
@@ -106,8 +112,13 @@ pub struct WorldApp {
     job: Option<SimJob>,
     bundle: Arc<WorldBundle>,
     grid_gen: u64,
-    field_gen: u64,
+    values_gen: u64,
+    overlay_gen: u64,
     needs_bake: bool,
+
+    /// Pending edit strokes (Track A's machinery fills this at rebase; until
+    /// then it stays empty and the no-op apply_overlay renders nothing).
+    pending_strokes: Vec<worldmaker_io::Stroke>,
 
     // Tectonics parameters (UI copies; Generate builds TectonicsParams).
     plate_count: u32,
@@ -133,6 +144,10 @@ pub struct WorldApp {
     projection: Projection,
     graticule: bool,
     layer: Layer,
+    /// Debug toggle: true cell boundaries via the bisector-margin machinery.
+    debug_cell_bounds: bool,
+    /// Debug toggle: legacy one-cell boundary bands on the plates layer.
+    debug_legacy_bands: bool,
     tool: Tool,
     brush_radius_km: f32,
     /// The current craton stroke changed the overlay; re-run on stroke end.
@@ -172,36 +187,36 @@ impl WorldApp {
             .callback_resources
             .insert(SceneResources::new(
                 &render_state.device,
+                &render_state.queue,
                 render_state.target_format,
             ));
 
         let seed_text = "cyrus".to_string();
         let master_seed = seed_from_text(&seed_text);
         let placeholder_grid = Arc::new(Grid::build(0));
+        let placeholder_ids: Arc<Vec<u32>> = Arc::new(vec![
+            0;
+            (crate::render::CELL_ID_TEX_W * crate::render::CELL_ID_TEX_H)
+                as usize
+        ]);
         let mut app = WorldApp {
             grid: placeholder_grid.clone(),
-            cell_ids: Arc::new(vec![
-                0;
-                (crate::render::CELL_ID_TEX_W * crate::render::CELL_ID_TEX_H)
-                    as usize
-            ]),
+            cell_ids: placeholder_ids.clone(),
             history: None,
             world_state: None,
             job: None,
-            bundle: Arc::new(WorldBundle {
-                grid: placeholder_grid,
-                colors: vec![0xff40_4040; 12],
-                cell_ids: Arc::new(vec![
-                    0;
-                    (crate::render::CELL_ID_TEX_W * crate::render::CELL_ID_TEX_H)
-                        as usize
-                ]),
-                grid_gen: 0,
-                field_gen: 0,
-            }),
+            bundle: Arc::new(placeholder_bundle(
+                &placeholder_grid,
+                &placeholder_ids,
+                0,
+                0,
+                0,
+            )),
             grid_gen: 0,
-            field_gen: 0,
+            values_gen: 0,
+            overlay_gen: 0,
             needs_bake: false,
+            pending_strokes: Vec::new(),
             plate_count: 12,
             land_fraction: 0.29,
             tectonic_vigor: 1.0,
@@ -221,6 +236,8 @@ impl WorldApp {
             projection: Projection::Equirectangular,
             graticule: true,
             layer: Layer::Elevation,
+            debug_cell_bounds: false,
+            debug_legacy_bands: false,
             tool: Tool::None,
             brush_radius_km: 600.0,
             craton_stroke_dirty: false,
@@ -291,18 +308,23 @@ impl WorldApp {
         self.grid = grid.clone();
         self.cell_ids = cell_ids.clone();
         self.grid_gen += 1;
-        self.field_gen += 1;
+        // values_gen and overlay_gen ALWAYS bump with grid_gen (renderer
+        // invariant), and a fresh right-sized placeholder bundle is published
+        // immediately: the old bundle's Arcs are sized to the old grid, and
+        // rebake's mid-run values reuse must never see them (judgement A4).
+        self.values_gen += 1;
+        self.overlay_gen += 1;
         self.pick_hint = None;
         // Craton paint is per-grid (cell ids change with level); hotspot
         // positions are unit vectors and survive a preset switch.
         self.craton_paint.clear();
-        self.bundle = Arc::new(WorldBundle {
-            grid,
-            colors: vec![0xff40_4040; self.grid.cell_count() as usize],
-            cell_ids,
-            grid_gen: self.grid_gen,
-            field_gen: self.field_gen,
-        });
+        self.bundle = Arc::new(placeholder_bundle(
+            &grid,
+            &cell_ids,
+            self.grid_gen,
+            self.values_gen,
+            self.overlay_gen,
+        ));
         self.start_job();
     }
 
@@ -387,50 +409,68 @@ impl WorldApp {
         }
     }
 
-    /// Re-bake the layer colors for the viewed keyframe and publish a bundle.
+    /// Re-bake the per-cell shading values for the viewed keyframe, run the
+    /// pending-edit overlay pass, and publish a bundle (d3a §2.4).
+    ///
+    /// Sea level and Detail are NOT inputs here — they are live uniforms
+    /// (ShadeParams); a slider drag never rebakes.
     fn rebake(&mut self) {
         self.needs_bake = false;
-        let Some(history) = &self.history else {
-            return;
-        };
-        let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
 
-        let paint: Vec<(u32, i8)>;
-        let hotspot_cells: Vec<u32>;
-        let overlay = match self.tool {
-            Tool::CratonPaint | Tool::CratonErase => {
-                paint = self.craton_paint.iter().map(|(&c, &v)| (c, v)).collect();
-                BakeOverlay {
-                    craton: Some(&paint),
-                    hotspot_cells: None,
-                }
-            }
-            Tool::Hotspot => {
-                let mut cells = Vec::new();
-                let spots = self.hotspot_overlay.as_deref().unwrap_or(&history.hotspots);
-                for h in spots {
-                    let c = self.grid.nearest_cell(*h, None);
-                    cells.push(c);
-                    cells.extend_from_slice(self.grid.neighbors_of(c));
-                }
-                hotspot_cells = cells;
-                BakeOverlay {
-                    craton: None,
-                    hotspot_cells: Some(&hotspot_cells),
-                }
-            }
-            Tool::None => BakeOverlay::NONE,
+        // Values pass — only when a history exists. Mid-run (start_job drops
+        // history) the previous bundle's values/boundaries Arcs are reused so
+        // pending strokes can still display over the current world; that is
+        // safe across a grid switch because rebuild_grid publishes a fresh
+        // right-sized placeholder bundle first (judgement A4).
+        let (values, boundaries) = if let Some(history) = &self.history {
+            let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
+            self.values_gen += 1;
+            // Boundary-polyline extraction for the Plates layer lands in
+            // leg 3; until then the set stays empty.
+            (
+                Arc::new(layers::bake_values(self.layer, kf)),
+                Arc::new(BoundarySet::empty()),
+            )
+        } else {
+            (self.bundle.values.clone(), self.bundle.boundaries.clone())
         };
 
-        let colors = layers::bake(self.layer, kf, self.sea_level_m, &overlay);
-        self.field_gen += 1;
+        // Overlay pass — on EVERY rebake, including history == None, so
+        // pending edits render mid-run (feel-pass-design.md § D1). `pending`
+        // stays empty and apply_overlay is a no-op until Track A's rebase.
+        let mut overlay = vec![0u32; self.grid.cell_count() as usize];
+        pending_edits::apply_overlay(
+            &pending_edits::OverlayInput {
+                grid: &self.grid,
+                pending: &self.pending_strokes,
+                generated_hotspots: self.history.as_ref().map(|h| h.hotspots.as_slice()),
+            },
+            &mut overlay,
+        );
+        self.overlay_gen += 1;
+
         self.bundle = Arc::new(WorldBundle {
             grid: self.grid.clone(),
-            colors,
+            values,
+            overlay,
             cell_ids: self.cell_ids.clone(),
+            boundaries,
             grid_gen: self.grid_gen,
-            field_gen: self.field_gen,
+            values_gen: self.values_gen,
+            overlay_gen: self.overlay_gen,
         });
+    }
+
+    /// The live shading uniforms for both canvases this frame.
+    fn shade_params(&self) -> ShadeParams {
+        pack_shade_params(
+            self.master_seed,
+            layer_flags(self.layer, self.debug_cell_bounds, self.debug_legacy_bands),
+            DETAIL_DEFAULT_OCTAVES,
+            self.sea_level_m,
+            0.0, // render-detail amplitude: wired with the noise commit
+            self.grid.cell_count(),
+        )
     }
 
     fn fps(&self) -> f64 {
@@ -599,6 +639,7 @@ impl WorldApp {
                 GlobeCallback {
                     world: self.bundle.clone(),
                     view: self.globe,
+                    shade: self.shade_params(),
                     rect_points: [
                         rect.center().x,
                         rect.center().y,
@@ -660,6 +701,7 @@ impl WorldApp {
                         zoom: self.flat_zoom,
                         graticule: self.graticule,
                     },
+                    shade: self.shade_params(),
                     rect_points: [
                         rect.center().x,
                         rect.center().y,
@@ -728,17 +770,19 @@ impl WorldApp {
                 ui.separator();
 
                 ui.label("Sea level:");
-                if ui
-                    .add(
-                        egui::Slider::new(&mut self.sea_level_m, -4000.0..=4000.0)
-                            .suffix(" m")
-                            .fixed_decimals(0),
-                    )
-                    .changed()
-                {
-                    // Offset around the solved sea level; recolor only.
-                    self.needs_bake = true;
-                }
+                // Offset around the solved sea level. A pure LIVE view
+                // control since Fix 3: it rides the shading uniforms every
+                // frame — dragging it never rebakes.
+                ui.add(
+                    egui::Slider::new(&mut self.sea_level_m, -4000.0..=4000.0)
+                        .suffix(" m")
+                        .fixed_decimals(0),
+                );
+                ui.separator();
+
+                // Debug toggles (uniform bits; final top-bar layout in leg 4).
+                ui.checkbox(&mut self.debug_cell_bounds, "Cell bounds");
+                ui.checkbox(&mut self.debug_legacy_bands, "Legacy bands");
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("{:.0} FPS", self.fps()));
@@ -1140,6 +1184,30 @@ impl WorldApp {
             Ok(()) => log::info!("perf results written to {}", out.display()),
             Err(e) => log::error!("failed to write perf results: {e:#}"),
         }
+    }
+}
+
+/// A neutral bundle for a freshly built grid: zero-elevation values, zeroed
+/// overlay, empty boundary set, published with the caller's (just bumped)
+/// generations. Keeps every buffer right-sized for the new grid before the
+/// first real bake lands (judgement A4).
+fn placeholder_bundle(
+    grid: &Arc<Grid>,
+    cell_ids: &Arc<Vec<u32>>,
+    grid_gen: u64,
+    values_gen: u64,
+    overlay_gen: u64,
+) -> WorldBundle {
+    let n = grid.cell_count() as usize;
+    WorldBundle {
+        grid: grid.clone(),
+        values: Arc::new(vec![[0f32.to_bits(), 0u32]; n]),
+        overlay: vec![0u32; n],
+        cell_ids: cell_ids.clone(),
+        boundaries: Arc::new(BoundarySet::empty()),
+        grid_gen,
+        values_gen,
+        overlay_gen,
     }
 }
 
