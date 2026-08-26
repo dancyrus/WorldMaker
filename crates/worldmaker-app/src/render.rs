@@ -41,8 +41,8 @@ pub struct WorldBundle {
     /// independently of values on every rebake.
     pub overlay: Vec<u32>,
     /// Equirectangular *hint* raster, CELL_ID_TEX_W × CELL_ID_TEX_H R32Uint.
-    /// Arc'd: depends only on the grid level. Leg 3 demotes it from flat
-    /// truth to walk hint (d3a §4).
+    /// Arc'd: depends only on the grid level. Since the flat exact walk
+    /// (d3a §4) it is only the walk's starting hint, never the truth.
     pub cell_ids: Arc<Vec<u32>>,
     /// Smoothed plate-boundary ribbons for the viewed keyframe (d3a §8);
     /// empty when the layer draws none. Extraction + drawing land in leg 3.
@@ -249,6 +249,10 @@ pub struct SceneResources {
     // World-dependent resources (recreated when generations change).
     positions_buf: Option<wgpu::Buffer>,
     tri_ids_buf: Option<wgpu::Buffer>,
+    /// CSR neighbor graph (flat walk, d3a §4): verbatim copies of
+    /// `Grid::neighbor_offsets` / `Grid::neighbors`.
+    nbr_offsets_buf: Option<wgpu::Buffer>,
+    nbrs_buf: Option<wgpu::Buffer>,
     /// 3 × triangle count: the unindexed globe draw's vertex count.
     vertex_count: u32,
     values_buf: Option<wgpu::Buffer>,
@@ -315,8 +319,8 @@ impl SceneResources {
         // WGSL module shares the resource (positions 1, values 3, overlay 4,
         // palette 5): module-scope vars serve both entry points, so shared
         // resources must agree on slots; per-canvas resources (uniforms at 0,
-        // tri_ids / cell_ids at 2) may reuse each other's slots because no
-        // single entry point touches both.
+        // tri_ids / cell_ids at 2, the flat CSR graph at 6/7) may reuse or
+        // extend the slot space because no single entry point touches both.
         let globe_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globe-bind-layout"),
             entries: &[
@@ -338,6 +342,8 @@ impl SceneResources {
                 storage_entry(3, wgpu::ShaderStages::FRAGMENT), // cell_values
                 storage_entry(4, wgpu::ShaderStages::FRAGMENT), // overlay
                 texture_entry(5, wgpu::TextureSampleType::Float { filterable: false }),
+                storage_entry(6, wgpu::ShaderStages::FRAGMENT), // CSR offsets
+                storage_entry(7, wgpu::ShaderStages::FRAGMENT), // CSR neighbors
             ],
         });
 
@@ -478,6 +484,8 @@ impl SceneResources {
             palette_view,
             positions_buf: None,
             tri_ids_buf: None,
+            nbr_offsets_buf: None,
+            nbrs_buf: None,
             vertex_count: 0,
             values_buf: None,
             overlay_buf: None,
@@ -506,6 +514,20 @@ impl SceneResources {
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("globe-tri-ids"),
                     contents: bytemuck::cast_slice(&grid.triangles),
+                    usage: wgpu::BufferUsages::STORAGE,
+                }),
+            );
+            self.nbr_offsets_buf = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("csr-neighbor-offsets"),
+                    contents: bytemuck::cast_slice(&grid.neighbor_offsets),
+                    usage: wgpu::BufferUsages::STORAGE,
+                },
+            ));
+            self.nbrs_buf = Some(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("csr-neighbors"),
+                    contents: bytemuck::cast_slice(&grid.neighbors),
                     usage: wgpu::BufferUsages::STORAGE,
                 }),
             );
@@ -660,6 +682,14 @@ impl SceneResources {
                     wgpu::BindGroupEntry {
                         binding: 5,
                         resource: wgpu::BindingResource::TextureView(&self.palette_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: self.nbr_offsets_buf.as_ref().unwrap().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: self.nbrs_buf.as_ref().unwrap().as_entire_binding(),
                     },
                 ],
             }));
@@ -858,5 +888,317 @@ mod tests {
         assert_eq!(std::mem::size_of::<ShadeParams>(), 32);
         assert_eq!(std::mem::size_of::<GlobeUniforms>(), 112);
         assert_eq!(std::mem::size_of::<FlatUniforms>(), 80);
+    }
+
+    // ----- flat exact-walk CPU mirror (d3a §4.5 as amended by A3) -----
+    //
+    // `walk_from_hint` / `wedge_and_weights` transliterate fs_flat's WGSL in
+    // f32: the hint walk with the R1 tie rule, the shared-g wedge scan with
+    // B1's corrected sign, and the R2 differenced barycentric solve. The
+    // reference is a deliberately INDEPENDENT f64 formulation — brute-force
+    // three-half-space containment over the winner's fan plus a raw Cramer
+    // solve of [P_c P_a P_b]·β = p — so a sign or wedge error in the mirror
+    // cannot reproduce on both sides and cancel out of the comparison (the
+    // circularity A3 flagged in the original test spec).
+    mod flat_walk {
+        use super::super::{CELL_ID_TEX_H, CELL_ID_TEX_W};
+        use worldmaker_core::grid::{unit_to_latlon, Grid};
+        use worldmaker_core::hash::splitmix64;
+
+        /// Must match WALK_CAP in shaders.wgsl.
+        const WALK_CAP: u32 = 4;
+
+        fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+            a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+        }
+        fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        }
+        fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+            [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+        }
+        fn tod(a: [f32; 3]) -> [f64; 3] {
+            [a[0] as f64, a[1] as f64, a[2] as f64]
+        }
+        fn cross3d(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        }
+        /// Scalar triple product a · (b × c) in f64.
+        fn trip(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
+            let x = cross3d(b, c);
+            a[0] * x[0] + a[1] * x[1] + a[2] * x[2]
+        }
+
+        /// What the hint raster stores in `p`'s texel: the nearest cell to
+        /// the texel CENTER. nearest_cell's greedy ascent maximizes a linear
+        /// function over the vertex graph of a convex polytope, so its result
+        /// is hint-independent — this equals the committed raster value
+        /// without building 8.4M-texel rasters per level in a test.
+        fn raster_hint(grid: &Grid, p: [f32; 3]) -> u32 {
+            let (lat, lon) = unit_to_latlon(p);
+            let w = CELL_ID_TEX_W as f32;
+            let h = CELL_ID_TEX_H as f32;
+            // Texel pick exactly as fs_flat computes tx/ty (truncation).
+            let pi = std::f32::consts::PI;
+            let x = ((lon + pi) / (2.0 * pi) * w).clamp(0.0, w - 1.0) as i32 as f32;
+            let y = ((0.5 - lat / pi) * h).clamp(0.0, h - 1.0) as i32 as f32;
+            // Texel center exactly as rasterize_cell_ids computes it.
+            let tlat = std::f32::consts::FRAC_PI_2 * (1.0 - 2.0 * (y + 0.5) / h);
+            let tlon = pi * (2.0 * (x + 0.5) / w - 1.0);
+            let (cl, sl) = (tlat.cos(), tlat.sin());
+            grid.nearest_cell([cl * tlon.cos(), cl * tlon.sin(), sl], None)
+        }
+
+        /// f32 mirror of fs_flat's hint→winner walk (R1 tie rule, cap 4).
+        fn walk_from_hint(grid: &Grid, hint: u32, p: [f32; 3]) -> u32 {
+            let mut c = hint;
+            let mut best_d = dot3(p, grid.positions[c as usize]);
+            for _ in 0..WALK_CAP {
+                let mut best = c;
+                let mut bd = best_d;
+                for &nb in grid.neighbors_of(c) {
+                    let d = dot3(p, grid.positions[nb as usize]);
+                    if d > bd || (d == bd && nb < best) {
+                        best = nb;
+                        bd = d;
+                    }
+                }
+                if best == c {
+                    break;
+                }
+                c = best;
+                best_d = bd;
+            }
+            c
+        }
+
+        /// f32 mirror of fs_flat's wedge scan + differenced barycentrics.
+        /// Returns (wedge index, weights ordered (c, n_i, n_{i+1})).
+        fn wedge_and_weights(grid: &Grid, c: u32, p: [f32; 3]) -> (usize, [f32; 3]) {
+            let ring = grid.neighbors_of(c);
+            let k = ring.len();
+            let pc = grid.positions[c as usize];
+            let mut g = [0f32; 6];
+            for (j, &nj) in ring.iter().enumerate() {
+                g[j] = dot3(p, cross3(pc, grid.positions[nj as usize]));
+            }
+            let mut wedge = usize::MAX;
+            let mut fb = 0usize;
+            let mut fb_score = f32::NEG_INFINITY;
+            for i in 0..k {
+                let i1 = (i + 1) % k;
+                if wedge == usize::MAX && g[i] >= 0.0 && g[i1] <= 0.0 {
+                    wedge = i;
+                }
+                let score = g[i].min(-g[i1]);
+                if score > fb_score {
+                    fb_score = score;
+                    fb = i;
+                }
+            }
+            if wedge == usize::MAX {
+                wedge = fb;
+            }
+            let pa = grid.positions[ring[wedge] as usize];
+            let pb = grid.positions[ring[(wedge + 1) % k] as usize];
+            let e1 = sub3(pa, pc);
+            let e2 = sub3(pb, pc);
+            let n = cross3(e1, e2);
+            let t = dot3(pc, n) / dot3(p, n);
+            let dq = sub3([t * p[0], t * p[1], t * p[2]], pc);
+            let inv_nn = 1.0 / dot3(n, n);
+            let wa = dot3(cross3(dq, e2), n) * inv_nn;
+            let wb = dot3(cross3(e1, dq), n) * inv_nn;
+            (wedge, [1.0 - wa - wb, wa, wb])
+        }
+
+        /// Independent f64 wedge reference (A3): standard three-half-space
+        /// containment over the winner's fan, first match in ring order.
+        fn reference_wedge(grid: &Grid, c: u32, p: [f32; 3]) -> usize {
+            let ring = grid.neighbors_of(c);
+            let k = ring.len();
+            let pd = tod(p);
+            let pc = tod(grid.positions[c as usize]);
+            let mut wedge = usize::MAX;
+            let mut fb = 0usize;
+            let mut fb_score = f64::NEG_INFINITY;
+            for i in 0..k {
+                let pa = tod(grid.positions[ring[i] as usize]);
+                let pb = tod(grid.positions[ring[(i + 1) % k] as usize]);
+                let h1 = trip(pd, pc, pa);
+                let h2 = trip(pd, pa, pb);
+                let h3 = trip(pd, pb, pc);
+                if wedge == usize::MAX && h1 >= 0.0 && h2 >= 0.0 && h3 >= 0.0 {
+                    wedge = i;
+                }
+                let score = h1.min(h2).min(h3);
+                if score > fb_score {
+                    fb_score = score;
+                    fb = i;
+                }
+            }
+            if wedge == usize::MAX {
+                wedge = fb;
+            }
+            wedge
+        }
+
+        /// Independent f64 weight reference (A3): raw Cramer solve of
+        /// [P_c P_a P_b]·β = p for a GIVEN wedge, normalized so the
+        /// ray-plane scale folds out — a different formulation from the
+        /// mirror's differenced solve, in f64 where the raw form is exact
+        /// to ~1e-10 even at L9.
+        fn reference_weights(grid: &Grid, c: u32, wedge: usize, p: [f32; 3]) -> [f64; 3] {
+            let ring = grid.neighbors_of(c);
+            let k = ring.len();
+            let pd = tod(p);
+            let pc = tod(grid.positions[c as usize]);
+            let pa = tod(grid.positions[ring[wedge] as usize]);
+            let pb = tod(grid.positions[ring[(wedge + 1) % k] as usize]);
+            let det = trip(pc, pa, pb);
+            let bc = trip(pd, pa, pb) / det;
+            let ba = trip(pc, pd, pb) / det;
+            let bb = trip(pc, pa, pd) / det;
+            let s = bc + ba + bb;
+            [bc / s, ba / s, bb / s]
+        }
+
+        /// Deterministic unit vectors from a fixed splitmix64 stream.
+        fn sample_unit(stream: u64, i: u64) -> [f32; 3] {
+            let a = splitmix64(stream.wrapping_add(2 * i + 1));
+            let b = splitmix64(stream.wrapping_add(2 * i + 2));
+            let z = (a >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0;
+            let lon = ((b >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0) * std::f64::consts::PI;
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            [(r * lon.cos()) as f32, (r * lon.sin()) as f32, z as f32]
+        }
+
+        /// Full per-point property: winner bit-equality vs nearest_cell,
+        /// convergence within the cap, wedge equality vs the independent
+        /// f64 containment reference (except inside the f64-measured
+        /// boundary band, where two adjacent wedges are equally valid), and
+        /// weights within 1e-4 of the independent f64 Cramer solve for the
+        /// mirror's own triple (the R2 conditioning claim).
+        fn check_point(grid: &Grid, p: [f32; 3], on_bisector: bool) {
+            let truth = grid.nearest_cell(p, None);
+            let hint = raster_hint(grid, p);
+            let win = walk_from_hint(grid, hint, p);
+            assert_eq!(win, truth, "walk winner != nearest_cell at p = {p:?}");
+            // The cap did not truncate: no ring neighbor beats the winner
+            // under the R1 step rule.
+            let wd = dot3(p, grid.positions[win as usize]);
+            for &nb in grid.neighbors_of(win) {
+                let d = dot3(p, grid.positions[nb as usize]);
+                assert!(
+                    d < wd || (d == wd && nb > win),
+                    "walk terminated on a non-optimal cell at p = {p:?}"
+                );
+            }
+            let (wedge, w32) = wedge_and_weights(grid, win, p);
+            let rwedge = reference_wedge(grid, win, p);
+            // Wedge selection: strict equality, except where the f64
+            // reference itself measures the point inside the f32 noise band
+            // of the SHARED boundary plane between the two (adjacent) picks
+            // — there both wedges are equally valid and the interpolant is
+            // continuous across the plane. The f64 gate means a real sign
+            // error (whose wrong wedge shows up at LARGE |g|) can never
+            // hide in this exception. Cell-pair midpoints sit exactly on
+            // such a plane by construction.
+            if wedge != rwedge && !on_bisector {
+                let ring = grid.neighbors_of(win);
+                let k = ring.len();
+                let shared = if (rwedge + 1) % k == wedge {
+                    Some(wedge)
+                } else if (wedge + 1) % k == rwedge {
+                    Some(rwedge)
+                } else {
+                    None
+                };
+                let in_band = shared.is_some_and(|s| {
+                    let pn = tod(grid.positions[ring[s] as usize]);
+                    trip(tod(p), tod(grid.positions[win as usize]), pn).abs() <= 1e-6
+                });
+                assert!(
+                    in_band,
+                    "wedge mismatch outside the boundary band at p = {p:?}: \
+                     mirror {wedge}, reference {rwedge}"
+                );
+            }
+            // Weight accuracy (R2): the mirror's f32 differenced solve vs
+            // the independent f64 raw-Cramer solve of the SAME triple.
+            let wref = reference_weights(grid, win, wedge, p);
+            for (j, (&wv, &rv)) in w32.iter().zip(wref.iter()).enumerate() {
+                let err = (wv as f64 - rv).abs();
+                assert!(
+                    err <= 1e-4,
+                    "weight {j} off by {err} at p = {p:?} (wedge {wedge})"
+                );
+            }
+            // Barycentric sanity: the point is inside (or within noise of)
+            // its wedge, so no weight may be strongly negative — a wrong
+            // wedge scan (the B1 sign error) extrapolates hard and fails
+            // this immediately.
+            for (j, &wv) in w32.iter().enumerate() {
+                assert!(
+                    (-0.05..=1.05).contains(&wv),
+                    "weight {j} = {wv} out of range at p = {p:?}"
+                );
+            }
+        }
+
+        /// Adjacent-pair midpoints sit exactly on Voronoi bisectors; in f32
+        /// many produce EXACT dot ties, exercising the R1 tie rule for real.
+        /// Returns how many exact ties were seen.
+        fn check_midpoints(grid: &Grid, pairs: u64, stream: u64) -> u64 {
+            let n = grid.cell_count() as u64;
+            let mut ties = 0;
+            for i in 0..pairs {
+                let a = (splitmix64(stream.wrapping_add(3 * i)) % n) as u32;
+                let ring = grid.neighbors_of(a);
+                let pick = splitmix64(stream.wrapping_add(3 * i + 1)) % ring.len() as u64;
+                let b = ring[pick as usize];
+                let pa = grid.positions[a as usize];
+                let pb = grid.positions[b as usize];
+                let m = [pa[0] + pb[0], pa[1] + pb[1], pa[2] + pb[2]];
+                let len = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt();
+                let p = [m[0] / len, m[1] / len, m[2] / len];
+                if dot3(p, pa) == dot3(p, pb) {
+                    ties += 1;
+                }
+                check_point(grid, p, true);
+            }
+            ties
+        }
+
+        #[test]
+        fn flat_walk_matches_nearest_cell_and_f64_reference() {
+            let mut ties = 0;
+            for (level, samples, pairs) in [(6u32, 3000u64, 800u64), (7, 2000, 400), (8, 1200, 200)]
+            {
+                let grid = Grid::build(level);
+                for i in 0..samples {
+                    check_point(&grid, sample_unit(0x5eed_0000 + level as u64, i), false);
+                }
+                ties += check_midpoints(&grid, pairs, 0x0bad_cafe + level as u64);
+            }
+            assert!(ties > 0, "no exact f32 dot tie was exercised (R1 untested)");
+        }
+
+        #[test]
+        fn flat_walk_l9_spot_samples() {
+            let grid = Grid::build(9);
+            for i in 0..200 {
+                check_point(&grid, sample_unit(0x5eed_1009, i), false);
+            }
+            check_midpoints(&grid, 100, 0x0bad_f00d);
+        }
     }
 }

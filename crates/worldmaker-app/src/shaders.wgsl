@@ -14,8 +14,9 @@
 // Binding-slot convention: module-scope vars are shared by both entry
 // points, so SHARED resources (positions 1, cell_values 3, overlay 4,
 // palette 5) use the same slot in both bind group layouts; per-canvas
-// resources (uniform blocks at 0, tri_ids / cell_ids at 2) reuse each
-// other's slots - legal because no single entry point touches both.
+// resources (uniform blocks at 0, tri_ids / cell_ids at 2, the flat CSR
+// neighbor graph at 6/7) reuse or extend each other's slots - legal because
+// no single entry point touches both canvases' resources.
 
 // ---------- shared shading (both canvases) ----------
 
@@ -161,9 +162,9 @@ fn render_fbm(p: vec3<f32>, freq0: f32, octaves: u32, seed: vec2<u32>) -> f32 {
 
 // The one shading function (d3a section 5.1): everything after "which cells,
 // what weights" is canvas-independent. cids = candidate cells (globe: the
-// triangle's corners; flat interim: the raster winner three times, leg 3:
-// the wedge triple), w = chord-plane barycentrics, p = unit-sphere position
-// of the fragment, k_win = index of the nearest candidate.
+// triangle's corners; flat: the winner's wedge triple), w = chord-plane
+// barycentrics, p = unit-sphere position of the fragment, k_win = index of
+// the nearest candidate.
 fn resolve_fragment(
     cids: vec3<u32>,
     w_in: vec3<f32>,
@@ -243,8 +244,8 @@ fn resolve_fragment(
     }
 
     // Debug true-cell boundaries: bisector margin between the winner and the
-    // best DISTINCT rival - the same machinery leg 3 reuses for overlay
-    // outlines. A degenerate candidate triple (interim flat path) draws none.
+    // best DISTINCT rival - the same machinery the overlay outline below
+    // uses. A degenerate candidate triple draws none.
     if (sp.layer_flags & LF_DEBUG_CELLS) != 0u {
         var m_best = 1e30;
         let d_win = dot(p, pos3(cid_win));
@@ -382,6 +383,15 @@ struct FlatUniforms {
 
 @group(0) @binding(0) var<uniform> flat_u: FlatUniforms;
 @group(0) @binding(2) var cell_ids: texture_2d<u32>;
+// The grid's CSR neighbor graph (flat canvas only): offsets length cells+1,
+// lists CCW-ordered viewed from outside - a verbatim copy of Grid's arrays.
+@group(0) @binding(6) var<storage, read> nbr_offsets: array<u32>;
+@group(0) @binding(7) var<storage, read> nbrs: array<u32>;
+
+// Greedy-walk cap (d3a section 4.2): the raster hint is at most ~1.5 cell
+// spacings from the true winner even at L9, needing <= 2 moves; 4 is a 2x
+// margin. Mirrored by the CPU property test in render.rs.
+const WALK_CAP: u32 = 4u;
 
 // Robinson X (parallel length) and Y (parallel distance) every 5 degrees.
 // Must match ROBINSON_TABLE in worldmaker-core (proj.rs).
@@ -467,14 +477,86 @@ fn fs_flat(in: FlatVsOut) -> @location(0) vec4<f32> {
     let tx = clamp((lon + PI) / (2.0 * PI) * tw, 0.0, tw - 1.0);
     let ty = clamp((0.5 - lat / PI) * th, 0.0, th - 1.0);
     let cell = textureLoad(cell_ids, vec2<i32>(i32(tx), i32(ty)), 0).r;
-    // INTERIM (leg 2): degenerate candidate triple - the raster winner cell,
-    // exactly today's per-cell look, but shaded through the SAME
-    // resolve_fragment as the globe (live sea level / detail / overlay).
-    // Leg 3 replaces this block with hint + greedy walk + wedge weights
-    // (d3a section 4) for smooth interpolation and exact Voronoi at any zoom.
+
+    // Exact Voronoi winner (d3a section 4, judgement R1): the raster is only
+    // a walk HINT - refine with Grid::nearest_cell's exact step rule, best
+    // improvement over the CSR ring with ties toward the lower id, so the
+    // pixel winner bit-equals the CPU picking path at any zoom.
+    var c = cell;
+    var best_d = dot(p, pos3(c));
+    for (var step = 0u; step < WALK_CAP; step = step + 1u) {
+        var best = c;
+        var bd = best_d;
+        let lo = nbr_offsets[c];
+        let hi = nbr_offsets[c + 1u];
+        for (var i = lo; i < hi; i = i + 1u) {
+            let nb = nbrs[i];
+            let d = dot(p, pos3(nb));
+            if d > bd || (d == bd && nb < best) {
+                best = nb;
+                bd = d;
+            }
+        }
+        if best == c { break; }
+        c = best;
+        best_d = bd;
+    }
+
+    // Containing wedge of the winner's CCW ring (B1 corrected sign): inside
+    // wedge i iff g_i >= 0 and g_{i+1} <= 0, with g_j = dot(p, cross(pos_c,
+    // pos_nj)) computed ONCE per ring index so adjacent wedges share their
+    // boundary test bit-identically (on an exact 0 both match; first in ring
+    // order wins). If the scan somehow exhausts (cap-truncated walk on a
+    // future L>9 grid), fall back to the wedge maximizing min(g_i, -g_{i+1})
+    // - never unreachable UB.
+    let rlo = nbr_offsets[c];
+    let k = nbr_offsets[c + 1u] - rlo;
+    let pc = pos3(c);
+    var g: array<f32, 6>;
+    for (var j = 0u; j < k; j = j + 1u) {
+        g[j] = dot(p, cross(pc, pos3(nbrs[rlo + j])));
+    }
+    var wedge = 0xffffffffu;
+    var fb = 0u;
+    var fb_score = -1e30;
+    for (var i = 0u; i < k; i = i + 1u) {
+        var i1 = i + 1u;
+        if i1 == k { i1 = 0u; }
+        if wedge == 0xffffffffu && g[i] >= 0.0 && g[i1] <= 0.0 {
+            wedge = i;
+        }
+        let score = min(g[i], -g[i1]);
+        if score > fb_score {
+            fb_score = score;
+            fb = i;
+        }
+    }
+    if wedge == 0xffffffffu { wedge = fb; }
+    var w1 = wedge + 1u;
+    if w1 == k { w1 = 0u; }
+    let ia = nbrs[rlo + wedge];
+    let ib = nbrs[rlo + w1];
+
+    // Chord-plane barycentrics in differenced form (judgement R2): edge
+    // vectors and the exact ray-plane point keep every term at cell-spacing
+    // scale, so f32 stays accurate at L9 (the raw triple-product solve loses
+    // percent-level precision there). These are exactly the weights the globe
+    // rasterizer interpolates for the same ground position.
+    let pa = pos3(ia);
+    let pb = pos3(ib);
+    let e1 = pa - pc;
+    let e2 = pb - pc;
+    let nrm = cross(e1, e2);
+    // dot(p, nrm) ~ |nrm| for p inside the winner's cell (nrm is
+    // near-parallel to pos_c): never near zero, no guard needed.
+    let t = dot(pc, nrm) / dot(p, nrm);
+    let dq = t * p - pc;
+    let inv_nn = 1.0 / dot(nrm, nrm);
+    let wa = dot(cross(dq, e2), nrm) * inv_nn;
+    let wb = dot(cross(e1, dq), nrm) * inv_nn;
     var color = resolve_fragment(
-        vec3<u32>(cell, cell, cell),
-        vec3<f32>(1.0, 0.0, 0.0),
+        vec3<u32>(c, ia, ib),
+        vec3<f32>(1.0 - wa - wb, wa, wb),
         p,
         0u,
         flat_u.shade,
