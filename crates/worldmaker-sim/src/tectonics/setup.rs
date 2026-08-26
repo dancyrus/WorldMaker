@@ -12,7 +12,7 @@ use worldmaker_core::rng::sub_rng;
 use worldmaker_core::Grid;
 
 use super::keyframe::{PlateState, IDENTITY3, NEVER_SUTURED};
-use super::plate_gen::{self, PlateGenerator};
+use super::plate_gen;
 use super::step::{SimState, OCEAN_THICKNESS_KM};
 use super::{TectonicsParams, STAGE_ID};
 
@@ -44,13 +44,13 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
     let mut s = SimState::new_empty(grid);
     let n = grid.cell_count() as usize;
 
-    // --- 1–2. t=0 plate map (WO-0003 Fix 2). During the competition the
-    // default stays the incumbent, moved verbatim into plate_gen; the winner
-    // is wired here in commit M3. The generator sees only PlateGenParams
-    // (plate_count) — overlays are structurally out of reach.
+    // --- 1–2. t=0 plate map (WO-0003 Fix 2): the retuned hybrid growth+warp
+    // generator, wired at commit M3 after winning the four-way competition
+    // 3–0 twice (judge record + re-judging addendum). The generator sees only
+    // PlateGenParams (plate_count) — overlays are structurally out of reach.
     let p_count = params.plate_count as usize;
     s.plate_id =
-        plate_gen::Incumbent.generate(master_seed, grid, &plate_gen::PlateGenParams::from(params));
+        plate_gen::generate_plates(master_seed, grid, &plate_gen::PlateGenParams::from(params));
 
     // --- 3. plate motions ---
     for pid in 0..p_count {

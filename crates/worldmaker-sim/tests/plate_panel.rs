@@ -1,12 +1,13 @@
-//! WO-0003 Fix 2 dev-only judge-panel outputs (d2-fix2-design §5). Both
-//! tests are `#[ignore]` (precedent: `generates_l9_without_panic`): they are
-//! run deliberately, not in CI.
+//! WO-0003 Fix 2 dev-only plate-map panel (d2-fix2-design §5, reduced at
+//! commit M3 to a standing dev tool). `#[ignore]` (precedent:
+//! `generates_l9_without_panic`): run deliberately, never in CI.
 //!
-//! - `render_plate_maps`: equirect plate-id PNGs for all 4 generators × the
-//!   5 competition seeds at L7, for the judge panel to score shapes.
-//! - `score_generators`: CV + sinuosity for all 4 generators × 5 seeds ×
-//!   {L6, L7}, written to docs/results/plategen-feelpass-{machine}.json —
-//!   the judge's numbers are committed JSON, per ground rule 3.
+//! `render_plate_maps` renders equirect plate-id PNGs of `SimState::setup`
+//! output — the wired generator, whatever it is — for the 5 competition
+//! seeds at L7, for eyeballing future plate work. The competition-era
+//! variants (`all_generators` sweep + `score_generators`) were deleted with
+//! the losing candidates; the committed judge numbers live in
+//! docs/results/plategen-feelpass-Daniels-MacBook-Air.json.
 //!
 //! std sin/cos are used for the raster only: this is a display path; nothing
 //! here feeds a hash or a committed metric.
@@ -16,9 +17,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 use worldmaker_core::Grid;
-use worldmaker_io::results::{machine_name, today_utc_iso, ResultsFile};
-use worldmaker_sim::tectonics::plate_gen::{all_generators, PlateGenParams};
-use worldmaker_sim::tectonics::{metrics, SimState, TectonicsParams};
+use worldmaker_sim::tectonics::{SimState, TectonicsParams};
 
 /// The 5 fixed competition seeds (pinned in Stage D, before any measurement).
 const SEEDS: [(u64, &str); 5] = [
@@ -32,7 +31,7 @@ const SEEDS: [(u64, &str); 5] = [
 /// Fixed color table copied from layers.rs PLATE_COLORS values (the sim
 /// crate cannot link the app binary). The panel indexes by `plate_id % 24`
 /// while the app ranks by plate size — hues will not match the app (F10);
-/// judges compare shapes, not hues.
+/// the panel is for comparing shapes, not hues.
 const PLATE_COLORS: [[u8; 3]; 24] = [
     [230, 25, 75],
     [60, 180, 75],
@@ -122,82 +121,16 @@ fn render_png(grid: &Grid, plate_id: &[u32], path: &std::path::Path) {
 }
 
 #[test]
-#[ignore = "dev-only judge panel: renders 20 plate-id PNGs to target/plate-panel (run with --ignored)"]
+#[ignore = "dev-only panel: renders 5 setup plate-id PNGs to target/plate-panel (run with --ignored)"]
 fn render_plate_maps() {
     let dir = panel_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let grid = Arc::new(Grid::build(7));
     let params = TectonicsParams::default();
-    let gp = PlateGenParams::from(&params);
-    for g in all_generators() {
-        for (seed, label) in SEEDS {
-            let plate_id = if g.name() == "incumbent" {
-                // Sanity: the setup.rs wiring must match the trait impl.
-                let s = SimState::setup(seed, &grid, &params);
-                let direct = g.generate(seed, &grid, &gp);
-                assert_eq!(
-                    s.plate_id, direct,
-                    "SimState::setup diverged from Incumbent::generate"
-                );
-                s.plate_id
-            } else {
-                g.generate(seed, &grid, &gp)
-            };
-            let path = dir.join(format!("plates-{}-L7-seed{}.png", g.name(), label));
-            render_png(&grid, &plate_id, &path);
-            println!("wrote {}", path.display());
-        }
+    for (seed, label) in SEEDS {
+        let s = SimState::setup(seed, &grid, &params);
+        let path = dir.join(format!("plates-setup-L7-seed{label}.png"));
+        render_png(&grid, &s.plate_id, &path);
+        println!("wrote {}", path.display());
     }
-}
-
-fn round4(x: f64) -> f64 {
-    (x * 10_000.0).round() / 10_000.0
-}
-
-#[test]
-#[ignore = "one-shot record: writes docs/results/plategen-feelpass-{machine}.json (run with --ignored)"]
-fn score_generators() {
-    let params = TectonicsParams::default();
-    let gp = PlateGenParams::from(&params);
-    let mut mm = serde_json::Map::new();
-    mm.insert(
-        "plategen_seed_cyrus".into(),
-        serde_json::Value::from("0xc4be0bf8f497a575"),
-    );
-    for level in [6u32, 7] {
-        let grid = Arc::new(Grid::build(level));
-        for g in all_generators() {
-            for (seed, label) in SEEDS {
-                let ids = g.generate(seed, &grid, &gp);
-                let cv = metrics::plate_area_cv(&ids, params.plate_count);
-                let rep = metrics::boundary_sinuosity(&grid, &ids);
-                let name = g.name();
-                mm.insert(
-                    format!("{name}_area_cv_l{level}_seed{label}"),
-                    serde_json::Value::from(round4(cv)),
-                );
-                mm.insert(
-                    format!("{name}_sinuosity_l{level}_seed{label}"),
-                    serde_json::Value::from(round4(rep.weighted_mean)),
-                );
-                mm.insert(
-                    format!("{name}_open_segments_l{level}_seed{label}"),
-                    serde_json::Value::from(rep.open_segment_count),
-                );
-                mm.insert(
-                    format!("{name}_loops_l{level}_seed{label}"),
-                    serde_json::Value::from(rep.loop_count),
-                );
-            }
-        }
-    }
-    // F12: filename from machine_name() at runtime, F5: crate-dir anchored.
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../docs/results/plategen-feelpass-{}.json",
-        machine_name()
-    ));
-    ResultsFile::new(&today_utc_iso(), serde_json::Value::Object(mm))
-        .write(&path)
-        .expect("failed to write results file");
-    println!("wrote {}", path.display());
 }

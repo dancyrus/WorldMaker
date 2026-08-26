@@ -12,6 +12,17 @@
 use worldmaker_core::dmath::{arc_len3, normalize3};
 use worldmaker_core::Grid;
 
+/// FINAL feel gates on the t=0 plate map (WO-0003 Fix 2; judge record §3,
+/// re-confirmed unchanged by the re-judging addendum §A4). Evaluated on the
+/// pinned gate triple — L7 seed 42, L6 seed 7, L6 seed cyrus — by the CI
+/// gate test (tests/plategen_gate_tests.rs, which carries the full
+/// derivation and the verbatim incumbent/winner measurements) and echoed +
+/// re-evaluated into the results JSON by the acceptance harness. One
+/// definition, two enforcement points.
+pub const GATE_CV: f64 = 0.50;
+/// See `GATE_CV`.
+pub const GATE_SINUOSITY: f64 = 1.18;
+
 /// Coefficient of variation of plate areas, on cell counts (pinned; the
 /// pentagon area deficit is noise at this precision).
 ///

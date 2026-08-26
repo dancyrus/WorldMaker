@@ -1,18 +1,24 @@
-//! Plate-generator competition (WO-0003 Fix 2; design of record:
-//! docs/plan/feel-pass-design/d2-fix2-design.md §§1–2 as amended by F3, F13).
+//! The t=0 plate generator (WO-0003 Fix 2): the retuned hybrid growth+warp,
+//! winner of the four-way competition (judge record
+//! docs/plan/feel-pass-design/plate-judge-record.md, unanimous 3–0; retune
+//! re-confirmed 3–0 by the re-judging addendum). Design of record:
+//! docs/plan/feel-pass-design/d2-fix2-design.md §2.4 as amended by F13, plus
+//! the record's §4.1 connectivity post-pass and the run-3 AreaBands retune.
 //!
-//! During the competition this module is `pub` so the integration tests can
-//! reach every generator; after judging (commit M3) the losers, the trait and
-//! `all_generators` are deleted, the module is demoted to private, and only
-//! the winner remains behind `generate_plates` + `PlateGenParams`.
+//! Pipeline: heavy-tailed area-target ladder (H1, HYBRID_BANDS) → farthest-
+//! point primary seeds + helper seeds (H2) → serial multi-source Dijkstra
+//! fill with fBm-warped integer edge costs → boundary-annealing pass →
+//! minority-component reassignment (every plate exactly one connected
+//! component over CSR neighbors).
 //!
-//! Determinism contract for every generator: bit-exact from
-//! `(master_seed, grid level)`; randomness ONLY from
-//! `sub_rng(master_seed, STAGE_ID, "plate-seeds")` (draw counts may differ
-//! per candidate — nothing else reads this stream); all math via
-//! `worldmaker_core::dmath` + integer ops, no std trig; serial priority
-//! queues keyed (cost, cell id, owner) over integer costs; rayon only for
-//! per-element writes (no float reductions).
+//! Determinism contract: bit-exact from `(master_seed, grid level)`;
+//! randomness ONLY from `sub_rng(master_seed, STAGE_ID, "plate-seeds")`
+//! (nothing else reads this stream); all math via `worldmaker_core::dmath`
+//! + integer ops, no std trig; the priority queue is serial and keyed
+//! (cost, cell id, owner) over integer costs; rayon only for per-element
+//! writes (no float reductions). The generator sees only `PlateGenParams` —
+//! overlays are structurally out of reach (the firewall
+//! tectonics_tests.rs pins).
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -30,16 +36,16 @@ use worldmaker_core::Grid;
 use super::{TectonicsParams, STAGE_ID};
 use crate::noise_stage::fbm;
 
-/// The only parameters a plate generator may see. Built from a clamped
+/// The only parameters the plate generator may see. Built from a clamped
 /// `TectonicsParams` by setup.rs; deliberately EXCLUDES craton_overlay,
 /// hotspot_overlay, land_fraction and span — plate layout must be
 /// overlay-independent (tectonics_tests.rs pins keyframe-0 plate_id identical
 /// with and without craton paint). The firewall is structural: the overlays
-/// are never passed in, so no candidate can read them.
-pub struct PlateGenParams {
+/// are never passed in, so the generator cannot read them.
+pub(super) struct PlateGenParams {
     /// Clamped 8..=24 by `TectonicsParams::clamped` when built through the
     /// stage; direct callers of `SimState::setup` bypass that clamp (F3), so
-    /// every `generate` impl re-asserts the band with a `debug_assert`.
+    /// `generate_plates` re-asserts the band with a `debug_assert`.
     pub plate_count: u32,
 }
 
@@ -51,37 +57,14 @@ impl From<&TectonicsParams> for PlateGenParams {
     }
 }
 
-pub trait PlateGenerator {
-    /// "incumbent" | "growth" | "warped" | "hybrid".
-    fn name(&self) -> &'static str;
-
-    /// Returns plate_id per cell. Contract (gate-tested, debug_asserted):
-    /// ids are contiguous `0..params.plate_count`, every id non-empty
-    /// (dense: PlateState slots are indexed by id, keyframes store u16, and
-    /// step.rs asserts alive plates ≤ 32 — 24 max here); deterministic to
-    /// the bit; randomness only from the "plate-seeds" sub-stream; never
-    /// reads any overlay (structurally impossible — see `PlateGenParams`).
-    fn generate(&self, master_seed: u64, grid: &Grid, params: &PlateGenParams) -> Vec<u32>;
-}
-
-/// All four competitors in the fixed judging order.
-pub fn all_generators() -> Vec<Box<dyn PlateGenerator>> {
-    vec![
-        Box::new(Incumbent),
-        Box::new(MultiSeedGrowth),
-        Box::new(WarpedVoronoi),
-        Box::new(HybridGrowthWarp),
-    ]
-}
-
 // ---------------------------------------------------------------------------
 // Shared helpers (d2 §2.1)
 // ---------------------------------------------------------------------------
 
-/// (H2) Farthest-point seed placement — the incumbent's exact loop factored
-/// out: first seed one `next_u64()` draw, the rest argmin of a closeness
-/// array (max dot to any seed so far), ties to the lower cell id; closeness
-/// updated by per-element `par_iter_mut` max (no reduction).
+/// (H2) Farthest-point seed placement — the pre-Fix-2 incumbent's exact loop:
+/// first seed one `next_u64()` draw, the rest argmin of a closeness array
+/// (max dot to any seed so far), ties to the lower cell id; closeness updated
+/// by per-element `par_iter_mut` max (no reduction).
 fn farthest_point_seeds(rng: &mut impl RngCore, grid: &Grid, k: usize) -> Vec<u32> {
     let n = grid.cell_count() as usize;
     let mut seeds: Vec<u32> = Vec::with_capacity(k);
@@ -122,16 +105,6 @@ struct AreaBands {
     f_small_hi: f32,
 }
 
-/// The competition-era bands (d2 §2.1 H1) — still used verbatim by the
-/// growth and warped candidates so their committed judge-record metrics
-/// stay reproducible until the losers are deleted at M3.
-const CLASSIC_BANDS: AreaBands = AreaBands {
-    f_big_lo: 0.15,
-    f_big_hi: 0.25,
-    f_small_lo: 0.015,
-    f_small_hi: 0.03,
-};
-
 /// WO-0003 Fix 2 stability retune (decision log 2026-08-26): the hybrid's
 /// bands, inside the pinned envelopes (giant 15–25%, runt 1–3%). The giant
 /// band is held at its top (22–25%) so continental crust starts concentrated
@@ -151,8 +124,7 @@ const HYBRID_BANDS: AreaBands = AreaBands {
 
 /// (H1) Heavy-tailed area-target ladder (cell counts, indexed by plate id;
 /// plate 0 largest by construction). Draw order is part of the contract —
-/// the band values only reshape the two anchor draws, never the draw count,
-/// so every generator keeps its committed draw alignment.
+/// the band values only reshape the two anchor draws, never the draw count.
 fn draw_area_targets(
     rng: &mut impl RngCore,
     p_count: usize,
@@ -190,7 +162,7 @@ fn draw_area_targets(
     }
     // Jitter middles only; the extremes keep their bands by construction.
     // (F9: away from p = 12 the target sum drifts off 1.0 — expected, the
-    // fills below are exhaustive and targets only steer costs.)
+    // fill below is exhaustive and targets only steer costs.)
     for gi in g.iter_mut().take(p_count - 1).skip(1) {
         *gi *= uniform_range(rng, 0.85, 1.15);
         *gi = gi.clamp(1.1 * f_small, 0.9 * f_big);
@@ -233,62 +205,17 @@ fn debug_assert_dense(plate_id: &[u32], p_count: u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Incumbent (setup.rs sections 1–2, moved verbatim — the goldens staying
-// green at commit M2 is the proof this refactor is bit-exact)
+// Growth fill (d2 §2.2 machinery, with §2.4's noise-warped step cost)
 // ---------------------------------------------------------------------------
 
-pub struct Incumbent;
-
-impl PlateGenerator for Incumbent {
-    fn name(&self) -> &'static str {
-        "incumbent"
-    }
-
-    fn generate(&self, master_seed: u64, grid: &Grid, params: &PlateGenParams) -> Vec<u32> {
-        debug_assert!((8..=24).contains(&params.plate_count));
-        let n = grid.cell_count() as usize;
-        let p_count = params.plate_count as usize;
-
-        // --- 1. plate seed cells by farthest-point sampling ---
-        let mut rng = sub_rng(master_seed, STAGE_ID, "plate-seeds");
-        let seeds = farthest_point_seeds(&mut rng, grid, p_count);
-
-        // --- 2. ownership by great-circle Voronoi ---
-        let seed_pos: Vec<[f32; 3]> = seeds.iter().map(|&c| grid.positions[c as usize]).collect();
-        let mut plate_id = vec![0u32; n];
-        plate_id.par_iter_mut().enumerate().for_each(|(c, pid)| {
-            let x = grid.positions[c];
-            let mut best = 0u32;
-            let mut best_d = -2.0f32;
-            for (k, sp) in seed_pos.iter().enumerate() {
-                let d = dot3(x, *sp);
-                if d > best_d {
-                    best_d = d;
-                    best = k as u32;
-                }
-            }
-            *pid = best;
-        });
-        debug_assert_dense(&plate_id, params.plate_count);
-        plate_id
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Candidate (a) — MultiSeedGrowth (d2 §2.2)
-// ---------------------------------------------------------------------------
-
-pub struct MultiSeedGrowth;
-
-/// The growth machinery shared by candidates (a) and (c): H1 targets, H2
-/// primaries, helper seeds, then the serial multi-source Dijkstra fill.
-/// Returns (plate_id, primary seed cells). `noise_f` is `None` for (a);
-/// `Some` switches the step cost to (c)'s 3-factor form (all u64 — F13).
+/// H1 targets, H2 primaries, helper seeds, then the serial multi-source
+/// Dijkstra fill with the 3-factor noise-warped step cost (all factors u64 —
+/// F13). Returns (plate_id, primary seed cells).
 fn growth_fill(
     rng: &mut impl RngCore,
     grid: &Grid,
     p_count: usize,
-    noise_f: Option<&[u64]>,
+    noise_f: &[u64],
     bands: AreaBands,
 ) -> (Vec<u32>, Vec<u32>) {
     let n = grid.cell_count() as usize;
@@ -371,11 +298,8 @@ fn growth_fill(
                 continue;
             }
             let b = b_e[start + ei] as u64;
-            let step = match noise_f {
-                None => ((b * m_eff + 128) >> 8).max(1),
-                // (c): 3-factor step cost, every factor already u64 (F13).
-                Some(nf) => ((b * m_eff * nf[v as usize]) >> 16).max(1),
-            };
+            // 3-factor step cost, every factor already u64 (F13).
+            let step = ((b * m_eff * noise_f[v as usize]) >> 16).max(1);
             heap.push(Reverse((cost + step, v, owner)));
         }
     }
@@ -383,50 +307,24 @@ fn growth_fill(
     (plate_id, primaries)
 }
 
-impl PlateGenerator for MultiSeedGrowth {
-    fn name(&self) -> &'static str {
-        "growth"
-    }
-
-    fn generate(&self, master_seed: u64, grid: &Grid, params: &PlateGenParams) -> Vec<u32> {
-        debug_assert!((8..=24).contains(&params.plate_count));
-        let mut rng = sub_rng(master_seed, STAGE_ID, "plate-seeds");
-        let (plate_id, _primaries) = growth_fill(
-            &mut rng,
-            grid,
-            params.plate_count as usize,
-            None,
-            CLASSIC_BANDS,
-        );
-        debug_assert_dense(&plate_id, params.plate_count);
-        plate_id
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Candidate (b) — WarpedVoronoi (d2 §2.3)
+// Boundary annealing (d2 §2.3 step 5)
 // ---------------------------------------------------------------------------
 
-pub struct WarpedVoronoi;
-
-/// Warp displacement in chord units (typical |W| ≈ 0.9 ⇒ ~9–10° of
-/// displacement). Judge-tunable; log any change.
-const WARP_AMP: f32 = 0.18;
-/// Additive cosine-space area bias toward the heavy-tailed targets.
-const BIAS: f32 = 0.15;
 /// Noise-temperature schedule of the 3 Gauss–Seidel annealing sweeps.
 const LAMBDA: [f32; 3] = [1.5, 0.75, 0.0];
 
-/// The boundary-annealing pass (d2 §2.3 step 5), shared verbatim with the
-/// hybrid: 3 fixed serial Gauss–Seidel sweeps in ascending cell id, updates
-/// visible within the sweep; score = same-plate neighbor count + λ·hash
-/// noise; flips refused if they would empty a plate or move a pinned cell.
+/// The boundary-annealing pass: 3 fixed serial Gauss–Seidel sweeps in
+/// ascending cell id, updates visible within the sweep; score = same-plate
+/// neighbor count + λ·hash noise; flips refused if they would empty a plate
+/// or move a pinned cell. Pinned set = the p PRIMARY seed cells only (F13);
+/// helpers may flip — non-emptiness is protected by the count refusal.
 fn anneal(grid: &Grid, plate_id: &mut [u32], count: &mut [u32], pinned: &[bool], wa: u64) {
     let n = plate_id.len();
     for &lambda in &LAMBDA {
         for c in 0..n {
             if pinned[c] {
-                continue; // seeds stay pinned — non-emptiness by construction
+                continue; // primaries stay pinned — non-emptiness by construction
             }
             let cur = plate_id[c] as usize;
             let ring = grid.neighbors_of(c as u32);
@@ -478,94 +376,16 @@ fn anneal(grid: &Grid, plate_id: &mut [u32], count: &mut [u32], pinned: &[bool],
     }
 }
 
-impl PlateGenerator for WarpedVoronoi {
-    fn name(&self) -> &'static str {
-        "warped"
-    }
-
-    fn generate(&self, master_seed: u64, grid: &Grid, params: &PlateGenParams) -> Vec<u32> {
-        debug_assert!((8..=24).contains(&params.plate_count));
-        let n = grid.cell_count() as usize;
-        let p_count = params.plate_count as usize;
-        let mut rng = sub_rng(master_seed, STAGE_ID, "plate-seeds");
-
-        // Draw order: 3 warp seeds, anneal seed, targets (H1), seeds (H2).
-        let w1 = rng.next_u64();
-        let w2 = rng.next_u64();
-        let w3 = rng.next_u64();
-        let wa = rng.next_u64();
-        let target = draw_area_targets(&mut rng, p_count, n, CLASSIC_BANDS);
-        let seeds = farthest_point_seeds(&mut rng, grid, p_count);
-
-        let seed_pos: Vec<[f32; 3]> = seeds.iter().map(|&c| grid.positions[c as usize]).collect();
-        let f_mean = 1.0 / p_count as f32;
-        let bias: Vec<f32> = target
-            .iter()
-            .map(|&t| {
-                let fk = t as f32 / n as f32;
-                BIAS * ((fk / f_mean).sqrt() - 1.0)
-            })
-            .collect();
-
-        // Assignment with warped sample points and area bias (per-element
-        // parallel, strict > ⇒ ties to the lowest seed index).
-        let mut plate_id = vec![0u32; n];
-        plate_id.par_iter_mut().enumerate().for_each(|(c, pid)| {
-            let pos = grid.positions[c];
-            let w = [fbm(pos, w1, 3), fbm(pos, w2, 3), fbm(pos, w3, 3)];
-            let q = normalize3(add3(pos, scale3(w, WARP_AMP)));
-            let mut best = 0u32;
-            let mut best_d = -2.0f32;
-            for (k, sp) in seed_pos.iter().enumerate() {
-                let d = dot3(q, *sp) + bias[k];
-                if d > best_d {
-                    best_d = d;
-                    best = k as u32;
-                }
-            }
-            *pid = best;
-        });
-
-        // Non-empty repair (deterministic serial): warping can in principle
-        // steal a seed's own cell; restore a one-cell plate.
-        let mut count = vec![0u32; p_count];
-        for &p in &plate_id {
-            count[p as usize] += 1;
-        }
-        for k in 0..p_count {
-            if count[k] == 0 {
-                let sc = seeds[k] as usize;
-                let old = plate_id[sc] as usize;
-                plate_id[sc] = k as u32;
-                count[old] -= 1;
-                count[k] += 1;
-            }
-        }
-
-        // Boundary annealing; H2 seed cells stay pinned.
-        let mut pinned = vec![false; n];
-        for &c in &seeds {
-            pinned[c as usize] = true;
-        }
-        anneal(grid, &mut plate_id, &mut count, &pinned, wa);
-
-        debug_assert_dense(&plate_id, params.plate_count);
-        plate_id
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Candidate (c) — HybridGrowthWarp (d2 §2.4)
+// Connectivity post-pass (judge record §4 condition 1)
 // ---------------------------------------------------------------------------
 
-pub struct HybridGrowthWarp;
-
-/// Post-pass (judge record §4 condition 1): every plate must be exactly one
-/// connected component over CSR neighbors — the anneal can pinch a thin lobe
-/// off its plate (observed: L6 seed 7, plate 8 in 3 components). Fix rule,
-/// verbatim from the record: deterministically reassign each minority
-/// component to the neighboring plate sharing the longest boundary
-/// (interface-edge cell-center arcs via `arc_len3`; ties → lowest plate id).
+/// Post-pass: every plate must be exactly one connected component over CSR
+/// neighbors — the anneal can pinch a thin lobe off its plate (observed:
+/// L6 seed 7, plate 8 in 3 components). Fix rule, verbatim from the record:
+/// deterministically reassign each minority component to the neighboring
+/// plate sharing the longest boundary (interface-edge cell-center arcs via
+/// `arc_len3`; ties → lowest plate id).
 ///
 /// Determinism: components are labelled by a serial ascending-cell-id scan
 /// (component ids ascend with their lowest cell id); the majority component
@@ -659,80 +479,80 @@ fn reassign_minority_components(grid: &Grid, plate_id: &mut [u32], p_count: usiz
     panic!("plate component reassignment did not converge in 16 passes");
 }
 
-impl PlateGenerator for HybridGrowthWarp {
-    fn name(&self) -> &'static str {
-        "hybrid"
+// ---------------------------------------------------------------------------
+// The generator
+// ---------------------------------------------------------------------------
+
+/// Generate the t=0 plate map. Contract (gate-tested, debug_asserted): ids
+/// are contiguous `0..params.plate_count`, every id non-empty (dense:
+/// PlateState slots are indexed by id, keyframes store u16, and step.rs
+/// asserts alive plates ≤ 32 — 24 max here); deterministic to the bit from
+/// `(master_seed, grid level)`; randomness only from the "plate-seeds"
+/// sub-stream; never reads any overlay (structurally impossible — see
+/// `PlateGenParams`).
+pub(super) fn generate_plates(master_seed: u64, grid: &Grid, params: &PlateGenParams) -> Vec<u32> {
+    debug_assert!((8..=24).contains(&params.plate_count));
+    let n = grid.cell_count() as usize;
+    let p_count = params.plate_count as usize;
+    let mut rng = sub_rng(master_seed, STAGE_ID, "plate-seeds");
+
+    // Draw order: hybrid noise seed, anneal seed, then the growth sequence.
+    let wn = rng.next_u64();
+    let wa = rng.next_u64();
+
+    // Per-cell terrain factor for the step cost (per-element parallel;
+    // round then clamp, as pinned). Growth fronts advance unevenly through
+    // the noise field, so the meeting lines are irregular at the fBm scale.
+    let mut noise_f = vec![0u64; n];
+    noise_f.par_iter_mut().enumerate().for_each(|(c, nf)| {
+        let x = 256.0 * (1.0 + 0.6 * fbm(grid.positions[c], wn, 3));
+        *nf = x.round().clamp(64.0, 512.0) as u64;
+    });
+
+    let (mut plate_id, primaries) = growth_fill(&mut rng, grid, p_count, &noise_f, HYBRID_BANDS);
+
+    // Boundary annealing on the filled map — adds cell-scale roughness on
+    // top of the front-scale wiggle. Pinned set = primaries only (F13).
+    let mut count = vec![0u32; p_count];
+    for &p in &plate_id {
+        count[p as usize] += 1;
     }
-
-    fn generate(&self, master_seed: u64, grid: &Grid, params: &PlateGenParams) -> Vec<u32> {
-        debug_assert!((8..=24).contains(&params.plate_count));
-        let n = grid.cell_count() as usize;
-        let p_count = params.plate_count as usize;
-        let mut rng = sub_rng(master_seed, STAGE_ID, "plate-seeds");
-
-        // Draw order: hybrid noise seed, anneal seed, then (a)'s sequence.
-        let wn = rng.next_u64();
-        let wa = rng.next_u64();
-
-        // Per-cell terrain factor for the step cost (per-element parallel;
-        // round then clamp, as pinned).
-        let mut noise_f = vec![0u64; n];
-        noise_f.par_iter_mut().enumerate().for_each(|(c, nf)| {
-            let x = 256.0 * (1.0 + 0.6 * fbm(grid.positions[c], wn, 3));
-            *nf = x.round().clamp(64.0, 512.0) as u64;
-        });
-
-        let (mut plate_id, primaries) =
-            growth_fill(&mut rng, grid, p_count, Some(&noise_f), HYBRID_BANDS);
-
-        // (b)'s annealing pass verbatim on the filled map. Pinned set = the
-        // p PRIMARY seed cells only (F13); helpers may flip — non-emptiness
-        // is protected by the count[current] == 1 refusal.
-        let mut count = vec![0u32; p_count];
-        for &p in &plate_id {
-            count[p as usize] += 1;
-        }
-        let mut pinned = vec![false; n];
-        for &c in &primaries {
-            pinned[c as usize] = true;
-        }
-        anneal(grid, &mut plate_id, &mut count, &pinned, wa);
-
-        // Judge record §4 condition 1: exactly one component per plate.
-        reassign_minority_components(grid, &mut plate_id, p_count);
-
-        debug_assert_dense(&plate_id, params.plate_count);
-        plate_id
+    let mut pinned = vec![false; n];
+    for &c in &primaries {
+        pinned[c as usize] = true;
     }
+    anneal(grid, &mut plate_id, &mut count, &pinned, wa);
+
+    // Judge record §4 condition 1: exactly one component per plate.
+    reassign_minority_components(grid, &mut plate_id, p_count);
+
+    debug_assert_dense(&plate_id, params.plate_count);
+    plate_id
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Every competitor emits a dense, non-empty, bit-deterministic map.
-    /// Runs at L5 in normal CI so the debug_assert paths in every generator
-    /// are exercised on each test run, not only when the ignored panel tests
-    /// are invoked.
+    /// The generator emits a dense, non-empty, bit-deterministic map. Runs
+    /// at L5 in normal CI so the debug_assert paths are exercised on each
+    /// test run, complementing the L6/L7 gate suite.
     #[test]
-    fn all_generators_emit_dense_deterministic_maps() {
+    fn generate_plates_emits_dense_deterministic_maps() {
         let grid = Grid::build(5);
         let params = PlateGenParams { plate_count: 12 };
-        for g in all_generators() {
-            let a = g.generate(42, &grid, &params);
-            let b = g.generate(42, &grid, &params);
-            assert_eq!(a, b, "{} is not bit-deterministic", g.name());
-            assert_eq!(a.len(), grid.cell_count() as usize);
-            let mut counts = vec![0u32; 12];
-            for &p in &a {
-                assert!(p < 12, "{}: plate id {p} out of range", g.name());
-                counts[p as usize] += 1;
-            }
-            assert!(
-                counts.iter().all(|&c| c > 0),
-                "{}: emitted an empty plate: {counts:?}",
-                g.name()
-            );
+        let a = generate_plates(42, &grid, &params);
+        let b = generate_plates(42, &grid, &params);
+        assert_eq!(a, b, "generate_plates is not bit-deterministic");
+        assert_eq!(a.len(), grid.cell_count() as usize);
+        let mut counts = vec![0u32; 12];
+        for &p in &a {
+            assert!(p < 12, "plate id {p} out of range");
+            counts[p as usize] += 1;
         }
+        assert!(
+            counts.iter().all(|&c| c > 0),
+            "emitted an empty plate: {counts:?}"
+        );
     }
 }
