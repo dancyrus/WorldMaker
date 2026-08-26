@@ -80,6 +80,85 @@ fn lut_ramp(row: u32, t: f32) -> vec3<f32> {
     return mix(c0, c1, x - f32(i0));
 }
 
+// ----- render-detail noise (d3a section 5.2) -----
+//
+// Seeded u32-integer-lattice value noise on the unit sphere: display-only,
+// deliberately an INDEPENDENT implementation from the sim's crate-private
+// fBm, with different hash constants, so render detail can never correlate
+// with world data. The master seed arrives as two u32 uniform lanes - it
+// never passes through f32. Integer hashing is bit-exact everywhere; the
+// float lerp chain is deterministic per GPU (display-only, guarded out of
+// every golden by the worldgen.rs render-only guard test).
+
+fn hash3(c: vec3<i32>, seed: vec2<u32>) -> u32 {
+    var h = seed.x;
+    h = (h ^ bitcast<u32>(c.x)) * 0x9E3779B1u;
+    h = (h ^ bitcast<u32>(c.y)) * 0x85EBCA77u;
+    h = (h ^ bitcast<u32>(c.z)) * 0xC2B2AE3Du;
+    h = h ^ seed.y;
+    h = h ^ (h >> 16u);
+    h = h * 0x7FEB352Du;
+    h = h ^ (h >> 15u);
+    h = h * 0x846CA68Bu;
+    return h ^ (h >> 16u);
+}
+
+// Lattice-corner value in [-1, 1), exact: top 24 bits -> f32.
+fn corner_val(c: vec3<i32>, seed: vec2<u32>) -> f32 {
+    return f32(hash3(c, seed) >> 8u) * (2.0 / 16777216.0) - 1.0;
+}
+
+// Trilinear value noise with a quintic fade.
+fn vnoise(q: vec3<f32>, seed: vec2<u32>) -> f32 {
+    let base = floor(q);
+    let c = vec3<i32>(base);
+    let f = q - base;
+    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let v000 = corner_val(c + vec3<i32>(0, 0, 0), seed);
+    let v100 = corner_val(c + vec3<i32>(1, 0, 0), seed);
+    let v010 = corner_val(c + vec3<i32>(0, 1, 0), seed);
+    let v110 = corner_val(c + vec3<i32>(1, 1, 0), seed);
+    let v001 = corner_val(c + vec3<i32>(0, 0, 1), seed);
+    let v101 = corner_val(c + vec3<i32>(1, 0, 1), seed);
+    let v011 = corner_val(c + vec3<i32>(0, 1, 1), seed);
+    let v111 = corner_val(c + vec3<i32>(1, 1, 1), seed);
+    let x00 = mix(v000, v100, u.x);
+    let x10 = mix(v010, v110, u.x);
+    let x01 = mix(v001, v101, u.x);
+    let x11 = mix(v011, v111, u.x);
+    return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
+}
+
+// First-octave wavelength ~ 3 cell spacings (freq0 = this / cell spacing):
+// bridges grid scale into sub-cell scale.
+const DETAIL_FREQ_CELLS: f32 = 0.35;
+
+// fBm: gain 0.5, lacunarity 2.0, normalized to [-1, 1]. Each octave fades
+// against the pixel footprint (judgement graft 6) so sub-pixel octaves never
+// shimmer; the fade does not renormalize (a faded octave must not boost the
+// others). Footprint = length(fwidth(q)), how far the lattice coordinate
+// moves per pixel: the graft's literal fwidth(length(q)) is identically ~0
+// on the sphere (|q| = freq everywhere), so the intent is implemented, not
+// the letter.
+fn render_fbm(p: vec3<f32>, freq0: f32, octaves: u32, seed: vec2<u32>) -> f32 {
+    var sum = 0.0;
+    var norm = 0.0;
+    var amp = 1.0;
+    var freq = freq0;
+    // Pixel footprint at the base frequency; doubles per octave with freq.
+    var footprint = length(fwidth(p * freq0));
+    for (var o = 0u; o < octaves; o = o + 1u) {
+        let q = p * freq;
+        let fade = 1.0 - smoothstep(0.25, 1.0, footprint);
+        sum = sum + amp * fade * vnoise(q, seed);
+        norm = norm + amp;
+        amp = amp * 0.5;
+        freq = freq * 2.0;
+        footprint = footprint * 2.0;
+    }
+    return sum / max(norm, 1e-6);
+}
+
 // The one shading function (d3a section 5.1): everything after "which cells,
 // what weights" is canvas-independent. cids = candidate cells (globe: the
 // triangle's corners; flat interim: the raster winner three times, leg 3:
@@ -135,10 +214,26 @@ fn resolve_fragment(
     } else if layer == 3u {
         color = lut_ramp(3u, dot(w, s));
     } else {
-        // Elevation: the rasterizer interpolates the VALUE (via w), then the
-        // live sea level thresholds and the palette applies per fragment.
-        // Render-detail noise joins here (leg-2 second commit).
-        let e = dot(w, s) - sp.sea_level_m;
+        // Elevation: the rasterizer interpolates the VALUE (via w), render
+        // detail adds sub-cell relief, then the live sea level thresholds
+        // and the palette applies per fragment - so the threshold on
+        // e_render is what makes coastlines fractal (d3a section 5.3).
+        let e_base = dot(w, s) - sp.sea_level_m;
+        var e = e_base;
+        if sp.detail_amp_m > 0.0 {
+            // Slope from the candidate triple (meters across ~one cell
+            // spacing): calm plains stay calm, rough relief roughens. The
+            // depth fade quiets the abyss but is smooth through e = 0, so
+            // both sides of the coastline get equal noise.
+            let slope_m = max(max(s.x, s.y), s.z) - min(min(s.x, s.y), s.z);
+            let depth_t = smoothstep(-1500.0, -100.0, e_base);
+            let amp = sp.detail_amp_m
+                * mix(0.30, 1.0, clamp(slope_m / 800.0, 0.0, 1.0))
+                * mix(0.25, 1.0, depth_t);
+            let freq0 = DETAIL_FREQ_CELLS / sp.detail_cell_rad;
+            let seed = vec2<u32>(sp.seed_lo, sp.seed_hi);
+            e = e_base + amp * render_fbm(p, freq0, sp.octaves, seed);
+        }
         if e <= 0.0 {
             // Row 0 is sqrt-warped (graft 5): texel coordinate u = sqrt(t).
             color = lut_ramp(0u, sqrt(clamp(-e / 6000.0, 0.0, 1.0)));

@@ -65,9 +65,11 @@ enum Tool {
 
 /// Timeline playback speed while "Play" is on, in My per real second.
 const PLAY_MY_PER_SECOND: f32 = 100.0;
-/// Render-detail fBm octaves (provisional; WO-0003 leg 4's octave/amplitude
-/// sweep finalizes this default).
+/// Render-detail fBm defaults (provisional; WO-0003 leg 4's octave/amplitude
+/// sweep finalizes both). The Detail slider scales amplitude only:
+/// 0 = exactly the no-noise image, 1 = the tuned default.
 const DETAIL_DEFAULT_OCTAVES: u32 = 5;
+const DETAIL_DEFAULT_AMP_M: f32 = 220.0;
 /// Hotspot tool: clicking within this range of an existing hotspot removes it.
 const HOTSPOT_REMOVE_KM: f32 = 300.0;
 const EARTH_RADIUS_KM: f32 = 6371.0;
@@ -139,6 +141,9 @@ pub struct WorldApp {
     seed_text: String,
     master_seed: u64,
     sea_level_m: f32,
+    /// Render-detail slider, 0..=1 (off -> tuned default amplitude). A pure
+    /// live view control, like sea level: uniform-only, never a rebake.
+    detail: f32,
     view_mode: ViewMode,
     preset: Preset,
     projection: Projection,
@@ -231,6 +236,7 @@ impl WorldApp {
             seed_text,
             master_seed,
             sea_level_m: 0.0,
+            detail: 1.0,
             view_mode: ViewMode::Split,
             preset: Preset::Standard7,
             projection: Projection::Equirectangular,
@@ -468,7 +474,7 @@ impl WorldApp {
             layer_flags(self.layer, self.debug_cell_bounds, self.debug_legacy_bands),
             DETAIL_DEFAULT_OCTAVES,
             self.sea_level_m,
-            0.0, // render-detail amplitude: wired with the noise commit
+            self.detail * DETAIL_DEFAULT_AMP_M,
             self.grid.cell_count(),
         )
     }
@@ -778,6 +784,12 @@ impl WorldApp {
                         .suffix(" m")
                         .fixed_decimals(0),
                 );
+                ui.separator();
+
+                ui.label("Detail:");
+                // Render-detail amplitude, off -> tuned default. Live uniform
+                // like sea level (minimal slider; placement finalized leg 4).
+                ui.add(egui::Slider::new(&mut self.detail, 0.0..=1.0).fixed_decimals(2));
                 ui.separator();
 
                 // Debug toggles (uniform bits; final top-bar layout in leg 4).
