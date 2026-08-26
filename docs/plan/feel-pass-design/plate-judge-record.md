@@ -142,3 +142,90 @@ Delete `Incumbent`, `Warped`, `Growth` impls + `trait PlateGenerator` +
 `all_generators()` + `score_generators`; `plate_gen` demoted to private;
 `render_plate_maps` kept, reduced to rendering `SimState::setup` output.
 Curated judge PNGs → `docs/media/feel-pass/plate-panel/` with this record.
+
+## Re-judging addendum — retuned hybrid C9
+
+Re-panel run 2026-08-26 on Daniels-MacBook-Air, after the ruled hybrid failed
+the committed 2 Gy stability gate and was retuned (commit 394ecb4: C9 giant
+band 0.22–0.25, smallest share pinned 0.03, pure ladder mid-tail). Same three
+lenses, retuned hybrid2 vs the §2 original, L7 PNGs in `target/plate-panel/`
+(`plates-hybrid2-*`), metrics in
+`docs/results/plategen-feelpass-Daniels-MacBook-Air.json` (`hybrid2_*` rows).
+
+### A1. Lens scores (hybrid2, per seed 42 / cyrus / 7 / 1002 / 271828)
+
+| lens | 42 | cyrus | 7 | 1002 | 271828 | verdict |
+|---|---|---|---|---|---|---|
+| size hierarchy | 9 | 8 | 7 | 9 | 8 | **CONFIRM** |
+| wandering boundaries | 8 | 8.5 | 8 | 7 | 7.5 | **CONFIRM** |
+| symmetry / artifacts | 9 | 9 | 8 | 6 | 9 | **CONFIRM** |
+
+All three lenses: retuned ≥ original net (42 and 1002 improved on sizes,
+cyrus's original teal near-enclave now visibly three-neighboured, no seed
+regressed decisively), and still decisively better than the incumbent.
+
+### A2. Seed 1002 enclave dispute — adjudicated, flag OVERTURNED
+
+The symmetry judge scored 1002 a 6 claiming the lavender plate is a full
+enclave inside crimson ("crimson channel severs its contact with blue");
+the boundaries judge saw a retained blue contact arc. Synthesizer pixel
+re-inspection of `plates-hybrid2-L7-seed1002.png` (same method as §2):
+lavender–blue contact arc at x≈402–414, y≈286–317; 75 strict stroke-only-gap
+samples and 99 first-bright-plate samples reach blue; the gap stroke renders
+in darkened lavender (99,85,114) and darkened blue (0,58,90) — the renderer's
+plate-id-change shades — vs a single stray darkened-crimson pixel. Lavender
+borders crimson AND blue: nearly enclosed, not enclosed. **Hybrid2 has zero
+true enclaves across the panel**, matching the metrics run (all 10 pairs
+single-component). The 1002 score's regression premise is void; the lens's
+CONFIRM stands a fortiori.
+
+### A3. FINAL ruling
+
+**Retuned hybrid C9 (hybrid2) is CONFIRMED as the generator M3 wires.**
+Unanimous 3–0 CONFIRM; the only claimed visual regression (A2) is overturned
+on pixel evidence; stability seed 42 passes at 4.1% drift (gate ≤ 5%) with
+alive plates 6–12 and a live breakup cycle. No conflict to report.
+
+### A4. FINAL gate values — unchanged
+
+```
+GATE_CV        = 0.50
+GATE_SINUOSITY = 1.18
+```
+
+Retuned P3 bands: CV [0.50, 0.7713], sinuosity [1.1665, 1.2148]; both ruled
+values sit inside. Reasoning: the incumbent-side floors are untouched by the
+retune (0.50 formula CV floor; 1.1665 sinuosity floor, with 1.18 still
+clearing every incumbent measurement on all 10 pairs by ≥ 0.0255). Winner-side
+margins GREW: CV triple worst 0.8213 (margin 0.3213, was 0.2210), sinuosity
+triple worst 1.2348 (margin 0.0548, was 0.0495), and hybrid2's off-triple
+sinuosity min 1.2023 now clears 1.18 outright (original dipped to 1.1735).
+No judge evidence argues for moving either gate. §3's strict-exclusion result
+is unchanged. **M3 must update the gate-test doc comment to quote the hybrid2
+triple verbatim: CV 0.8280 / 0.8213 / 0.9152 and sinuosity 1.2348 / 1.2831 /
+1.2927 (order L7:42, L6:7, L6:cyrus), replacing §3's original-hybrid figures.**
+
+### A5. Stability drift gate — orchestrator ruling, applied not debated
+
+The committed 2 Gy stability gate stays seed-42-only for this order, exactly
+as Phase 1 defined it — the multi-seed drift numbers are recorded-not-gated,
+flagged as an open question for Phase 2.
+
+### A6. Realized-vs-target shares
+
+Realized smallest shares dipping to ~0.9% against the pinned 0.03 target
+band match competition-era behavior (targets are band-pinned, realized
+shares are not — §2's panel was judged under the same regime). Non-blocking;
+the minors still render as legible plates (sizes lens, all five seeds).
+Realized giant is reliably 22–26% of the sphere.
+
+### A7. Notes for M3
+
+- §4 conditions stand unchanged, now applied to hybrid2. The symmetry judge
+  re-recommends promoting an automated enclave check (plate with exactly one
+  distinct neighbor) into the gate suite alongside §4.1's connectivity
+  check — still recommended, not required.
+- Cross-seed fingerprint: pinning smallest share at 0.03 makes the smallest
+  plates slightly more uniform across seeds; mild, present in the original,
+  non-blocking.
+- This addendum is committed by Track B's M3 run, not by the re-judging panel.
