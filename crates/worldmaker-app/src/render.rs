@@ -564,6 +564,7 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
                 match self.view.projection {
                     worldmaker_core::Projection::Equirectangular => 0.0,
                     worldmaker_core::Projection::Robinson => 1.0,
+                    worldmaker_core::Projection::EckertIv => 2.0,
                 },
                 0.0,
                 if self.view.graticule { 1.0 } else { 0.0 },

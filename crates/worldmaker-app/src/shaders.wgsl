@@ -88,6 +88,9 @@ fn map_invert(proj: f32, mx: f32, my: f32) -> vec3<f32> {
         }
         return vec3<f32>(my * PI * 0.5, mx * PI, 1.0);
     }
+    if proj > 1.5 {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
     // Robinson: |y| -> |lat| by inverse-interpolating the Y column.
     let ya = abs(my);
     var i: i32 = 0;

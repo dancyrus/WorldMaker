@@ -1,6 +1,6 @@
 //! Map projections, implemented in core as pure testable math.
 //!
-//! Both projections map (lat, lon) in radians to normalized map coordinates
+//! Every projection maps (lat, lon) in radians to normalized map coordinates
 //! (x, y) in [-1, 1] × [-1, 1], y up. Canvases scale x by `aspect()` to get
 //! the correct shape. Inversion returns `None` for points outside the map
 //! outline (e.g. the corners of a Robinson frame).
@@ -11,15 +11,21 @@ use std::f32::consts::{FRAC_PI_2, PI};
 pub enum Projection {
     Equirectangular,
     Robinson,
+    EckertIv,
 }
 
 impl Projection {
-    pub const ALL: [Projection; 2] = [Projection::Equirectangular, Projection::Robinson];
+    pub const ALL: [Projection; 3] = [
+        Projection::Equirectangular,
+        Projection::Robinson,
+        Projection::EckertIv,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Projection::Equirectangular => "Equirectangular",
             Projection::Robinson => "Robinson",
+            Projection::EckertIv => "Eckert IV",
         }
     }
 
@@ -29,6 +35,8 @@ impl Projection {
             Projection::Equirectangular => 2.0,
             // (2 · 0.8487 · π) / (2 · 1.3523)
             Projection::Robinson => 0.8487 * PI / 1.3523,
+            // [4π/√(π(4+π))] / [2√(π/(4+π))] = 2, exactly.
+            Projection::EckertIv => 2.0,
         }
     }
 
@@ -39,6 +47,14 @@ impl Projection {
             Projection::Robinson => {
                 let (px, py) = robinson_interp(lat.abs());
                 (px * lon / PI, py * lat.signum())
+            }
+            // Snyder, unit sphere, normalized so the equator spans x ∈ [-1, 1]
+            // and the pole lines (half the equator's length) span x ∈ [-½, ½]:
+            //   x = λ·(1 + cos θ) / 2π,  y = sin θ.
+            Projection::EckertIv => {
+                let theta = eckert4_theta(f64::from(lat));
+                let x = f64::from(lon) * (1.0 + theta.cos()) / (2.0 * std::f64::consts::PI);
+                (x as f32, theta.sin() as f32)
             }
         }
     }
@@ -69,8 +85,54 @@ impl Projection {
                 }
                 Some((lat_abs * y.signum(), lon.clamp(-PI, PI)))
             }
+            // Closed form: θ from y, φ from the defining relation, λ from x.
+            // The WGSL inverse must mirror this arm exactly (same rejection
+            // order, same 1.0001 hair tolerance, same clamps).
+            Projection::EckertIv => {
+                if !(-1.0..=1.0).contains(&y) {
+                    return None;
+                }
+                let theta = y.clamp(-1.0, 1.0).asin();
+                let (s, c) = theta.sin_cos();
+                let lat = ((theta + s * c + 2.0 * s) / (2.0 + FRAC_PI_2))
+                    .clamp(-1.0, 1.0)
+                    .asin();
+                let lon = 2.0 * PI * x / (1.0 + c);
+                if lon.abs() > PI * 1.0001 {
+                    return None;
+                }
+                Some((lat, lon.clamp(-PI, PI)))
+            }
         }
     }
+}
+
+/// Eckert IV parametric angle: solve θ + sin θ·cos θ + 2·sin θ = (2 + π/2)·sin φ
+/// by Newton's method from θ₀ = φ/2, computed internally in f64 with a fixed
+/// iteration cap of 12 and tolerance 1e-9 rad (deterministic: fixed start,
+/// fixed order, early-out on |Δθ| ≤ tol). |sin φ| ≥ 1 − 1e-7 short-circuits to
+/// θ = sign(φ)·π/2 — the Newton derivative 2·cos θ·(1 + cos θ) vanishes at the
+/// pole. The iterates approach the root monotonically from below (the residual
+/// is concave increasing on [0, π/2]), so cos θ stays positive throughout.
+fn eckert4_theta(lat: f64) -> f64 {
+    const HALF_PI: f64 = std::f64::consts::FRAC_PI_2;
+    const ITER_CAP: usize = 12;
+    const TOL: f64 = 1e-9;
+    let sin_lat = lat.sin();
+    if sin_lat.abs() >= 1.0 - 1e-7 {
+        return HALF_PI.copysign(lat);
+    }
+    let target = (2.0 + HALF_PI) * sin_lat;
+    let mut theta = lat / 2.0;
+    for _ in 0..ITER_CAP {
+        let (s, c) = theta.sin_cos();
+        let delta = (theta + s * c + 2.0 * s - target) / (2.0 * c * (1.0 + c));
+        theta -= delta;
+        if delta.abs() <= TOL {
+            break;
+        }
+    }
+    theta
 }
 
 /// Robinson's tabulated coefficients every 5° of latitude:
@@ -149,6 +211,10 @@ mod tests {
         // Robinson frame corner: beyond the pole-line length at high latitude.
         assert!(Projection::Robinson.invert(0.99, 0.99).is_none());
         assert!(Projection::Robinson.invert(0.0, 1.2).is_none());
+        // Eckert IV frame corner and beyond-pole points.
+        assert!(Projection::EckertIv.invert(0.9, 0.99).is_none());
+        assert!(Projection::EckertIv.invert(1.2, 0.0).is_none());
+        assert!(Projection::EckertIv.invert(0.0, 1.2).is_none());
     }
 
     #[test]

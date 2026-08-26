@@ -79,3 +79,48 @@ fn mapping_edge_cases() {
     let east = latlon_to_unit(0.3, -std::f32::consts::PI);
     assert_eq!(g.nearest_cell(west, None), g.nearest_cell(east, None));
 }
+
+/// Eckert IV anchors: exact 2:1 aspect, equator on y = 0 reaching x = ±1 at
+/// the antimeridian, pole line half the equator's length (x = ±0.5 at
+/// |lat| = 90°), antimeridian accepted by the inverse, and rejection outside
+/// the curved outline.
+#[test]
+fn eckert_iv_anchors_and_rejection() {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let p = Projection::EckertIv;
+    assert_eq!(p.aspect(), 2.0);
+
+    // Equator: y = 0, antimeridian at x = ±1.
+    let (x, y) = p.project(0.0, PI);
+    assert!(
+        (x - 1.0).abs() < 1e-6 && y.abs() < 1e-6,
+        "equator east: {x} {y}"
+    );
+    let (x, y) = p.project(0.0, -PI);
+    assert!(
+        (x + 1.0).abs() < 1e-6 && y.abs() < 1e-6,
+        "equator west: {x} {y}"
+    );
+
+    // Pole line: x = ±0.5 at |lat| = 90°, lon = ±180°.
+    let (x, y) = p.project(FRAC_PI_2, PI);
+    assert!(
+        (x - 0.5).abs() < 1e-6 && (y - 1.0).abs() < 1e-6,
+        "north pole line: {x} {y}"
+    );
+    let (x, y) = p.project(-FRAC_PI_2, -PI);
+    assert!(
+        (x + 0.5).abs() < 1e-6 && (y + 1.0).abs() < 1e-6,
+        "south pole line: {x} {y}"
+    );
+
+    // Antimeridian points are accepted by the inverse (hair tolerance).
+    let (lat, lon) = p.invert(1.0, 0.0).expect("antimeridian rejected");
+    assert!(lat.abs() < 1e-6 && (lon.abs() - PI).abs() < 1e-5);
+
+    // Outside the curved outline: frame corners and beyond-frame points.
+    assert!(p.invert(0.9, 0.99).is_none());
+    assert!(p.invert(-0.9, -0.99).is_none());
+    assert!(p.invert(1.2, 0.0).is_none());
+    assert!(p.invert(0.0, 1.2).is_none());
+}
