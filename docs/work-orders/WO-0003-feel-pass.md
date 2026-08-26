@@ -49,25 +49,28 @@ unchecked box.
 
 ## Stage I — implement (isolated worktrees)
 
-### Track B — plates + harness (merges first)
-- [ ] Incumbent metrics (area CV, sinuosity) measured on 5 fixed seeds, committed
-      to docs/results/tectonics-feelpass-Daniels-MacBook-Air.json BEFORE replacement
-- [ ] Three candidates implemented behind common trait; plate-map PNGs via
-      dev-only #[ignore] test; judge panel scores metrics + PNGs; decision logged;
-      losers deleted
-- [ ] Final gates strictly exclude incumbent scores (provisional CV ≥ 0.5,
-      sinuosity ≥ 1.15; adjustments logged); fast CI gate test in worldmaker-sim
-      (L7 seed 42 + two L6 seeds)
-- [ ] Determinism: dmath only, id-ordered PQ w/ deterministic tie-breaks, serial
-      id-ordered metric aggregation, stage sub-stream randomness
-- [ ] Phase 1 acceptance re-passes end to end (age-depth, hypsometry, arcs,
-      2 Gy stability: plates 6–24, land ±5%) → new results file
-- [ ] L9 keyframe-cadence decision implemented + logged; keyframe_interval_my
-      doc comment updated; CLAUDE.md key facts updated
-- [ ] harness.rs: new metrics + optional L8/L9 rows wired
-- [ ] Goldens (GOLDEN_TECTONIC_ELEVATION, GOLDEN_TECTONIC_PLATES) regenerated
-      exactly once, final commit on B's branch, decision-log entry
-- [ ] Track B merged green
+### Track B — plates + harness (merges first) — DONE, merged as PR #6 (b0ec0ff)
+- [x] Incumbent metrics (area CV ~0.08, sinuosity ~1.11) measured on 5 fixed
+      seeds × L6/L7, committed BEFORE replacement (M1, plategen-feelpass JSON)
+- [x] Three candidates behind PlateGenerator trait; 20-PNG panel; 3-judge panel
+      → hybrid won 3–0; stability failure at P2 diagnosed (suture-driven engine
+      seizure, not R1 consumption) → C9 retune (giant 22–25%, smallest 3%)
+      → re-judging panel confirmed 3–0; losers deleted at M3
+- [x] Final gates CV ≥ 0.50 / sinuosity ≥ 1.18 strictly exclude every incumbent
+      score on all 10 pairs; always-on gate test 0.29 s (triple L7:42 + L6:7 +
+      L6:cyrus, connectivity + enclave checks)
+- [x] Determinism: dmath arc_len3, id-ordered PQ, serial metric aggregation,
+      stage sub-stream; goldens reproduce ARM↔x86 bit-for-bit in CI
+- [x] Phase 1 acceptance re-passes end to end (all_acceptance_pass = true:
+      drift 4.1%, alive 6–12, age-depth 2.77%, Ashman 6.53, arcs 100%)
+      → tectonics-feelpass-Daniels-MacBook-Air.json
+- [x] L9 cadence = 100 My implemented + logged (2 Gy ≈ 0.88 GB); doc comment +
+      CLAUDE.md updated; XL rows: 1 Gy L8 17.6 s / 535 MB, L9 109 s / 461 MB
+- [x] harness.rs: plategen metric rows + WM_HARNESS_XL L8/L9 rows
+- [x] Goldens regenerated exactly once (M3 f28e896): elevation
+      0xf751…5b62 → 0x7b43_ec03_a6ef_ca2a, plates 0x70df…653d →
+      0x1690_72d7_7080_3f71; phase-0 golden unmoved; decision-log rows
+- [x] Track B merged green (PR #6, all CI checks)
 
 ### Track C — rendering + resolution (merges second, rebases on B)
 - [ ] Globe: per-cell scalar upload; palette + sea-level threshold + render
