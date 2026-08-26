@@ -509,6 +509,105 @@ impl PlateGenerator for WarpedVoronoi {
 
 pub struct HybridGrowthWarp;
 
+/// Post-pass (judge record §4 condition 1): every plate must be exactly one
+/// connected component over CSR neighbors — the anneal can pinch a thin lobe
+/// off its plate (observed: L6 seed 7, plate 8 in 3 components). Fix rule,
+/// verbatim from the record: deterministically reassign each minority
+/// component to the neighboring plate sharing the longest boundary
+/// (interface-edge cell-center arcs via `arc_len3`; ties → lowest plate id).
+///
+/// Determinism: components are labelled by a serial ascending-cell-id scan
+/// (component ids ascend with their lowest cell id); the majority component
+/// of a plate is the largest, ties to the lowest component id; minority
+/// components are processed in component-id order with boundary sums
+/// accumulated in f64 over cells in ascending cell id and CSR ring order.
+/// Reassigning a blob can in principle re-split its target plate, so the
+/// pass iterates to a fixed point (a no-op pass on an already-clean map).
+fn reassign_minority_components(grid: &Grid, plate_id: &mut [u32], p_count: usize) {
+    let n = plate_id.len();
+    for _pass in 0..16 {
+        // Label connected components (serial BFS, ascending seed cell id).
+        let mut comp = vec![u32::MAX; n];
+        let mut comp_plate: Vec<u32> = Vec::new();
+        let mut comp_cells: Vec<Vec<u32>> = Vec::new();
+        for c0 in 0..n {
+            if comp[c0] != u32::MAX {
+                continue;
+            }
+            let pid = plate_id[c0];
+            let cid = comp_plate.len() as u32;
+            comp_plate.push(pid);
+            comp[c0] = cid;
+            let mut cells: Vec<u32> = vec![c0 as u32];
+            let mut q: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
+            q.push_back(c0 as u32);
+            while let Some(c) = q.pop_front() {
+                for &nb in grid.neighbors_of(c) {
+                    let nu = nb as usize;
+                    if comp[nu] == u32::MAX && plate_id[nu] == pid {
+                        comp[nu] = cid;
+                        cells.push(nb);
+                        q.push_back(nb);
+                    }
+                }
+            }
+            comp_cells.push(cells);
+        }
+        // Majority component per plate: most cells, ties to the lowest
+        // component id (strict > over ascending component ids).
+        let mut major = vec![u32::MAX; p_count];
+        let mut major_size = vec![0usize; p_count];
+        for (cid, cells) in comp_cells.iter().enumerate() {
+            let p = comp_plate[cid] as usize;
+            if cells.len() > major_size[p] {
+                major_size[p] = cells.len();
+                major[p] = cid as u32;
+            }
+        }
+        // Reassign minority components in component-id order. Later blobs see
+        // earlier reassignments (fixed order ⇒ deterministic).
+        let mut changed = false;
+        for (cid, cells) in comp_cells.iter().enumerate() {
+            let p = comp_plate[cid] as usize;
+            if major[p] == cid as u32 {
+                continue;
+            }
+            changed = true;
+            let mut sorted = cells.clone();
+            sorted.sort_unstable();
+            let mut blen = vec![0.0f64; p_count];
+            for &c in &sorted {
+                let pc = grid.positions[c as usize];
+                for &nb in grid.neighbors_of(c) {
+                    let q = plate_id[nb as usize] as usize;
+                    if q != p {
+                        blen[q] += arc_len3(pc, grid.positions[nb as usize]) as f64;
+                    }
+                }
+            }
+            let mut best = usize::MAX;
+            let mut best_len = 0.0f64;
+            for (q, &l) in blen.iter().enumerate() {
+                if l > best_len {
+                    best_len = l;
+                    best = q;
+                }
+            }
+            assert!(
+                best != usize::MAX,
+                "minority component has no foreign neighbor"
+            );
+            for &c in &sorted {
+                plate_id[c as usize] = best as u32;
+            }
+        }
+        if !changed {
+            return;
+        }
+    }
+    panic!("plate component reassignment did not converge in 16 passes");
+}
+
 impl PlateGenerator for HybridGrowthWarp {
     fn name(&self) -> &'static str {
         "hybrid"
@@ -546,6 +645,9 @@ impl PlateGenerator for HybridGrowthWarp {
             pinned[c as usize] = true;
         }
         anneal(grid, &mut plate_id, &mut count, &pinned, wa);
+
+        // Judge record §4 condition 1: exactly one component per plate.
+        reassign_minority_components(grid, &mut plate_id, p_count);
 
         debug_assert_dense(&plate_id, params.plate_count);
         plate_id
