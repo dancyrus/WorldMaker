@@ -372,9 +372,8 @@ struct FlatUniforms {
     // Map center and half-extents in framebuffer pixels.
     center_px: vec2<f32>,
     half_px: vec2<f32>,
-    // x: projection (0 = equirectangular, 1 = Robinson, 2 = Eckert IV - its
-    // WGSL inverse arm lands in leg 3), y: unused, z: graticule (0/1),
-    // w: unused.
+    // x: projection (0 = equirectangular, 1 = Robinson, 2 = Eckert IV),
+    // y: unused, z: graticule (0/1), w: unused.
     misc: vec4<f32>,
     // x, y: cell-id texture dimensions.
     tex: vec4<f32>,
@@ -422,7 +421,21 @@ fn map_invert(proj: f32, mx: f32, my: f32) -> vec3<f32> {
         return vec3<f32>(my * PI * 0.5, mx * PI, 1.0);
     }
     if proj > 1.5 {
-        return vec3<f32>(0.0, 0.0, 0.0);
+        // Eckert IV: closed form, mirroring core Projection::invert's arm
+        // exactly (same rejection order, same 1.0001 hair tolerance, same
+        // clamps - the equirect strict-gate discipline), so shader pixels
+        // and the CPU cursor readout / brush picks agree on domain
+        // membership per pixel. |my| > 1 was rejected above, matching the
+        // CPU arm's y check coming first.
+        let theta = asin(clamp(my, -1.0, 1.0));
+        let s = sin(theta);
+        let c = cos(theta);
+        let lat = asin(clamp((theta + s * c + 2.0 * s) / (2.0 + PI * 0.5), -1.0, 1.0));
+        let lon = 2.0 * PI * mx / (1.0 + c);
+        if abs(lon) > PI * 1.0001 {
+            return vec3<f32>(0.0, 0.0, 0.0);
+        }
+        return vec3<f32>(lat, clamp(lon, -PI, PI), 1.0);
     }
     // Robinson: |y| -> |lat| by inverse-interpolating the Y column.
     let ya = abs(my);

@@ -741,7 +741,7 @@ impl WorldApp {
                 egui::ComboBox::from_label("Projection")
                     .selected_text(self.projection.name())
                     .show_ui(ui, |ui| {
-                        for p in [Projection::Equirectangular, Projection::Robinson] {
+                        for p in Projection::ALL {
                             ui.selectable_value(&mut self.projection, p, p.name());
                         }
                     });

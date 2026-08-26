@@ -1201,4 +1201,51 @@ mod tests {
             check_midpoints(&grid, 100, 0x0bad_f00d);
         }
     }
+
+    /// The WGSL Eckert IV inverse arm (shaders.wgsl `map_invert`, proj > 1.5)
+    /// transliterated in f32, asserted against core `Projection::invert` to
+    /// the strict-gate standard: identical accept/reject decisions on a dense
+    /// grid over and beyond the outline, values within f32 trig tolerance.
+    #[test]
+    fn wgsl_eckert_inverse_arm_matches_cpu_invert() {
+        use std::f32::consts::PI;
+        let wgsl_arm = |mx: f32, my: f32| -> Option<(f32, f32)> {
+            if my.abs() > 1.0 {
+                return None;
+            }
+            let theta = my.clamp(-1.0, 1.0).asin();
+            let s = theta.sin();
+            let c = theta.cos();
+            let lat = ((theta + s * c + 2.0 * s) / (2.0 + PI * 0.5))
+                .clamp(-1.0, 1.0)
+                .asin();
+            let lon = 2.0 * PI * mx / (1.0 + c);
+            if lon.abs() > PI * 1.0001 {
+                return None;
+            }
+            Some((lat, lon.clamp(-PI, PI)))
+        };
+        let proj = worldmaker_core::Projection::EckertIv;
+        for iy in -110..=110 {
+            for ix in -110..=110 {
+                let mx = ix as f32 * 0.01;
+                let my = iy as f32 * 0.01;
+                let cpu = proj.invert(mx, my);
+                let gpu = wgsl_arm(mx, my);
+                match (cpu, gpu) {
+                    (None, None) => {}
+                    (Some((la, lo)), Some((lb, lob))) => {
+                        assert!(
+                            (la - lb).abs() < 1e-6 && (lo - lob).abs() < 1e-6,
+                            "value drift at ({mx}, {my}): cpu ({la}, {lo}) wgsl ({lb}, {lob})"
+                        );
+                    }
+                    _ => panic!(
+                        "accept/reject mismatch at ({mx}, {my}): cpu {:?} wgsl {:?}",
+                        cpu, gpu
+                    ),
+                }
+            }
+        }
+    }
 }
