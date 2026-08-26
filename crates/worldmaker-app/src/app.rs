@@ -8,6 +8,7 @@ use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use eframe::egui;
+use eframe::egui_wgpu::wgpu;
 
 use worldmaker_core::grid::{latlon_to_unit, Grid};
 use worldmaker_core::hash::seed_from_text;
@@ -89,6 +90,10 @@ const PLAY_MY_PER_SECOND: f32 = 100.0;
 /// 0 = exactly the no-noise image, 1 = the tuned default.
 const DETAIL_DEFAULT_OCTAVES: u32 = 5;
 const DETAIL_DEFAULT_AMP_M: f32 = 220.0;
+/// Flat zoom for the deterministic coast crop (graft 8): ~30 degrees of
+/// longitude across the 1600 pt scripted window — an L8 cell spans ~13 pt,
+/// wide enough to judge coastline embellishment against facet size.
+const COAST_CROP_ZOOM: f32 = 12.0;
 /// Hotspot tool: clicking within this range of an existing hotspot removes it.
 const HOTSPOT_REMOVE_KM: f32 = 300.0;
 const EARTH_RADIUS_KM: f32 = 6371.0;
@@ -124,6 +129,14 @@ impl Script {
             && self.detail_octaves.is_none()
             && self.detail_amp_m.is_none()
     }
+    /// Sweep capture mode (d3a §12): a screenshot run carrying the dev detail
+    /// overrides captures only the two judged crops — the deterministic coast
+    /// close-up (graft 8) and the mountains stage — keeping the 24-run sweep
+    /// fast.
+    fn sweep_shots(&self) -> bool {
+        self.screenshots_dir.is_some()
+            && (self.detail_octaves.is_some() || self.detail_amp_m.is_some())
+    }
 }
 
 enum ScriptState {
@@ -133,11 +146,16 @@ enum ScriptState {
         frames: u32,
         requested: bool,
     },
+    /// Perf loop (d3a §10.3): presets Standard7 -> High8 -> Ultra9, and per
+    /// preset the three views, 40 warmup + 240 sampled frames each.
     Perf {
+        preset_idx: usize,
+        /// Sim wall time for the current preset's world build was recorded.
+        sim_recorded: bool,
         stage: usize,
         frames: u32,
         started: Option<Instant>,
-        fps: Vec<(String, f64)>,
+        metrics: Vec<(String, f64)>,
     },
     Closing,
 }
@@ -212,6 +230,10 @@ pub struct WorldApp {
     globe: GlobeView,
     flat_pan: [f32; 2],
     flat_zoom: f32,
+    /// Deferred flat-canvas centering: (lat, lon) radians + zoom, resolved
+    /// against the real canvas rect on the next flat frame (the coast-crop
+    /// stage sets it; pan depends on rect size, unknown at stage setup).
+    flat_center_target: Option<(f32, f32, f32)>,
 
     // Cursor readout: (canvas name, cell id, lat deg, lon deg).
     hover: Option<(&'static str, u32, f32, f32)>,
@@ -220,6 +242,11 @@ pub struct WorldApp {
     // FPS.
     frame_times: Vec<f32>,
     last_frame: Instant,
+    /// Wall time of the most recent finished tectonics run, seconds (perf
+    /// loop records it per preset).
+    last_sim_wall_s: Option<f64>,
+    /// Device handle for the perf loop's per-frame GPU sync.
+    gpu_device: wgpu::Device,
 
     // Scripted modes.
     script: Script,
@@ -332,18 +359,23 @@ impl WorldApp {
             },
             flat_pan: [0.0, 0.0],
             flat_zoom: 1.0,
+            flat_center_target: None,
             hover: None,
             pick_hint: None,
             frame_times: Vec::with_capacity(240),
             last_frame: Instant::now(),
+            last_sim_wall_s: None,
+            gpu_device: render_state.device.clone(),
             // Perf runs first when both flags are given; its completion chains
             // into the screenshot script so neither output is silently lost.
             script_state: if script.perf_out.is_some() {
                 ScriptState::Perf {
+                    preset_idx: 0,
+                    sim_recorded: false,
                     stage: 0,
                     frames: 0,
                     started: None,
-                    fps: Vec::new(),
+                    metrics: Vec::new(),
                 }
             } else if script.screenshots_dir.is_some() {
                 ScriptState::Shot {
@@ -450,6 +482,7 @@ impl WorldApp {
                     "tectonics run finished in {seconds:.2} s (seed {:#018x})",
                     self.master_seed
                 );
+                self.last_sim_wall_s = Some(seconds);
                 self.history = world.history.take();
                 self.world_state = Some(world);
                 self.job = None;
@@ -742,6 +775,15 @@ impl WorldApp {
     }
 
     fn flat_canvas(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        // Resolve a deferred centering request now that the rect is known:
+        // put the projected target point at the rect center at the given
+        // zoom (mx at center = -pan_x/B_x, my at center = pan_y/B_y).
+        if let Some((lat, lon, zoom)) = self.flat_center_target.take() {
+            let base = flat_base_half_extents(self.projection, rect.width(), rect.height());
+            let (fx, fy) = self.projection.project(lat, lon);
+            self.flat_zoom = zoom;
+            self.flat_pan = [-fx * base[0] * zoom, fy * base[1] * zoom];
+        }
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         let painting = self.tool != Tool::None;
         if response.dragged() && !painting {
@@ -1120,11 +1162,27 @@ impl WorldApp {
                 }
                 "mountains"
             }
-            _ => {
+            5 => {
                 self.view_mode = ViewMode::Flat;
                 self.layer = Layer::Elevation;
                 self.viewing_kf = (kf_count * 3) / 5;
                 "timeline"
+            }
+            _ => {
+                // The deterministic coast crop (graft 8 / A9): flat close-up
+                // centered on the max-slope near-coast cell of the final era.
+                self.view_mode = ViewMode::Flat;
+                self.layer = Layer::Elevation;
+                self.viewing_kf = last;
+                if let Some(h) = &self.history {
+                    let kf = &h.keyframes[last];
+                    if let Some(c) = coast_crop_cell(&self.grid, &kf.elev_m) {
+                        let c = c as usize;
+                        self.flat_center_target =
+                            Some((self.grid.lat[c], self.grid.lon[c], COAST_CROP_ZOOM));
+                    }
+                }
+                "coast"
             }
         }
     }
@@ -1147,7 +1205,24 @@ impl WorldApp {
     }
 
     fn drive_shot(&mut self, ctx: &egui::Context) {
-        const NAMES: [&str; 6] = ["globe", "flat", "split", "plates", "mountains", "timeline"];
+        const NAMES: [&str; 7] = [
+            "globe",
+            "flat",
+            "split",
+            "plates",
+            "mountains",
+            "timeline",
+            "coast",
+        ];
+        /// The normal documentation set.
+        const NORMAL_SEQ: [usize; 6] = [0, 1, 2, 3, 4, 5];
+        /// Sweep mode (d3a §12): only the two judged crops.
+        const SWEEP_SEQ: [usize; 2] = [6, 4];
+        let seq: &[usize] = if self.script.sweep_shots() {
+            &SWEEP_SEQ
+        } else {
+            &NORMAL_SEQ
+        };
         let (stage, frames, requested) = match &self.script_state {
             ScriptState::Shot {
                 stage,
@@ -1156,12 +1231,13 @@ impl WorldApp {
             } => (*stage, *frames, *requested),
             _ => return,
         };
+        let shot = seq[stage];
         let frames = frames + 1;
         let mut requested = requested;
         if frames == 1 {
-            self.setup_shot_stage(stage);
+            self.setup_shot_stage(shot);
             self.needs_bake = true;
-            log::info!("screenshot stage {stage}: {}", NAMES[stage]);
+            log::info!("screenshot stage {stage}: {}", NAMES[shot]);
         }
         if frames == 30 && !requested {
             requested = true;
@@ -1176,13 +1252,13 @@ impl WorldApp {
         });
         if let Some(image) = image {
             let dir = self.script.screenshots_dir.clone().unwrap();
-            let name = NAMES[stage];
+            let name = NAMES[shot];
             if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
                 log::error!("failed to save screenshot {name}: {e:#}");
             } else {
                 log::info!("saved screenshot {name}.png");
             }
-            self.script_state = if stage + 1 < NAMES.len() {
+            self.script_state = if stage + 1 < seq.len() {
                 ScriptState::Shot {
                     stage: stage + 1,
                     frames: 0,
@@ -1201,15 +1277,12 @@ impl WorldApp {
     }
 
     fn drive_perf(&mut self) {
-        let ScriptState::Perf {
-            stage,
-            frames,
-            started,
-            fps,
-        } = &mut self.script_state
-        else {
-            return;
-        };
+        /// The pinned preset loop (d3a §10.3): Standard7 -> High8 -> Ultra9.
+        const PRESETS: [(Preset, &str); 3] = [
+            (Preset::Standard7, "L7"),
+            (Preset::High8, "L8"),
+            (Preset::Ultra9, "L9"),
+        ];
         const VIEWS: [(ViewMode, &str); 3] = [
             (ViewMode::Globe, "globe_fps"),
             (ViewMode::Flat, "flat_fps"),
@@ -1217,31 +1290,101 @@ impl WorldApp {
         ];
         const WARMUP: u32 = 40;
         const SAMPLE: u32 = 240;
-        let (mode, name) = VIEWS[*stage];
-        *frames += 1;
-        let frames_now = *frames;
-        if frames_now == WARMUP {
-            *started = Some(Instant::now());
+
+        // GPU-sync the sampling loop: with vsync off (and macOS recycling
+        // drawables instantly when the window is occluded) the CPU can spin
+        // far ahead of the GPU, counting frames whose draws never finished.
+        // Waiting for all submitted GPU work once per frame makes the
+        // sampled fps the real per-frame cost.
+        let _ = self.gpu_device.poll(wgpu::PollType::wait_indefinitely());
+
+        // Copy the state out (drive_shot's pattern) so preset switches may
+        // borrow all of self.
+        let (mut preset_idx, mut sim_recorded, mut stage, mut frames, mut started, mut metrics) =
+            match &mut self.script_state {
+                ScriptState::Perf {
+                    preset_idx,
+                    sim_recorded,
+                    stage,
+                    frames,
+                    started,
+                    metrics,
+                } => (
+                    *preset_idx,
+                    *sim_recorded,
+                    *stage,
+                    *frames,
+                    *started,
+                    std::mem::take(metrics),
+                ),
+                _ => return,
+            };
+
+        let (target_preset, tag) = PRESETS[preset_idx];
+        // Preset switch: run the full world build at that level, exactly as
+        // the UI combo would; drive_script's wait gate holds the loop until
+        // the history lands. Elevation layer + Detail default = the pinned
+        // "smooth shading + render detail on, smoothed boundaries off".
+        if self.preset != target_preset {
+            self.preset = target_preset;
+            self.layer = Layer::Elevation;
+            self.needs_bake = true;
+            log::info!("perf: switching to preset {tag}");
+            self.script_state = ScriptState::Perf {
+                preset_idx,
+                sim_recorded,
+                stage,
+                frames,
+                started,
+                metrics,
+            };
+            self.rebuild_grid(target_preset.level());
+            return;
         }
-        let mut finished_fps: Option<Vec<(String, f64)>> = None;
-        if frames_now == WARMUP + SAMPLE {
+        if !sim_recorded {
+            // The wait gate guarantees the history for this preset is in.
+            if let Some(w) = self.last_sim_wall_s {
+                metrics.push((format!("sim_wall_s_{tag}_500my"), w));
+            }
+            sim_recorded = true;
+        }
+
+        let (mode, name) = VIEWS[stage];
+        frames += 1;
+        if frames == WARMUP {
+            started = Some(Instant::now());
+        }
+        let mut finished: Option<Vec<(String, f64)>> = None;
+        if frames == WARMUP + SAMPLE {
             let elapsed = started
                 .take()
                 .map(|t| t.elapsed().as_secs_f64())
                 .unwrap_or(1.0);
-            fps.push((name.to_string(), SAMPLE as f64 / elapsed));
-            if *stage + 1 < VIEWS.len() {
-                *stage += 1;
-                *frames = 0;
+            metrics.push((format!("{name}_{tag}"), SAMPLE as f64 / elapsed));
+            frames = 0;
+            if stage + 1 < VIEWS.len() {
+                stage += 1;
+            } else if preset_idx + 1 < PRESETS.len() {
+                preset_idx += 1;
+                sim_recorded = false;
+                stage = 0;
             } else {
-                finished_fps = Some(std::mem::take(fps));
+                finished = Some(std::mem::take(&mut metrics));
             }
         }
         self.view_mode = mode;
-        if let Some(fps_taken) = finished_fps {
-            self.write_perf_results(&fps_taken);
+        if let Some(metrics_taken) = finished {
+            self.write_perf_results(&metrics_taken);
             // Chain into screenshots if both flags were given.
             self.script_state = if self.script.screenshots_dir.is_some() {
+                if self.script.forces_parity() {
+                    // Graft-7 parity survives the chained run: the perf loop
+                    // left the app at Ultra9, so restore the forced trio and
+                    // rebuild before the Shot stages start.
+                    self.preset = Preset::Standard7;
+                    self.detail = 1.0;
+                    self.rebuild_grid(Preset::Standard7.level());
+                }
                 ScriptState::Shot {
                     stage: 0,
                     frames: 0,
@@ -1250,10 +1393,19 @@ impl WorldApp {
             } else {
                 ScriptState::Closing
             };
+        } else {
+            self.script_state = ScriptState::Perf {
+                preset_idx,
+                sim_recorded,
+                stage,
+                frames,
+                started,
+                metrics,
+            };
         }
     }
 
-    fn write_perf_results(&self, fps: &[(String, f64)]) {
+    fn write_perf_results(&self, collected: &[(String, f64)]) {
         let Some(out) = &self.script.perf_out else {
             return;
         };
@@ -1261,17 +1413,25 @@ impl WorldApp {
         for (level, ms) in &self.script.grid_build_ms {
             metrics.insert(format!("grid_build_ms_L{level}"), serde_json::json!(ms));
         }
-        for (name, value) in fps {
+        for (name, value) in collected {
             metrics.insert(
                 name.clone(),
-                serde_json::json!((value * 10.0).round() / 10.0),
+                serde_json::json!((value * 100.0).round() / 100.0),
             );
         }
+        // fps_grid_level is retired: the per-preset loop suffixes every fps
+        // and sim-wall key with its level (d3a §10.3).
+        metrics.insert("detail".into(), serde_json::json!(self.detail));
         metrics.insert(
-            "fps_grid_level".into(),
-            serde_json::json!(self.preset.level()),
+            "detail_octaves".into(),
+            serde_json::json!(self.detail_octaves),
         );
+        metrics.insert("detail_amp_m".into(), serde_json::json!(self.detail_amp_m));
         metrics.insert("fps_vsync_off".into(), serde_json::json!(true));
+        // The loop waits for submitted GPU work every frame: fps counts only
+        // frames the GPU actually finished (an occluded macOS window never
+        // blocks on present, so unsynced counts measure CPU encode speed).
+        metrics.insert("fps_gpu_synced".into(), serde_json::json!(true));
         metrics.insert("layer".into(), serde_json::json!("elevation"));
         let file = worldmaker_io::ResultsFile::new(
             &worldmaker_io::results::today_utc_iso(),
@@ -1282,6 +1442,31 @@ impl WorldApp {
             Err(e) => log::error!("failed to write perf results: {e:#}"),
         }
     }
+}
+
+/// The deterministic coast-crop target (graft 8 as amended by A9): among
+/// cells with |elev| < 200 m, the one maximizing
+/// slope(c) = max over CSR neighbors |elev[n] - elev[c]|, found by a serial
+/// id-ordered scan with strict `>` so ties go to the lowest cell id.
+fn coast_crop_cell(grid: &Grid, elev_m: &[i16]) -> Option<u32> {
+    let mut best: Option<(u32, i32)> = None;
+    for c in 0..grid.cell_count() {
+        let e = i32::from(elev_m[c as usize]);
+        if e.abs() >= 200 {
+            continue;
+        }
+        let mut slope = 0i32;
+        for &nb in grid.neighbors_of(c) {
+            let d = (i32::from(elev_m[nb as usize]) - e).abs();
+            if d > slope {
+                slope = d;
+            }
+        }
+        if best.map(|(_, bs)| slope > bs).unwrap_or(true) {
+            best = Some((c, slope));
+        }
+    }
+    best.map(|(c, _)| c)
 }
 
 /// A neutral bundle for a freshly built grid: zero-elevation values, zeroed
