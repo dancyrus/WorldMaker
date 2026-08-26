@@ -36,12 +36,16 @@ unchecked box.
 
 ## Stage D — design
 
-- [ ] Fix 1 state-machine design + adversarial design review
-- [ ] Frozen overlay interface published in feel-pass-design.md
+- [x] Fix 1 state-machine design + adversarial design review
+- [x] Frozen overlay interface published in feel-pass-design.md § D1
       (exact signature; A codes against it, C implements; frozen until A's rebase)
-- [ ] Fix 2: competing generator designs scoped (3 candidates behind one trait)
-- [ ] Fix 3: flat-canvas smoothing mechanism chosen + logged; render-detail
-      sweep plan set
+- [x] Fix 2: competing generator designs scoped (3 candidates behind one trait;
+      d2-fix2-design.md + adversarial amendments; commit protocol M1→M3)
+- [x] Fix 3: flat-canvas mechanism chosen — d3a lookup extension (judged 56 v 53,
+      9 grafts from d3b binding); render-detail sweep plan set (D4)
+      Headroom note (graft 9): indexed scalar-layer globe fast path is the
+      documented fallback if Ultra9 globe fps disappoints on the PC — designed
+      addable without buffer changes; not built in this order.
 
 ## Stage I — implement (isolated worktrees)
 

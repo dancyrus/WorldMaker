@@ -37,7 +37,8 @@ Track C publishes the exact signature here during Stage D (rebake() ending in
 a call like `pending_edits::apply_overlay(...)`). A codes against it; neither
 track changes it until A's rebase.
 
-**STATUS: TO BE FROZEN IN STAGE D.**
+**STATUS: FROZEN — the exact signatures, types and semantics are in
+"Stage D — decisions" § D1 below.**
 
 ### Fix 2 — plate generator (Track B)
 
@@ -428,4 +429,279 @@ in the full report §8 for later comparison.
 
 ## Stage D — decisions
 
-*pending*
+Binding on every track. Full designs: `feel-pass-design/` (d1-fix1-design.md,
+d2-fix2-design.md, d3a-lookup-design.md, d3b-mesh-design.md, d3-judgement.md).
+**Every adversarial-review amendment in those files is part of the design.**
+This section pins the cross-track contracts and closes every choice the
+designs left open; where two binding texts conflicted, the resolution is
+logged inline as **[res]**.
+
+### D1 — THE FROZEN A↔C OVERLAY INTERFACE — FROZEN
+
+Typed only over artifacts that survive C's rewrite: `worldmaker_core::Grid`,
+`&mut [u32]`, and the io Stroke type. C ships both files below as compiling
+stubs — plus the one `mod pending_edits;` line in main.rs (C's file) — so
+merge order B→C→A always compiles; A fills the behavior at rebase. Neither
+track changes these shapes until A's rebase (decision-log line records the
+shape-only partition exception).
+
+```rust
+// crates/worldmaker-io/src/strokes.rs — shape FROZEN; behavior/impls are A's.
+// io lib.rs ships `pub mod strokes;` and
+// `pub use strokes::{Stroke, StrokePayload, StrokeTool};` (root re-export).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum StrokeTool { CratonPaint, CratonErase, Hotspot }
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum StrokePayload {
+    /// Cell ids at the current grid level; sign = +1 paint continent, −1 force ocean.
+    CratonPaint { cells: Vec<u32>, sign: i8 },
+    /// Unit-vector position.
+    HotspotAdd { pos: [f32; 3] },
+    /// Unit-vector position the removal targets.
+    HotspotRemove { pos: [f32; 3] },
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Stroke { pub tool: StrokeTool, pub payload: StrokePayload }
+
+// crates/worldmaker-app/src/pending_edits.rs — module OWNED BY TRACK A.
+// C creates it with exactly these items and a no-op apply_overlay body.
+
+/// Overlay word layout (frozen):
+///   bits 0..=3   tint code: 0 none, 1 craton +1, 2 craton −1,
+///                3 hotspot existing marker, 4 pending hotspot add,
+///                5 pending hotspot remove, 6..=15 reserved
+///   bit  4       force-outline (outline this cell's region edge even where
+///                the neighbor has the same tint code)
+///   bits 5..=7   reserved, MUST be zero (renderer may assume so)
+///   bits 8..=15  tint alpha 0..=255 (0 ⇒ renderer default 160)
+///   bits 16..=31 reserved (zero)
+/// Tint colors come from palette LUT row 5; tint code 5 has no texel — the
+/// shader multiplies the row-5 code-6 HOTSPOT_MARK color by 0.55.
+pub const OVERLAY_TINT_MASK: u32 = 0xF;
+pub const OVERLAY_FORCE_OUTLINE: u32 = 1 << 4;
+pub const OVERLAY_ALPHA_SHIFT: u32 = 8;
+pub const OVERLAY_ALPHA_MASK: u32 = 0xFF << OVERLAY_ALPHA_SHIFT;
+
+pub struct OverlayInput<'a> {
+    pub grid: &'a worldmaker_core::Grid,
+    /// Pending stroke list, oldest first — passed EXPLICITLY; the function
+    /// must not read tool state, history, or WorldApp.
+    pub pending: &'a [worldmaker_io::Stroke],
+    /// Base hotspot set for rendering pending hotspot deltas; None mid-run
+    /// (history dropped at job start) — adds/removes must still render.
+    pub generated_hotspots: Option<&'a [[f32; 3]]>,
+}
+
+/// Fill `out` (len == grid.cell_count(), pre-zeroed by the caller) with
+/// per-cell overlay words, newest stroke winning per cell. Pure function of
+/// its arguments; cell ids >= out.len() are skipped silently (stale ids
+/// across a level switch never panic); hotspot positions resolve to marker
+/// cells via grid.nearest_cell + neighbor ring (today's marker shape,
+/// app.rs:416–421). No route to Pipeline, start_job, or TectonicsParams —
+/// none of those types appear in this module's API or imports (Fix 1's
+/// structural no-sim guard).
+pub fn apply_overlay(input: &OverlayInput<'_>, out: &mut [u32]);
+```
+
+Frozen semantics around the signatures:
+
+- **Payload is authoritative** (judgement A2): `apply_overlay` and every
+  renderer read only `stroke.payload`; `tool` is UI metadata (A may
+  debug_assert it matches the discriminant). A's canonical craton form
+  (cells sorted + deduped) stays A's internal invariant, not frozen shape.
+- Call site: rebake's overlay pass runs on **every** rebake, including
+  `history == None` (mid-run display works; the bundle keeps the previous
+  values Arcs). Until A lands, `pending` is an empty field and the no-op body
+  renders nothing. **[res]** C's interim wiring passes `generated_hotspots`
+  from `self.history`; at A's rebase the argument becomes A's fold base
+  (`hotspot_overlay.or(hotspot_baseline)`, D2) so display and fold agree.
+- **[res]** d1 §7's `PendingOverlayView` is dropped from the public surface —
+  the frozen `OverlayInput` wins (d1 itself granted C final say; requirements
+  1–6 are review-verified). d1-F9's tagged replay (`Base(i) | PendingAdd`)
+  becomes `apply_overlay`'s internal rule: a remove matching a pending add
+  erases that add's code-4 marker; a remove matching a base spot renders
+  code 5 on that spot's marker cells.
+- GPU: `overlay: array<u32>` bound FRAGMENT in both pipelines, uploaded on
+  `overlay_gen` bumps; tint composited via LUT row 5 at the word's alpha;
+  outline drawn with the bisector-margin machinery wherever adjacent
+  candidates' words differ or FORCE_OUTLINE is set.
+
+### D2 — Fix 1 pinned semantics (Track A)
+
+- **Module homes [res]** (d1-F1 says the pending machinery moves to
+  worldmaker-io; the frozen header says C creates an app-side pending_edits
+  module — both hold, split): stroke-mutation machinery (`PendingEdits`,
+  `handle_stroke_event`, `fold`, `effective_hotspots`, `match_hotspot`,
+  `cells_within_radius`, `HOTSPOT_REMOVE_KM`) lives in
+  **crates/worldmaker-io/src/pending.rs**, A-owned, importing only std +
+  worldmaker_core + `strokes` — the crate-boundary no-sim wall. The
+  display-side `apply_overlay` + frozen constants live in
+  **crates/worldmaker-app/src/pending_edits.rs** (C-created stub per D1, A
+  body); C adds `mod pending_edits;` to main.rs on C's branch with a
+  decision-log row — A never edits main.rs (d1-F1's fallback made primary
+  for this one module).
+- **Stroke capture**: `live: Option<LiveCraton { sign, cells: BTreeSet }>`
+  accumulator; a stroke starts at the first hit application, merges
+  `cells_within_radius` per hit frame, ends on `drag_stopped() || clicked()`
+  checked outside the hit gate; `end_stroke()` also fires on tool switch,
+  seed Generate, Regenerate, and inside discards. `craton_stroke_dirty`,
+  `apply_tool` deleted. Hotspot strokes are click-only atomic. Badge =
+  committed stroke count; Cmd/Ctrl+Z (`Modifiers::COMMAND` + Z, gated on
+  `!ctx.wants_keyboard_input()`) cancels live first, else pops newest; no
+  redo; an Undo button mirrors it. All thresholds via `dmath::det_sin_cos`,
+  all dots via `dmath::dot3` (change from std cos logged — d1-F5).
+- **Hotspot fold rules**: baseline captured in poll_job via
+  `if let Some(h) = &self.history { baseline = Some(h.hotspots.clone()) }`
+  (F3); fold/display/classification base = `hotspot_overlay.or(baseline)`;
+  recording refused while base is None. Replay strokes in list order: add
+  appends; remove = nearest within 300 km, ties → lowest index; unmatched
+  remove = no-op; no hotspot strokes ⇒ param untouched. Pinned (F2): a
+  hotspot stroke after "Reset to generated" re-anchors to the still-displayed
+  last-run set (test `hotspot_stroke_after_reset_reanchors_to_visible_set`);
+  baseline shift can also make adds near-duplicates (F6, documented, setup
+  accepts overlays verbatim).
+- **Button meanings**: "Clear craton paint" = discard pending craton strokes
+  (incl. live) AND clear applied `craton_paint`; "Reset to generated" =
+  discard pending hotspot strokes AND `hotspot_overlay = None`; both set
+  `needs_bake`, run **no job**, are not undoable — staged-param edits taking
+  effect at the next Regenerate. Regenerate = end_stroke → take_all → fold →
+  merge into applied → `needs_bake = true` (F4) → `start_job()`. Preset
+  switch: `pending.discard_cratons()` is the first statement of
+  `rebuild_grid`; seed change keeps everything (defensive end_stroke only).
+- **Guard tests**: (a) crate wall — a test asserts worldmaker-io's
+  Cargo.toml never names worldmaker-sim; (b) lexical needle scan of
+  pending.rs and pending_edits.rs (no worldmaker_sim/Pipeline/start_job/
+  TectonicsParams/SimJob/thread::spawn/mpsc); (c) `self.start_job()` count
+  == 3 in app.rs (`#[cfg(test)]` module in app.rs; `start_job` stays
+  private; no comment may quote the call text); (d) headless runtime test
+  driving `handle_stroke_event`/`fold` on `Grid::build(3)` (use
+  `base.as_deref()` — d1-F7). Full test list: d1 §8 as amended.
+
+### D3 — Fix 2 pinned choices (Track B)
+
+- **Trait (pinned)**: `fn generate(&self, master_seed: u64, grid: &Grid,
+  params: &PlateGenParams) -> Vec<u32>` on `trait PlateGenerator` with
+  `PlateGenParams { plate_count: u32 }` — overlays structurally absent;
+  impls open with `debug_assert!((8..=24).contains(&params.plate_count))`
+  (F3). Randomness only from the "plate-seeds" sub-stream; dense ids
+  `0..plate_count`, every plate non-empty. Module tectonics/plate_gen.rs,
+  pub during the competition, private after.
+- **dmath/arc-length decision**: `dmath::arc_len3` = 4 fixed
+  midpoint-normalize bisections + fixed-order odd series on the residual
+  chord; arguments canonicalized by f32 bit pattern (bit-exact symmetry);
+  error envelope ~1e-6 abs typical, ~1.2e-7/(π−θ) near antipodal (F2); test
+  tolerances 1e-5·θ + 5e-6 for θ ≤ 3.0, abs 2e-5 at 3.1 and 5e-4 at π−1e-3
+  (F11). Sole distance in every committed plate metric. Metrics: interface-
+  edge Vec explicitly sorted by (a,b) and walk pairs normalized (F1); loop
+  closure includes the wrap hop (F6); loops score len/(π·two-sweep diam);
+  `assert!(total_baseline_rad > 0.0)` (F4).
+- **Competition seeds**: 42, 0xc4be0bf8f497a575 ("cyrus"), 7, 1002, 271828 —
+  each at L6 and L7. **L6 gate seeds: 7 and cyrus**; gate triple = L7 seed 42
+  + L6 seed 7 + L6 seed cyrus. Provisional gates CV ≥ 0.5 / sinuosity ≥
+  1.15; final gates at P3: `max(provisional, incumbent_best + 0.05|0.02)`
+  and ≤ winner_worst − margin, crossings resolved with logged reasoning.
+- **L9 cadence**: keyframe_interval_my gains `level >= 9 → 100.0`; L8 stays
+  20, L6/L7 stay 10 (goldens, L5 pin untouched); doc comment + CLAUDE.md
+  bullet per d2 §7. 2 Gy Ultra history ≈ 0.88 GB.
+- **Golden regen protocol**: commits M1 (metrics + incumbent numbers FIRST;
+  results filenames via `machine_name()` and `CARGO_MANIFEST_DIR`-anchored
+  paths — F12/F5) → M2 (verbatim incumbent refactor + 3 candidates; goldens
+  green proves bit-exactness) → M2.5 (cadence + harness XL rows) → M2.6
+  (judge record) → **M3, the only golden move**: winner wired, losers
+  deleted, gate consts final, BOTH tectonic goldens regenerated together
+  from the harness run, phase-0 golden verified unmoved, decision-log rows.
+  P2 front-runner stability check uses an uncommitted local edit (F8).
+  Hybrid anneal pins primaries only; the 3-factor step cost casts all
+  factors to u64 (F13). After C's and A's merges: re-run sim tests, record
+  hashes unmoved.
+
+### D4 — Fix 3 pinned choices (Track C)
+
+- **Flat mechanism — WINNER: d3a lookup extension** (judged 56 v 53): the
+  4096×2048 raster demoted to a walk hint; per-fragment greedy walk mirrors
+  `Grid::nearest_cell` **with the R1 tie rule**
+  (`d > best_d || (d == best_d && nb < best)`), WALK_CAP 4; wedge scan with
+  **B1's corrected sign** — condition 2 is `dot(p, cross(pos_c, pos_ni1)) ≤ 0`,
+  `g_j` computed once per ring index and shared between adjacent wedges,
+  exhaustion fallback = wedge maximizing min(g_i, −g_{i+1}); barycentrics in
+  differenced/tangent form (R2), validated against an **independent**
+  brute-force f64 reference (A3: wedge equality, weights ≤ 1e-4, winner
+  bit-equality). Globe: unindexed corner-fetch draw, one-hot barycentrics,
+  flat `vec3<u32>` cids; nearest-of-3 ties to the **lowest cell id** (A5).
+  One `resolve_fragment` in the single shaders.wgsl serves both canvases.
+  All 9 judgement grafts are binding (Stroke shape, OverlayInput, merged
+  word layout, exhaustive-literal guard, sqrt LUT row, octave fade,
+  screenshot parity, deterministic crop, indexed-fast-path headroom note).
+- **Noise**: d3a §5.2 value-noise fBm — integer-lattice hash, master seed as
+  two u32 uniform lanes (never through f32), unit-sphere domain,
+  slope+depth-conditioned amplitude, Elevation layer only; per-octave
+  `fwidth` fade (graft 6). The sweep's first row compares d3b gradient noise
+  at equal settings; panel decides — **[res] on a tie, value noise wins**
+  (fewer ALU ops, same hashing scheme), closing the flavor choice.
+- **Palette LUT**: 256×8 `Rgba8Unorm`, no sampler, two-`textureLoad` manual
+  mix, all color math in sRGB-encoded space; **row 0 is sqrt-warped** —
+  texel u holds the ramp at `u = sqrt(clamp(−e/6000, 0, 1))`, shader
+  computes u — graft 5 **supersedes** d3a §2.3/§5.3's linear-in-depth text
+  (A6); LUT tested texel-for-texel against the Rust ramps; CPU-palette
+  decision reversal re-logged.
+- **Boundary polylines**: app-side boundaries.rs (no sim edits); mixed-
+  triangle nodes, links per boundary-crossing edge, chains split by type,
+  Chaikin ×2 with junction endpoints pinned and **closed loops smoothed
+  periodically** (A9); ribbon quads — back hemisphere culled by zero-area
+  collapse in the VS or FS discard, never "VS discard" (A9); antimeridian
+  split to the projected map edge; legacy one-cell bands behind debug bit 9,
+  true-cell boundaries behind bit 8.
+- **Eckert IV constants**: `aspect() = 2.0` exact; CPU forward Newton from
+  θ₀ = φ/2 computed **internally in f64, cap 12, tol 1e-9 rad**, pole
+  short-circuit (A8); inverse closed-form on both CPU and WGSL
+  (`misc.x = 2.0`) with the shared `π·1.0001` gate; round-trip, rejection,
+  and same-ground-position-same-cell tests.
+- **Presets/flags**: default **High8**; **Ultra9 added**; Draft6/Standard7
+  stay. `--seed/--preset/--detail` (+ dev `--detail-octaves/--detail-amp-m`);
+  screenshot mode without flags **forces seed cyrus + Standard7 + detail
+  1.0** (graft 7) so AFTER matches the committed BEFORE; wrapper scripts
+  fail loudly on "ignoring unknown argument". Perf loop Standard7→High8→
+  Ultra9 → perf-feelpass-{machine}.json.
+- **Guard-test factoring**: free `worldgen::build_world(grid, seed, params,
+  progress)` shared by `start_job` and the headless `#[cfg(test)]` guard
+  (Detail 0 vs max ⇒ identical params_hash + committed field hashes); sim
+  surface pinned by the **exhaustive 7-field `TectonicsParams` literal**
+  (graft 4) plus the name regex. Mid-run values-Arc reuse is safe only
+  because `rebuild_grid` publishes a fresh **placeholder bundle** for the
+  new grid (neutral values, zeroed overlay, empty BoundarySet, all three
+  generations bumped) — pinned (A4).
+- **Sweep plan**: octaves {3,4,5,6} × A0 {120,220,350} m × seeds {cyrus,
+  feelpass} at High8, Detail 1.0; judged crops = the deterministic coast
+  crop (graft 8: slope(c) = max over CSR neighbors |elev[n]−elev[c]|,
+  strict `>`, ties → lowest id — A9) + the mountains stage; winning
+  (octaves, A0) become app consts, logged with curated media; sweep runs
+  before the AFTER screenshot set.
+
+### D5 — Resolved risks (Stage U risk → where it is closed)
+
+- Four stroke→sim routes (a) → D2 severing + guard tests (a)–(d).
+- Hotspot delta-vs-absolute, absent fold base (a§10) → D2 fold rules +
+  baseline capture.
+- Tool-/history-gated overlay display (a§10) → D1 explicit `OverlayInput`;
+  overlay pass runs with `history == None`.
+- Freezing the A↔C interface over `Vec<u32>` colors (b, biggest risk) → D1
+  typed over Grid / `&mut [u32]` / Stroke only.
+- "Tint + outline" inexpressible today (b) → D1 overlay word + bisector-
+  margin outline.
+- VERTEX-only binding visibility, uniform lanes, u64 seed (b§8) → D4 bind
+  layouts + ShadeParams seed_lo/seed_hi.
+- Flat 0.088°/texel zoom cap (b§7) → D4 per-fragment exact Voronoi walk.
+- Cratons-stream draw alignment entangled with plate geometry (c) →
+  expected whole-world change under the single M3 regen (D3).
+- dmath gap: no inverse trig/arc length (c) → D3 arc_len3 decision.
+- ≤32 plates / dense ids (c) → generators emit dense 0..p from first push.
+- Guard "same path Regenerate uses" unreachable headlessly (d§5) → D4
+  worldgen::build_world factoring; A's headless pending tests (D2).
+- Old binaries swallow new flags (d§7) → same-commit scripts + loud
+  "ignoring unknown argument" check (D4).
+- BEFORE/AFTER screenshot parity across the default-preset change (d§9) →
+  D4 screenshot-mode force.
+- Golden regen discipline (d§1) → D3 M-commit protocol, exactly once in M3;
+  A and C re-run sim tests after their merges.
