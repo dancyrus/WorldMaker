@@ -112,11 +112,55 @@ fn farthest_point_seeds(rng: &mut impl RngCore, grid: &Grid, k: usize) -> Vec<u3
     seeds
 }
 
+/// Area-target band configuration for the H1 ladder: the draw ranges of the
+/// largest and smallest plate's sphere fraction.
+#[derive(Clone, Copy)]
+struct AreaBands {
+    f_big_lo: f32,
+    f_big_hi: f32,
+    f_small_lo: f32,
+    f_small_hi: f32,
+}
+
+/// The competition-era bands (d2 §2.1 H1) — still used verbatim by the
+/// growth and warped candidates so their committed judge-record metrics
+/// stay reproducible until the losers are deleted at M3.
+const CLASSIC_BANDS: AreaBands = AreaBands {
+    f_big_lo: 0.15,
+    f_big_hi: 0.25,
+    f_small_lo: 0.015,
+    f_small_hi: 0.03,
+};
+
+/// WO-0003 Fix 2 stability retune (decision log 2026-08-26): the hybrid's
+/// bands, inside the pinned envelopes (giant 15–25%, runt 1–3%). The giant
+/// band is held at its top (22–25%) so continental crust starts concentrated
+/// enough that the supercontinent breakup trigger stays reachable and the
+/// floor-state breakup↔suture limit cycle keeps running (9 breakups over
+/// 2 Gy L6 seed 42 vs 4 with the competition bands, which seized at
+/// t = 586 My); the runt share is pinned at 3% so the smallest plates carry
+/// their cratons clear of their margins instead of jamming and suturing away
+/// in the first 200 My. 15-config sweep table + three-seed stability numbers
+/// in the decision log.
+const HYBRID_BANDS: AreaBands = AreaBands {
+    f_big_lo: 0.22,
+    f_big_hi: 0.25,
+    f_small_lo: 0.03,
+    f_small_hi: 0.03,
+};
+
 /// (H1) Heavy-tailed area-target ladder (cell counts, indexed by plate id;
-/// plate 0 largest by construction). Draw order is part of the contract.
-fn draw_area_targets(rng: &mut impl RngCore, p_count: usize, n: usize) -> Vec<u32> {
-    let f_big = uniform_range(rng, 0.15, 0.25); // largest plate's fraction
-    let f_small = uniform_range(rng, 0.015, 0.03); // smallest plate's fraction
+/// plate 0 largest by construction). Draw order is part of the contract —
+/// the band values only reshape the two anchor draws, never the draw count,
+/// so every generator keeps its committed draw alignment.
+fn draw_area_targets(
+    rng: &mut impl RngCore,
+    p_count: usize,
+    n: usize,
+    bands: AreaBands,
+) -> Vec<u32> {
+    let f_big = uniform_range(rng, bands.f_big_lo, bands.f_big_hi); // largest plate's fraction
+    let f_small = uniform_range(rng, bands.f_small_lo, bands.f_small_hi); // smallest plate's fraction
     let t = f_small / f_big;
     // Ladder ratio rho solving rho^(p-1) = t by fixed 32-iteration bisection
     // on (0, 1); powers by repeated multiplication (≤ 23 multiplies) — the
@@ -245,11 +289,12 @@ fn growth_fill(
     grid: &Grid,
     p_count: usize,
     noise_f: Option<&[u64]>,
+    bands: AreaBands,
 ) -> (Vec<u32>, Vec<u32>) {
     let n = grid.cell_count() as usize;
 
     // 1. Targets (H1): plate 0 the giant, plate p-1 the runt.
-    let target = draw_area_targets(rng, p_count, n);
+    let target = draw_area_targets(rng, p_count, n, bands);
     let f: Vec<f32> = target.iter().map(|&t| t as f32 / n as f32).collect();
 
     // 2. Per-plate cost multipliers (integer): fronts meet where
@@ -346,7 +391,13 @@ impl PlateGenerator for MultiSeedGrowth {
     fn generate(&self, master_seed: u64, grid: &Grid, params: &PlateGenParams) -> Vec<u32> {
         debug_assert!((8..=24).contains(&params.plate_count));
         let mut rng = sub_rng(master_seed, STAGE_ID, "plate-seeds");
-        let (plate_id, _primaries) = growth_fill(&mut rng, grid, params.plate_count as usize, None);
+        let (plate_id, _primaries) = growth_fill(
+            &mut rng,
+            grid,
+            params.plate_count as usize,
+            None,
+            CLASSIC_BANDS,
+        );
         debug_assert_dense(&plate_id, params.plate_count);
         plate_id
     }
@@ -443,7 +494,7 @@ impl PlateGenerator for WarpedVoronoi {
         let w2 = rng.next_u64();
         let w3 = rng.next_u64();
         let wa = rng.next_u64();
-        let target = draw_area_targets(&mut rng, p_count, n);
+        let target = draw_area_targets(&mut rng, p_count, n, CLASSIC_BANDS);
         let seeds = farthest_point_seeds(&mut rng, grid, p_count);
 
         let seed_pos: Vec<[f32; 3]> = seeds.iter().map(|&c| grid.positions[c as usize]).collect();
@@ -631,7 +682,8 @@ impl PlateGenerator for HybridGrowthWarp {
             *nf = x.round().clamp(64.0, 512.0) as u64;
         });
 
-        let (mut plate_id, primaries) = growth_fill(&mut rng, grid, p_count, Some(&noise_f));
+        let (mut plate_id, primaries) =
+            growth_fill(&mut rng, grid, p_count, Some(&noise_f), HYBRID_BANDS);
 
         // (b)'s annealing pass verbatim on the filled map. Pinned set = the
         // p PRIMARY seed cells only (F13); helpers may flip — non-emptiness
