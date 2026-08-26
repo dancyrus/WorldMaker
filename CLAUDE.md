@@ -84,7 +84,8 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
 - egui 0.36 renamed things: `App::ui(&mut self, ui, frame)` replaces `update`;
   `egui::Panel::top/bottom(...).show(ui, ...)` replaces TopBottomPanel;
   `Button::selectable` replaces SelectableLabel. wgpu 30: bind-group layouts
-  are `&[Option<&BindGroupLayout>]`, pipeline layouts use `immediate_size`,
+  are `&[Option<&BindGroupLayout>]`, vertex buffers
+  `&[Option<VertexBufferLayout>]`, pipeline layouts use `immediate_size`,
   `RenderPipelineDescriptor` uses `multiview_mask`.
 - Changing anything in the noise/elevation path changes the committed golden
   hash — regenerate it deliberately and log the change; never "fix" the test.
@@ -105,3 +106,6 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
 - A .command Finder launcher runs in a fresh Terminal that may lack cargo on
   PATH: export ~/.cargo/bin explicitly, and detach the app with `&` + disown
   so closing the Terminal window doesn't kill it.
+- Scripted screenshot/perf runs hang at their first stage if the Mac's
+  display is asleep (the window never gets redraw events): wrap them in
+  `caffeinate -dimsu <command>`.
