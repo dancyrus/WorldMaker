@@ -314,8 +314,11 @@ struct GlobeUniforms {
     // Rotation of the planet into camera space (camera looks along -z, so
     // +z is toward the viewer after rotation).
     rot: mat4x4<f32>,
-    // x, y: camera-space -> NDC scale. z, w: unused.
+    // x, y: camera-space -> NDC scale. z, w: canvas rect size in
+    // framebuffer pixels (the boundary ribbon VS needs pixel space).
     params: vec4<f32>,
+    // x: boundary-ribbon half-width in framebuffer pixels. y, z, w: unused.
+    bnd: vec4<f32>,
     shade: ShadeParams,
 }
 
@@ -398,8 +401,11 @@ struct FlatUniforms {
     // x: projection (0 = equirectangular, 1 = Robinson, 2 = Eckert IV),
     // y: unused, z: graticule (0/1), w: unused.
     misc: vec4<f32>,
-    // x, y: cell-id texture dimensions.
+    // x, y: cell-id texture dimensions. z, w: canvas rect min in
+    // framebuffer pixels (boundary ribbon VS).
     tex: vec4<f32>,
+    // x: boundary-ribbon half-width px; y, z: canvas rect size px; w: unused.
+    bnd: vec4<f32>,
     shade: ShadeParams,
 }
 
@@ -613,4 +619,104 @@ fn fs_flat(in: FlatVsOut) -> @location(0) vec4<f32> {
         color = mix(color, vec3<f32>(0.85, 0.88, 0.92), line * 0.35);
     }
     return vec4<f32>(color, 1.0);
+}
+
+// ---------- plate-boundary ribbons (d3a section 8) ----------
+//
+// Smoothed boundary chains arrive as ribbon vertices: two per polyline
+// point (side = +/-1), each carrying its own position `p` and the next
+// point `q` so the VS can expand a screen-space quad; 6 indices per
+// segment. Globe vertices are unit vectors; flat vertices are projected
+// normalized map coordinates (CPU-projected, antimeridian pre-split).
+// Colors come from palette LUT row 5 (texel 0 trench, 1 ridge,
+// 2 transform); alpha-blended over the fill with fwidth-AA edges.
+
+struct BndVsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) side: f32,
+    // Camera-space z of the point; the FS discards the back hemisphere
+    // (< 0.02) on the globe (A9: FS discard, never "VS discard"). The flat
+    // VS emits 1.0 - no culling on a map.
+    @location(1) cam_z: f32,
+    @location(2) @interpolate(flat) btype: u32,
+}
+
+fn ribbon_dir(px_q: vec2<f32>, px_p: vec2<f32>) -> vec2<f32> {
+    let d = px_q - px_p;
+    let len = length(d);
+    if len > 1e-6 {
+        return d / len;
+    }
+    return vec2<f32>(1.0, 0.0); // degenerate segment: any direction works
+}
+
+@vertex
+fn vs_bnd_globe(
+    @location(0) p: vec3<f32>,
+    @location(1) q: vec3<f32>,
+    @location(2) side: f32,
+    @location(3) btype: f32,
+) -> BndVsOut {
+    let cam_p = (globe_u.rot * vec4<f32>(p, 1.0)).xyz;
+    let cam_q = (globe_u.rot * vec4<f32>(q, 1.0)).xyz;
+    let half_vp = max(0.5 * vec2<f32>(globe_u.params.z, globe_u.params.w), vec2<f32>(1.0, 1.0));
+    let px_p = vec2<f32>(cam_p.x * globe_u.params.x, cam_p.y * globe_u.params.y) * half_vp;
+    let px_q = vec2<f32>(cam_q.x * globe_u.params.x, cam_q.y * globe_u.params.y) * half_vp;
+    let dir = ribbon_dir(px_q, px_p);
+    let perp = vec2<f32>(-dir.y, dir.x);
+    let px = px_p + perp * side * globe_u.bnd.x;
+    var out: BndVsOut;
+    // Drawn after the globe fill in the same pass (no depth buffer), so z
+    // only needs to be inside the clip volume.
+    out.pos = vec4<f32>(px / half_vp, 0.1, 1.0);
+    out.side = side;
+    out.cam_z = cam_p.z;
+    out.btype = u32(btype + 0.5);
+    return out;
+}
+
+@vertex
+fn vs_bnd_flat(
+    @location(0) p: vec2<f32>,
+    @location(1) q: vec2<f32>,
+    @location(2) side: f32,
+    @location(3) btype: f32,
+) -> BndVsOut {
+    let px_p = vec2<f32>(
+        flat_u.center_px.x + p.x * flat_u.half_px.x,
+        flat_u.center_px.y - p.y * flat_u.half_px.y,
+    );
+    let px_q = vec2<f32>(
+        flat_u.center_px.x + q.x * flat_u.half_px.x,
+        flat_u.center_px.y - q.y * flat_u.half_px.y,
+    );
+    let dir = ribbon_dir(px_q, px_p);
+    let perp = vec2<f32>(-dir.y, dir.x);
+    let px = px_p + perp * side * flat_u.bnd.x;
+    // Framebuffer pixels -> viewport NDC (the viewport is the canvas rect).
+    let rect_min = vec2<f32>(flat_u.tex.z, flat_u.tex.w);
+    let sz = max(vec2<f32>(flat_u.bnd.y, flat_u.bnd.z), vec2<f32>(1.0, 1.0));
+    var out: BndVsOut;
+    out.pos = vec4<f32>(
+        (px.x - rect_min.x) / sz.x * 2.0 - 1.0,
+        1.0 - (px.y - rect_min.y) / sz.y * 2.0,
+        0.1,
+        1.0,
+    );
+    out.side = side;
+    out.cam_z = 1.0;
+    out.btype = u32(btype + 0.5);
+    return out;
+}
+
+@fragment
+fn fs_bnd(in: BndVsOut) -> @location(0) vec4<f32> {
+    if in.cam_z < 0.02 {
+        discard; // back hemisphere on the globe
+    }
+    let color = lut_texel(5u, in.btype - 1u);
+    let aa = max(fwidth(in.side) * 1.5, 1e-4);
+    let alpha = (1.0 - smoothstep(1.0 - aa, 1.0, abs(in.side))) * 0.9;
+    // Premultiplied alpha over the already-drawn fill.
+    return vec4<f32>(color * alpha, alpha);
 }

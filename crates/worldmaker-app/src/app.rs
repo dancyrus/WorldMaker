@@ -431,12 +431,19 @@ impl WorldApp {
         let (values, boundaries) = if let Some(history) = &self.history {
             let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
             self.values_gen += 1;
-            // Boundary-polyline extraction for the Plates layer lands in
-            // leg 3; until then the set stays empty.
-            (
-                Arc::new(layers::bake_values(self.layer, kf)),
-                Arc::new(BoundarySet::empty()),
-            )
+            // Smoothed boundary polylines are Plates-layer styling (d3a §8):
+            // extracted from this keyframe's plate assignment only there,
+            // empty everywhere else.
+            let boundaries = if self.layer == Layer::Plates {
+                Arc::new(crate::boundaries::extract(
+                    &self.grid,
+                    &kf.plate_id,
+                    &kf.flags,
+                ))
+            } else {
+                Arc::new(BoundarySet::empty())
+            };
+            (Arc::new(layers::bake_values(self.layer, kf)), boundaries)
         } else {
             (self.bundle.values.clone(), self.bundle.boundaries.clone())
         };

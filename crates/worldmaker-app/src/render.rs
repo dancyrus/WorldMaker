@@ -216,11 +216,18 @@ pub fn layer_flags(layer: Layer, debug_cell_bounds: bool, debug_legacy_bands: bo
     }
 }
 
+/// Boundary-ribbon half-width in egui points (~1.8 pt full width); scaled by
+/// pixels-per-point into the uniforms.
+const BND_HALF_WIDTH_PT: f32 = 0.9;
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GlobeUniforms {
     rot: [[f32; 4]; 4],
+    /// x, y: camera→NDC scale; z, w: canvas rect size in framebuffer px.
     params: [f32; 4],
+    /// x: boundary-ribbon half-width in framebuffer px; y, z, w: spare.
+    bnd: [f32; 4],
     shade: ShadeParams,
 }
 
@@ -230,13 +237,251 @@ struct FlatUniforms {
     center_px: [f32; 2],
     half_px: [f32; 2],
     misc: [f32; 4],
+    /// x, y: cell-id texture dims; z, w: canvas rect min in framebuffer px.
     tex: [f32; 4],
+    /// x: ribbon half-width px; y, z: canvas rect size px; w: spare.
+    bnd: [f32; 4],
     shade: ShadeParams,
+}
+
+// ----- plate-boundary ribbons (d3a §8) -----
+
+/// Globe ribbon vertex: this point, the next point (for the screen-space
+/// direction), side (+/-1) and the boundary type. Stride 32.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BndVertex3 {
+    p: [f32; 3],
+    q: [f32; 3],
+    side: f32,
+    btype: f32,
+}
+
+/// Flat ribbon vertex in projected normalized map coordinates. Stride 24.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BndVertex2 {
+    p: [f32; 2],
+    q: [f32; 2],
+    side: f32,
+    btype: f32,
+}
+
+fn extrapolate3(last: [f32; 3], prev: [f32; 3]) -> [f32; 3] {
+    [
+        2.0 * last[0] - prev[0],
+        2.0 * last[1] - prev[1],
+        2.0 * last[2] - prev[2],
+    ]
+}
+
+fn extrapolate2(last: [f32; 2], prev: [f32; 2]) -> [f32; 2] {
+    [2.0 * last[0] - prev[0], 2.0 * last[1] - prev[1]]
+}
+
+/// Ribbon indices for one polyline starting at vertex `base`: two vertices
+/// per point (side +1 then -1), 6 indices per segment; a closed polyline
+/// adds the wrap segment.
+fn ribbon_indices(indices: &mut Vec<u32>, base: u32, n: usize, closed: bool) {
+    let segs = if closed { n } else { n - 1 };
+    for s in 0..segs {
+        let a = base + 2 * s as u32;
+        let b = base + 2 * (((s + 1) % n) as u32);
+        indices.extend_from_slice(&[a, a + 1, b, a + 1, b + 1, b]);
+    }
+}
+
+/// Ribbon geometry for the globe: chain points stay unit vectors; the VS
+/// rotates, projects and expands them per frame.
+fn build_globe_ribbons(set: &BoundarySet) -> (Vec<BndVertex3>, Vec<u32>) {
+    let mut vs = Vec::new();
+    let mut is = Vec::new();
+    for ch in &set.chains {
+        let n = ch.pts.len();
+        if n < 2 {
+            continue;
+        }
+        let base = vs.len() as u32;
+        for j in 0..n {
+            let p = ch.pts[j];
+            let q = if ch.closed {
+                ch.pts[(j + 1) % n]
+            } else if j + 1 < n {
+                ch.pts[j + 1]
+            } else {
+                extrapolate3(ch.pts[n - 1], ch.pts[n - 2])
+            };
+            let bt = ch.btype as f32;
+            vs.push(BndVertex3 {
+                p,
+                q,
+                side: 1.0,
+                btype: bt,
+            });
+            vs.push(BndVertex3 {
+                p,
+                q,
+                side: -1.0,
+                btype: bt,
+            });
+        }
+        ribbon_indices(&mut is, base, n, ch.closed);
+    }
+    (vs, is)
+}
+
+/// Ribbon geometry for the flat canvas: forward-project every chain point,
+/// split any segment crossing the antimeridian at the projected map edge
+/// (great-circle crossing latitude — projection-correct for the curved
+/// Robinson / Eckert IV edges), then pack open/closed polylines in map
+/// coordinates. Rebuilt only when the boundary set or projection changes.
+fn build_flat_ribbons(
+    set: &BoundarySet,
+    proj: worldmaker_core::Projection,
+) -> (Vec<BndVertex2>, Vec<u32>) {
+    use std::f32::consts::PI;
+    use worldmaker_core::grid::unit_to_latlon;
+    let project = |u: [f32; 3]| -> [f32; 2] {
+        let (lat, lon) = unit_to_latlon(u);
+        let (x, y) = proj.project(lat, lon);
+        [x, y]
+    };
+    let normalize = |v: [f32; 3]| -> [f32; 3] {
+        let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
+        [v[0] / len, v[1] / len, v[2] / len]
+    };
+
+    let mut polylines: Vec<(u8, Vec<[f32; 2]>, bool)> = Vec::new();
+    for ch in &set.chains {
+        let n = ch.pts.len();
+        if n < 2 {
+            continue;
+        }
+        let mut pieces: Vec<Vec<[f32; 2]>> = Vec::new();
+        let mut cur: Vec<[f32; 2]> = vec![project(ch.pts[0])];
+        let mut split_any = false;
+        let edges = if ch.closed { n } else { n - 1 };
+        for e in 0..edges {
+            let u = ch.pts[e];
+            let v = ch.pts[(e + 1) % n];
+            let (_, lon_u) = unit_to_latlon(u);
+            let (_, lon_v) = unit_to_latlon(v);
+            if (lon_u - lon_v).abs() > PI {
+                // The longitudes wrap, so the chord crosses the y = 0 plane;
+                // x < 0 there means the antimeridian (x >= 0 would be the
+                // prime meridian near a pole — no split).
+                let denom = u[1] - v[1];
+                let t = if denom.abs() > 1e-12 {
+                    u[1] / denom
+                } else {
+                    0.5
+                };
+                let c = normalize([
+                    u[0] + (v[0] - u[0]) * t,
+                    u[1] + (v[1] - u[1]) * t,
+                    u[2] + (v[2] - u[2]) * t,
+                ]);
+                if c[0] < 0.0 {
+                    let lat_c = c[2].clamp(-1.0, 1.0).asin();
+                    let sign = if lon_u > 0.0 { 1.0 } else { -1.0 };
+                    let (x_out, y_edge) = proj.project(lat_c, sign * PI);
+                    let (x_in, _) = proj.project(lat_c, -sign * PI);
+                    cur.push([x_out, y_edge]);
+                    pieces.push(std::mem::take(&mut cur));
+                    cur.push([x_in, y_edge]);
+                    split_any = true;
+                }
+            }
+            cur.push(project(v));
+        }
+        if ch.closed {
+            if split_any {
+                // The wrap edge ends back at the projection of pts[0], where
+                // the first piece began: join last into first.
+                pieces.push(std::mem::take(&mut cur));
+                let first = pieces.remove(0);
+                let last = pieces.last_mut().unwrap();
+                last.extend(first.into_iter().skip(1));
+                for pc in pieces {
+                    polylines.push((ch.btype, pc, false));
+                }
+            } else {
+                // cur = [p0, …, p_{n-1}, p0]: drop the duplicate and close.
+                cur.pop();
+                polylines.push((ch.btype, cur, true));
+            }
+        } else {
+            pieces.push(std::mem::take(&mut cur));
+            for pc in pieces {
+                polylines.push((ch.btype, pc, false));
+            }
+        }
+    }
+
+    let mut vs = Vec::new();
+    let mut is = Vec::new();
+    for (bt, pts, closed) in polylines {
+        let n = pts.len();
+        if n < 2 {
+            continue;
+        }
+        let base = vs.len() as u32;
+        for j in 0..n {
+            let p = pts[j];
+            let q = if closed {
+                pts[(j + 1) % n]
+            } else if j + 1 < n {
+                pts[j + 1]
+            } else {
+                extrapolate2(pts[n - 1], pts[n - 2])
+            };
+            let btf = bt as f32;
+            vs.push(BndVertex2 {
+                p,
+                q,
+                side: 1.0,
+                btype: btf,
+            });
+            vs.push(BndVertex2 {
+                p,
+                q,
+                side: -1.0,
+                btype: btf,
+            });
+        }
+        ribbon_indices(&mut is, base, n, closed);
+    }
+    (vs, is)
+}
+
+/// Upload one ribbon set; `None` when there is nothing to draw.
+fn create_ribbon_buffers<V: bytemuck::Pod>(
+    device: &wgpu::Device,
+    label: &str,
+    vs: &[V],
+    is: &[u32],
+) -> Option<(wgpu::Buffer, wgpu::Buffer, u32)> {
+    if is.is_empty() {
+        return None;
+    }
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(vs),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(is),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    Some((vb, ib, is.len() as u32))
 }
 
 pub struct SceneResources {
     globe_pipeline: wgpu::RenderPipeline,
     flat_pipeline: wgpu::RenderPipeline,
+    bnd_globe_pipeline: wgpu::RenderPipeline,
+    bnd_flat_pipeline: wgpu::RenderPipeline,
     globe_bind_layout: wgpu::BindGroupLayout,
     flat_bind_layout: wgpu::BindGroupLayout,
     globe_uniform: wgpu::Buffer,
@@ -263,6 +508,14 @@ pub struct SceneResources {
     grid_gen: u64,
     values_gen: u64,
     overlay_gen: u64,
+    /// Boundary-ribbon geometry (vertex buf, index buf, index count); None
+    /// when the current boundary set draws nothing. Globe geometry depends
+    /// only on the boundary set (keyed by values_gen — boundaries ride the
+    /// values pass); flat geometry also depends on the projection.
+    bnd_globe: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    bnd_globe_gen: u64,
+    bnd_flat: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    bnd_flat_key: (u64, u32),
 }
 
 fn storage_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
@@ -336,7 +589,8 @@ impl SceneResources {
         let flat_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("flat-bind-layout"),
             entries: &[
-                uniform_entry(0, wgpu::ShaderStages::FRAGMENT),
+                // VERTEX visibility for the boundary-ribbon VS.
+                uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
                 storage_entry(1, wgpu::ShaderStages::FRAGMENT), // positions
                 texture_entry(2, wgpu::TextureSampleType::Uint), // cell_ids hint
                 storage_entry(3, wgpu::ShaderStages::FRAGMENT), // cell_values
@@ -422,6 +676,97 @@ impl SceneResources {
             cache: None,
         });
 
+        // Boundary-ribbon pipelines (d3a §8): reuse each canvas's bind group
+        // layout (the ribbon shaders statically use only the uniforms and
+        // the palette), add a vertex buffer, and alpha-blend over the fill.
+        let bnd_targets = [Some(wgpu::ColorTargetState {
+            format: target_format,
+            blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let bnd_primitive = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        };
+        let vec_attr = |dims: wgpu::VertexFormat, floats: u64| -> [wgpu::VertexAttribute; 4] {
+            [
+                wgpu::VertexAttribute {
+                    format: dims,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    format: dims,
+                    offset: 4 * floats,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 8 * floats,
+                    shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 8 * floats + 4,
+                    shader_location: 3,
+                },
+            ]
+        };
+        let globe_attrs = vec_attr(wgpu::VertexFormat::Float32x3, 3);
+        let flat_attrs = vec_attr(wgpu::VertexFormat::Float32x2, 2);
+        let bnd_globe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("boundary-globe-pipeline"),
+            layout: Some(&globe_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_bnd_globe"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<BndVertex3>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &globe_attrs,
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_bnd"),
+                compilation_options: Default::default(),
+                targets: &bnd_targets,
+            }),
+            primitive: bnd_primitive,
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let bnd_flat_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("boundary-flat-pipeline"),
+            layout: Some(&flat_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_bnd_flat"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<BndVertex2>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &flat_attrs,
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_bnd"),
+                compilation_options: Default::default(),
+                targets: &bnd_targets,
+            }),
+            primitive: bnd_primitive,
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let globe_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globe-uniforms"),
             size: std::mem::size_of::<GlobeUniforms>() as u64,
@@ -476,6 +821,8 @@ impl SceneResources {
         SceneResources {
             globe_pipeline,
             flat_pipeline,
+            bnd_globe_pipeline,
+            bnd_flat_pipeline,
             globe_bind_layout,
             flat_bind_layout,
             globe_uniform,
@@ -495,6 +842,10 @@ impl SceneResources {
             grid_gen: 0,
             values_gen: 0,
             overlay_gen: 0,
+            bnd_globe: None,
+            bnd_globe_gen: 0,
+            bnd_flat: None,
+            bnd_flat_key: (0, u32::MAX),
         }
     }
 
@@ -728,12 +1079,20 @@ impl egui_wgpu::CallbackTrait for GlobeCallback {
             params: [
                 2.0 * radius_px / w_px.max(1.0),
                 2.0 * radius_px / h_px.max(1.0),
-                0.0,
-                0.0,
+                w_px,
+                h_px,
             ],
+            bnd: [BND_HALF_WIDTH_PT * ppp, 0.0, 0.0, 0.0],
             shade: self.shade,
         };
         queue.write_buffer(&r.globe_uniform, 0, bytemuck::bytes_of(&uniforms));
+
+        // Boundary ribbons follow the values pass (empty set → None).
+        if r.bnd_globe_gen != self.world.values_gen {
+            r.bnd_globe_gen = self.world.values_gen;
+            let (vs, is) = build_globe_ribbons(&self.world.boundaries);
+            r.bnd_globe = create_ribbon_buffers(device, "boundary-globe", &vs, &is);
+        }
         Vec::new()
     }
 
@@ -751,6 +1110,15 @@ impl egui_wgpu::CallbackTrait for GlobeCallback {
         render_pass.set_pipeline(&r.globe_pipeline);
         render_pass.set_bind_group(0, bind, &[]);
         render_pass.draw(0..r.vertex_count, 0..1);
+        // Smoothed plate-boundary ribbons over the fill (same pass, no
+        // depth buffer; the FS discards the back hemisphere).
+        if let Some((vb, ib, n)) = &r.bnd_globe {
+            render_pass.set_pipeline(&r.bnd_globe_pipeline);
+            render_pass.set_bind_group(0, bind, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..*n, 0, 0..1);
+        }
     }
 }
 
@@ -795,6 +1163,11 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
         let ppp = screen.pixels_per_point;
         let [cx, cy, w, h] = self.rect_points;
         let base = flat_base_half_extents(self.view.projection, w, h);
+        let proj_code = match self.view.projection {
+            worldmaker_core::Projection::Equirectangular => 0u32,
+            worldmaker_core::Projection::Robinson => 1,
+            worldmaker_core::Projection::EckertIv => 2,
+        };
         let uniforms = FlatUniforms {
             center_px: [(cx + self.view.pan[0]) * ppp, (cy + self.view.pan[1]) * ppp],
             half_px: [
@@ -802,19 +1175,29 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
                 (base[1] * self.view.zoom * ppp).max(1.0),
             ],
             misc: [
-                match self.view.projection {
-                    worldmaker_core::Projection::Equirectangular => 0.0,
-                    worldmaker_core::Projection::Robinson => 1.0,
-                    worldmaker_core::Projection::EckertIv => 2.0,
-                },
+                proj_code as f32,
                 0.0,
                 if self.view.graticule { 1.0 } else { 0.0 },
                 0.0,
             ],
-            tex: [CELL_ID_TEX_W as f32, CELL_ID_TEX_H as f32, 0.0, 0.0],
+            tex: [
+                CELL_ID_TEX_W as f32,
+                CELL_ID_TEX_H as f32,
+                (cx - w / 2.0) * ppp,
+                (cy - h / 2.0) * ppp,
+            ],
+            bnd: [BND_HALF_WIDTH_PT * ppp, w * ppp, h * ppp, 0.0],
             shade: self.shade,
         };
         queue.write_buffer(&r.flat_uniform, 0, bytemuck::bytes_of(&uniforms));
+
+        // Boundary ribbons: chains are projected CPU-side, so the geometry
+        // depends on (boundary set, projection); cached on that key.
+        if r.bnd_flat_key != (self.world.values_gen, proj_code) {
+            r.bnd_flat_key = (self.world.values_gen, proj_code);
+            let (vs, is) = build_flat_ribbons(&self.world.boundaries, self.view.projection);
+            r.bnd_flat = create_ribbon_buffers(device, "boundary-flat", &vs, &is);
+        }
         Vec::new()
     }
 
@@ -829,6 +1212,14 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
         render_pass.set_pipeline(&r.flat_pipeline);
         render_pass.set_bind_group(0, bind, &[]);
         render_pass.draw(0..3, 0..1);
+        // Smoothed plate-boundary ribbons over the map fill.
+        if let Some((vb, ib, n)) = &r.bnd_flat {
+            render_pass.set_pipeline(&r.bnd_flat_pipeline);
+            render_pass.set_bind_group(0, bind, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..*n, 0, 0..1);
+        }
     }
 }
 
@@ -884,10 +1275,11 @@ mod tests {
         let sp = pack_shade_params(0xdead_beef_1234_5678, 1, 5, -120.0, 220.0, 163_842);
         assert_eq!(sp.seed_lo, 0x1234_5678);
         assert_eq!(sp.seed_hi, 0xdead_beef);
-        // WGSL struct sizes the Rust mirrors must match (d3a §6).
+        // WGSL struct sizes the Rust mirrors must match (d3a §6; the bnd
+        // vec4 for boundary ribbons grew both blocks in leg 3).
         assert_eq!(std::mem::size_of::<ShadeParams>(), 32);
-        assert_eq!(std::mem::size_of::<GlobeUniforms>(), 112);
-        assert_eq!(std::mem::size_of::<FlatUniforms>(), 80);
+        assert_eq!(std::mem::size_of::<GlobeUniforms>(), 128);
+        assert_eq!(std::mem::size_of::<FlatUniforms>(), 96);
     }
 
     // ----- flat exact-walk CPU mirror (d3a §4.5 as amended by A3) -----
