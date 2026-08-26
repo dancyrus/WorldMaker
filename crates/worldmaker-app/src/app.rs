@@ -32,18 +32,26 @@ enum ViewMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Preset {
+pub enum Preset {
     Draft6,
     Standard7,
     High8,
+    Ultra9,
 }
 
 impl Preset {
+    const ALL: [Preset; 4] = [
+        Preset::Draft6,
+        Preset::Standard7,
+        Preset::High8,
+        Preset::Ultra9,
+    ];
     fn level(self) -> u32 {
         match self {
             Preset::Draft6 => 6,
             Preset::Standard7 => 7,
             Preset::High8 => 8,
+            Preset::Ultra9 => 9,
         }
     }
     fn label(self) -> &'static str {
@@ -51,6 +59,17 @@ impl Preset {
             Preset::Draft6 => "Draft (L6, 41k cells)",
             Preset::Standard7 => "Standard (L7, 164k cells)",
             Preset::High8 => "High (L8, 655k cells)",
+            Preset::Ultra9 => "Ultra (L9, 2.6M cells)",
+        }
+    }
+    /// Parse a `--preset` value (case-insensitive), d3a §10.2.
+    pub fn from_cli(text: &str) -> Option<Preset> {
+        match text.to_ascii_lowercase().as_str() {
+            "draft6" => Some(Preset::Draft6),
+            "standard7" => Some(Preset::Standard7),
+            "high8" => Some(Preset::High8),
+            "ultra9" => Some(Preset::Ultra9),
+            _ => None,
         }
     }
 }
@@ -74,12 +93,37 @@ const DETAIL_DEFAULT_AMP_M: f32 = 220.0;
 const HOTSPOT_REMOVE_KM: f32 = 300.0;
 const EARTH_RADIUS_KM: f32 = 6371.0;
 
-/// Scripted modes, driven from the command line.
+/// Scripted modes and world flags, driven from the command line (d3a §10.2).
 pub struct Script {
     pub screenshots_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
+    /// `--seed`: hashed exactly like the seed box (`seed_from_text`).
+    pub seed: Option<String>,
+    /// `--preset`: draft6 | standard7 | high8 | ultra9.
+    pub preset: Option<Preset>,
+    /// `--detail`: Detail slider value 0..=1.
+    pub detail: Option<f32>,
+    /// Dev sweep override: `--detail-octaves`.
+    pub detail_octaves: Option<u32>,
+    /// Dev sweep override: `--detail-amp-m`.
+    pub detail_amp_m: Option<f32>,
+}
+
+impl Script {
+    /// Graft 7 (screenshot parity): screenshot mode with NO explicit world
+    /// flags forces seed "cyrus" + Standard7 + Detail 1.0 so the AFTER set
+    /// matches the committed BEFORE set by default, not by checklist
+    /// discipline.
+    fn forces_parity(&self) -> bool {
+        self.screenshots_dir.is_some()
+            && self.seed.is_none()
+            && self.preset.is_none()
+            && self.detail.is_none()
+            && self.detail_octaves.is_none()
+            && self.detail_amp_m.is_none()
+    }
 }
 
 enum ScriptState {
@@ -144,6 +188,12 @@ pub struct WorldApp {
     /// Render-detail slider, 0..=1 (off -> tuned default amplitude). A pure
     /// live view control, like sea level: uniform-only, never a rebake.
     detail: f32,
+    /// Render-detail fBm octave count; `DETAIL_DEFAULT_OCTAVES` unless the
+    /// dev sweep flag `--detail-octaves` overrode it.
+    detail_octaves: u32,
+    /// Render-detail base amplitude in meters at Detail 1.0;
+    /// `DETAIL_DEFAULT_AMP_M` unless `--detail-amp-m` overrode it.
+    detail_amp_m: f32,
     view_mode: ViewMode,
     preset: Preset,
     projection: Projection,
@@ -196,8 +246,34 @@ impl WorldApp {
                 render_state.target_format,
             ));
 
-        let seed_text = "cyrus".to_string();
+        // ----- CLI world flags (d3a §10.2) + graft-7 screenshot parity -----
+        let forces_parity = script.forces_parity();
+        if forces_parity {
+            log::info!("screenshot parity: no explicit flags — forcing seed cyrus + Standard7 + detail 1.0");
+        }
+        let seed_text = script.seed.clone().unwrap_or_else(|| "cyrus".to_string());
         let master_seed = seed_from_text(&seed_text);
+        // Perf mode loops the pinned Standard7 -> High8 -> Ultra9 presets and
+        // starts at the first; --preset is advisory there and ignored.
+        let preset = if script.perf_out.is_some() {
+            if script.preset.is_some() {
+                log::warn!("perf mode loops Standard7->High8->Ultra9; ignoring --preset");
+            }
+            Preset::Standard7
+        } else if forces_parity {
+            Preset::Standard7
+        } else {
+            script.preset.unwrap_or(Preset::High8)
+        };
+        let detail = script.detail.map(|d| d.clamp(0.0, 1.0)).unwrap_or(1.0);
+        let detail_octaves = script
+            .detail_octaves
+            .unwrap_or(DETAIL_DEFAULT_OCTAVES)
+            .clamp(1, 8);
+        let detail_amp_m = script
+            .detail_amp_m
+            .unwrap_or(DETAIL_DEFAULT_AMP_M)
+            .clamp(0.0, 2000.0);
         let placeholder_grid = Arc::new(Grid::build(0));
         let placeholder_ids: Arc<Vec<u32>> = Arc::new(vec![
             0;
@@ -236,9 +312,11 @@ impl WorldApp {
             seed_text,
             master_seed,
             sea_level_m: 0.0,
-            detail: 1.0,
+            detail,
+            detail_octaves,
+            detail_amp_m,
             view_mode: ViewMode::Split,
-            preset: Preset::Standard7,
+            preset,
             projection: Projection::Equirectangular,
             graticule: true,
             layer: Layer::Elevation,
@@ -479,9 +557,9 @@ impl WorldApp {
         pack_shade_params(
             self.master_seed,
             layer_flags(self.layer, self.debug_cell_bounds, self.debug_legacy_bands),
-            DETAIL_DEFAULT_OCTAVES,
+            self.detail_octaves,
             self.sea_level_m,
-            self.detail * DETAIL_DEFAULT_AMP_M,
+            self.detail * self.detail_amp_m,
             self.grid.cell_count(),
         )
     }
@@ -772,7 +850,7 @@ impl WorldApp {
                 egui::ComboBox::from_label("Preset")
                     .selected_text(preset.label())
                     .show_ui(ui, |ui| {
-                        for p in [Preset::Draft6, Preset::Standard7, Preset::High8] {
+                        for p in Preset::ALL {
                             ui.selectable_value(&mut preset, p, p.label());
                         }
                     });
