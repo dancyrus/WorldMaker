@@ -17,6 +17,10 @@ mod keyframe;
 /// Committed plate-map metrics (WO-0003 Fix 2). Public forever: the CI gate
 /// test and the acceptance harness call it.
 pub mod metrics;
+/// Plate-generator competition (WO-0003 Fix 2). `pub` only while the
+/// competition runs; demoted to private at commit M3 when the winner is
+/// wired and the losers are deleted.
+pub mod plate_gen;
 mod setup;
 mod step;
 

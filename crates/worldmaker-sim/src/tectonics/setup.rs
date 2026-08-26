@@ -12,6 +12,7 @@ use worldmaker_core::rng::sub_rng;
 use worldmaker_core::Grid;
 
 use super::keyframe::{PlateState, IDENTITY3, NEVER_SUTURED};
+use super::plate_gen::{self, PlateGenerator};
 use super::step::{SimState, OCEAN_THICKNESS_KM};
 use super::{TectonicsParams, STAGE_ID};
 
@@ -43,50 +44,13 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
     let mut s = SimState::new_empty(grid);
     let n = grid.cell_count() as usize;
 
-    // --- 1. plate seed cells by farthest-point sampling ---
-    let mut rng = sub_rng(master_seed, STAGE_ID, "plate-seeds");
+    // --- 1–2. t=0 plate map (WO-0003 Fix 2). During the competition the
+    // default stays the incumbent, moved verbatim into plate_gen; the winner
+    // is wired here in commit M3. The generator sees only PlateGenParams
+    // (plate_count) — overlays are structurally out of reach.
     let p_count = params.plate_count as usize;
-    let mut seeds: Vec<u32> = Vec::with_capacity(p_count);
-    seeds.push((rng.next_u64() % n as u64) as u32);
-    // closeness[c] = max dot to any seed so far (higher = closer).
-    let mut closeness = vec![-2.0f32; n];
-    let update = |closeness: &mut [f32], seed_cell: u32| {
-        let sp = grid.positions[seed_cell as usize];
-        closeness
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(c, cl)| *cl = cl.max(dot3(grid.positions[c], sp)));
-    };
-    update(&mut closeness, seeds[0]);
-    for _ in 1..p_count {
-        // Farthest cell = strictly minimal closeness, ties to the lower id.
-        let mut best = 0usize;
-        let mut best_cl = f32::MAX;
-        for (c, &cl) in closeness.iter().enumerate() {
-            if cl < best_cl {
-                best_cl = cl;
-                best = c;
-            }
-        }
-        seeds.push(best as u32);
-        update(&mut closeness, best as u32);
-    }
-
-    // --- 2. ownership by great-circle Voronoi ---
-    let seed_pos: Vec<[f32; 3]> = seeds.iter().map(|&c| grid.positions[c as usize]).collect();
-    s.plate_id.par_iter_mut().enumerate().for_each(|(c, pid)| {
-        let x = grid.positions[c];
-        let mut best = 0u32;
-        let mut best_d = -2.0f32;
-        for (k, sp) in seed_pos.iter().enumerate() {
-            let d = dot3(x, *sp);
-            if d > best_d {
-                best_d = d;
-                best = k as u32;
-            }
-        }
-        *pid = best;
-    });
+    s.plate_id =
+        plate_gen::Incumbent.generate(master_seed, grid, &plate_gen::PlateGenParams::from(params));
 
     // --- 3. plate motions ---
     for pid in 0..p_count {

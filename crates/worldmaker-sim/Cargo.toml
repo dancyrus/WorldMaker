@@ -15,6 +15,8 @@ rand.workspace = true
 
 [dev-dependencies]
 # WO-0003 Fix 2 dev-only tests: results-JSON writer for the committed
-# plate-generator measurements (internal workspace edge, acyclic).
+# plate-generator measurements (internal workspace edge, acyclic), and PNG
+# output for the judge-panel plate maps (approved workspace dep).
 worldmaker-io = { workspace = true }
 serde_json = { workspace = true }
+image = { workspace = true }
