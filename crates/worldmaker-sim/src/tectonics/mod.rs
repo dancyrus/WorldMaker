@@ -14,6 +14,9 @@
 
 mod elevation;
 mod keyframe;
+/// Committed plate-map metrics (WO-0003 Fix 2). Public forever: the CI gate
+/// test and the acceptance harness call it.
+pub mod metrics;
 mod setup;
 mod step;
 

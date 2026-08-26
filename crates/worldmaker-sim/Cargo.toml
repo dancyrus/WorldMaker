@@ -12,3 +12,9 @@ rayon = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 rand.workspace = true
+
+[dev-dependencies]
+# WO-0003 Fix 2 dev-only tests: results-JSON writer for the committed
+# plate-generator measurements (internal workspace edge, acyclic).
+worldmaker-io = { workspace = true }
+serde_json = { workspace = true }

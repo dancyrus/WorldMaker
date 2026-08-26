@@ -3382,7 +3382,9 @@ dependencies = [
  "log",
  "rand",
  "rayon",
+ "serde_json",
  "worldmaker-core",
+ "worldmaker-io",
 ]
 
 [[package]]
