@@ -1,6 +1,7 @@
 //! worldmaker-io: results-JSON writing now; save/load and export stubs for
 //! later phases.
 
+pub mod pending;
 pub mod results;
 pub mod save;
 pub mod strokes;
