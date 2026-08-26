@@ -63,12 +63,17 @@ pub const F_BND_TRANSFORM: u32 = 1 << 7;
 /// enough that per-step rotations stay in `det_sin_cos` range.
 pub const DT_MY: f32 = 2.0;
 
-/// Keyframe cadence (My): 10 My per the spec at L6/L7 — the level the WO's
-/// 1 GB / 2 Gy budget is defined for (measured 527 MB) — and 20 My at L8+ to
-/// keep a maximum-span L8 history in the same ballpark (~1.06 GB at 2 Gy;
-/// recorded, not budgeted). Decision log.
+/// Keyframe cadence (My): 10 My per the spec at L6/L7 — the levels the WO's
+/// 1 GB / 2 Gy budget is defined for (527 MB measured) — 20 My at L8
+/// (~1.06 GB at 2 Gy; recorded, not budgeted), and 100 My at L9: at
+/// 16 B/cell a 2.62 M-cell keyframe is ~42 MB, so 20 My would cost 4.2 GB
+/// over 2 Gy; 100 My keeps a maximum-span Ultra history at ~0.88 GB, the
+/// same ballpark as L8. Histories carry their own interval, so mixed
+/// cadences never confuse the era picker. Decision log 2026-08 (WO-0003).
 pub fn keyframe_interval_my(grid_level: u32) -> f32 {
-    if grid_level >= 8 {
+    if grid_level >= 9 {
+        100.0
+    } else if grid_level >= 8 {
         20.0
     } else {
         10.0

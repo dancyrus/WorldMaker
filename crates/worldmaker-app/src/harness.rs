@@ -11,8 +11,8 @@ use std::time::Instant;
 use worldmaker_core::hash::{hash_f32_slice, hash_u32_slice};
 use worldmaker_core::Grid;
 use worldmaker_sim::tectonics::{
-    Keyframe, TectonicsHistory, TectonicsParams, TectonicsStage, CRUST_TYPE, ELEVATION_M, F_ARC,
-    F_HOTSPOT, F_TRENCH, PLATE_ID,
+    keyframe_interval_my, metrics, Keyframe, SimState, TectonicsHistory, TectonicsParams,
+    TectonicsStage, CRUST_TYPE, ELEVATION_M, F_ARC, F_HOTSPOT, F_TRENCH, PLATE_ID,
 };
 use worldmaker_sim::{Pipeline, StageContext, WorldState};
 
@@ -317,9 +317,91 @@ fn stability(
     pass
 }
 
+/// The 5 fixed WO-0003 Fix 2 competition seeds (pinned in Stage D).
+/// 0xc4be0bf8f497a575 = seed_from_text("cyrus"), the app-default seed of the
+/// committed BEFORE screenshots.
+const PLATEGEN_SEEDS: [(u64, &str); 5] = [
+    (42, "42"),
+    (0xc4be_0bf8_f497_a575, "cyrus"),
+    (7, "7"),
+    (1002, "1002"),
+    (271828, "271828"),
+];
+
+fn round4(x: f64) -> f64 {
+    (x * 10_000.0).round() / 10_000.0
+}
+
+/// WO-0003 Fix 2: t=0 plate-map metrics (d2-fix2-design §8). Setup-only —
+/// `SimState::setup` + `tectonics::metrics`, no pipeline run — on the 5
+/// fixed competition seeds at L6 and L7. Deliberately does NOT call
+/// `stability()` or read `params.land_fraction`; the 0.29 stability target
+/// stays hardcoded there by design.
+fn plategen_metrics(m: &mut serde_json::Map<String, serde_json::Value>) {
+    let params = TectonicsParams::default();
+    m.insert(
+        "plategen_seed_cyrus".into(),
+        serde_json::json!("0xc4be0bf8f497a575"),
+    );
+    for level in [6u32, 7] {
+        let grid = Arc::new(Grid::build(level));
+        for (seed, label) in PLATEGEN_SEEDS {
+            let s = SimState::setup(seed, &grid, &params);
+            let cv = metrics::plate_area_cv(&s.plate_id, params.plate_count);
+            let rep = metrics::boundary_sinuosity(&grid, &s.plate_id);
+            m.insert(
+                format!("plategen_area_cv_l{level}_seed{label}"),
+                serde_json::json!(round4(cv)),
+            );
+            m.insert(
+                format!("plategen_sinuosity_l{level}_seed{label}"),
+                serde_json::json!(round4(rep.weighted_mean)),
+            );
+            m.insert(
+                format!("plategen_open_segments_l{level}_seed{label}"),
+                serde_json::json!(rep.open_segment_count),
+            );
+            m.insert(
+                format!("plategen_loops_l{level}_seed{label}"),
+                serde_json::json!(rep.loop_count),
+            );
+        }
+    }
+}
+
+/// Optional XL rows (WO-0003: "1 Gy wall time, measured keyframe bytes" at
+/// L8/L9), behind env `WM_HARNESS_XL=1` so the default harness stays fast.
+/// Records, not gates (Air interim; CLAUDE.md machine note) — no
+/// `all_acceptance_pass` contribution.
+fn xl_rows(m: &mut serde_json::Map<String, serde_json::Value>) -> anyhow::Result<()> {
+    for level in [8u32, 9] {
+        log::info!("harness: XL 1 Gy L{level}");
+        let (world, secs) = run(level, 1000.0)?;
+        m.insert(
+            format!("run_1gy_l{level}_s"),
+            serde_json::json!((secs * 100.0).round() / 100.0),
+        );
+        m.insert(
+            format!("keyframe_bytes_1gy_l{level}"),
+            serde_json::json!(world.history.as_ref().unwrap().approx_bytes()),
+        );
+        drop(world);
+    }
+    // Echo of the L9 cadence decision (d2 §7).
+    m.insert(
+        "keyframe_interval_my_l9".into(),
+        serde_json::json!(keyframe_interval_my(9)),
+    );
+    Ok(())
+}
+
 pub fn run_tectonics_harness(out: &std::path::Path) -> anyhow::Result<()> {
     let mut m = serde_json::Map::new();
     let mut all_pass = true;
+
+    // --- WO-0003 Fix 2: t=0 plate-map metrics (setup-only, ~2–4 s) ---
+    log::info!("harness: plategen metrics (5 seeds x L6/L7)");
+    plategen_metrics(&mut m);
 
     // --- default 500 My at L7: timing + physics metrics on the final frame ---
     log::info!("harness: 500 My L7");
@@ -408,6 +490,14 @@ pub fn run_tectonics_harness(out: &std::path::Path) -> anyhow::Result<()> {
     let det = ha == hb && pa == pb;
     m.insert("determinism_repeat_matches".into(), serde_json::json!(det));
     all_pass &= det;
+
+    // --- optional XL rows: 1 Gy at L8 and L9 (env WM_HARNESS_XL=1) ---
+    if std::env::var("WM_HARNESS_XL")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        xl_rows(&mut m)?;
+    }
 
     m.insert("all_acceptance_pass".into(), serde_json::json!(all_pass));
     let file = worldmaker_io::ResultsFile::new(
