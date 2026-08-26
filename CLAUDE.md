@@ -109,3 +109,9 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
 - Scripted screenshot/perf runs hang at their first stage if the Mac's
   display is asleep (the window never gets redraw events): wrap them in
   `caffeinate -dimsu <command>`.
+- zsh: `status` is a read-only special variable (`$?` alias) — assigning it
+  aborts the script; use `rc=$?` in .command/script files.
+- fps with vsync off is only real if something blocks on the GPU: an
+  occluded macOS window recycles drawables instantly, so an unsynced frame
+  counter measures CPU encode speed (6000+ "fps"). Perf loops must wait for
+  submitted GPU work each frame (fps_gpu_synced in results JSON).
