@@ -914,9 +914,14 @@ impl WorldApp {
     fn top_bar(&mut self, root: &mut egui::Ui) {
         egui::Panel::top("controls").show(root, |ui| {
             ui.horizontal_wrapped(|ui| {
+                // Tightened so the full first row — reset buttons included —
+                // fits a 1440 px wide window without wrapping (WO-0004
+                // step 4).
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().slider_width = 80.0;
                 ui.label("Seed:");
                 let seed_edit =
-                    ui.add(egui::TextEdit::singleline(&mut self.seed_text).desired_width(120.0));
+                    ui.add(egui::TextEdit::singleline(&mut self.seed_text).desired_width(90.0));
                 let enter = seed_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if ui.button("Generate").clicked() || enter {
                     self.master_seed = seed_from_text(&self.seed_text);
