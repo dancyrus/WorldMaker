@@ -109,13 +109,11 @@ const RIFT_OCEANIZE_KM: f32 = 25.0;
 /// classification noise on quasi-transform boundaries cannot mature a rift).
 const RIFT_DECAY_MULT: f32 = 2.0;
 /// Slow-collision threshold for suturing (cm/yr) and required duration (My).
-/// Raised 0.5 → 1.2 (WO-0003 Fix 4): two fully jammed plates now creep at
-/// the SPEED_FLOOR_JAMMED residual instead of stopping dead, which closes
-/// their contact at up to ~1.1 cm/yr (2 × 0.05 deg/My at the rotation
-/// equator). At 0.5 that creep read as *active* convergence, reset the pair
-/// timer every step, and welded pairs ground against each other forever —
-/// the threshold must sit above the jam-creep ceiling so a stalled
-/// collision always matures toward suture.
+/// 1.2 sits above the residual-drift ceiling of two stalled plates (their
+/// contact can still close at up to ~2 × the K_MANTLE / C_DRAG drift), so a
+/// jammed collision always matures toward suture instead of resetting the
+/// pair timer with its residual creep. WO-0006 S2 replaces this rule with
+/// the model's three-condition suture (§3), threshold 0.4.
 const SUTURE_SLOW_CMYR: f32 = 1.2;
 pub(super) const SUTURE_AFTER_MY: f32 = 30.0;
 /// Fast-convergence steps decay the pair timer at 2× real time instead of
