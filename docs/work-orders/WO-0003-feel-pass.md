@@ -74,27 +74,30 @@ unchecked box.
       0x1690_72d7_7080_3f71; phase-0 golden unmoved; decision-log rows
 - [x] Track B merged green (PR #6, all CI checks)
 
-### Track C — rendering + resolution (merges second, rebases on B)
-- [ ] Globe: per-cell scalar upload; palette + sea-level threshold + render
+### Track C — rendering + resolution (merges second, rebases on B) — DONE, merged as PR #10 (d432b51)
+- [x] Globe: per-cell scalar upload; palette + sea-level threshold + render
       detail per fragment; Plates layer crisp per-cell; CPU-bake decision re-logged
-- [ ] Flat: chosen smoothing mechanism; same per-fragment palette/threshold/
+- [x] Flat: chosen smoothing mechanism; same per-fragment palette/threshold/
       detail; only noise + palette fns shared verbatim between canvases
-- [ ] Render detail: deterministic 3D sphere noise from master seed, slope +
+- [x] Render detail: deterministic 3D sphere noise from master seed, slope +
       land/ocean conditioned amplitude; octave/amplitude sweep on 2 seeds;
       screenshot panel picks default; Detail slider off→full; params logged
-- [ ] Plate boundaries: smoothed type-colored polylines both canvases; old bands
+      (default octaves 5 / A0 350 m; decision-log 2026-08-27, incl. the
+      slope-floor visibility caveat and the 1-in-24 capture-pan flake)
+- [x] Plate boundaries: smoothed type-colored polylines both canvases; old bands
       under debug toggle only
-- [ ] Debug toggle showing true cell boundaries
-- [ ] Eckert IV in core projections (Newton fwd, closed-form inverse, fixed
+- [x] Debug toggle showing true cell boundaries
+- [x] Eckert IV in core projections (Newton fwd, closed-form inverse, fixed
       iteration cap); round-trip tests; dropdown; brushes + cursor readout +
       graticule + smooth rendering work; same ground position → same cell
-- [ ] L8 default preset (~28 km); Draft L6 stays; Ultra L9 enabled
-- [ ] main.rs/scripts: --seed, --preset, --detail flags; perf script records fps
+- [x] L8 default preset (~28 km); Draft L6 stays; Ultra L9 enabled
+- [x] main.rs/scripts: --seed, --preset, --detail flags; perf script records fps
       at L7/L8/L9 smooth+detail → docs/results/perf-feelpass-Daniels-MacBook-Air.json
-- [ ] Render-only guard test: Detail 0 vs max ⇒ identical params_hash + committed
+- [x] Render-only guard test: Detail 0 vs max ⇒ identical params_hash + committed
       field hashes; check sim exposes no render-detail param
-- [ ] Sim tests re-run green after C merges (golden hashes unmoved)
-- [ ] Track C merged green
+- [x] Sim tests re-run green after C merges (golden hashes unmoved; verified on
+      main @ d432b51: tectonic goldens + phase-0 noise golden reproduce)
+- [x] Track C merged green (PR #10, all CI checks)
 
 ### Fix 4 — plates must never freeze for good (sim; after C, before A)
 
