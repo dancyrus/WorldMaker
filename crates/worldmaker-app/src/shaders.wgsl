@@ -189,7 +189,7 @@ fn resolve_fragment(
         // Plates: categorical, winner cell only - crisp true-cell shapes.
         let rank = cat_win & CAT_RANK_MASK;
         let oceanic = (cat_win & CAT_CONTINENT) == 0u;
-        color = lut_texel(4u, rank + select(0u, 32u, oceanic));
+        color = lut_texel(4u, rank + select(0u, 64u, oceanic));
         if (sp.layer_flags & LF_DEBUG_BANDS) != 0u {
             // Legacy one-cell boundary bands, debug-only (pinned).
             let bnd = (cat_win >> CAT_BND_SHIFT) & 3u;

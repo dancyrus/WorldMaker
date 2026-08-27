@@ -3,9 +3,10 @@
 //! A keyframe every 10 My holds the full simulation state — per-cell fields
 //! packed to 16 bits each plus the per-plate and per-pair bookkeeping — so a
 //! run can restart from any keyframe (plate drag now, branching later) and the
-//! era picker can decode any moment for display. 20 B/cell (WO-0006: slab
-//! ledger fields, ruled acceptable) keeps a 2 Gy run at L7 (201 keyframes ×
-//! 163,842 cells) near 0.66 GB, inside the 1 GB budget.
+//! era picker can decode any moment for display. 22 B/cell (WO-0006: slab
+//! ledger fields per Dan's ruling, plus the S2 suture scar) keeps a 2 Gy run
+//! at L7 (201 keyframes × 163,842 cells) near 0.72 GB, inside the 1 GB
+//! budget; S3 re-measures.
 
 use worldmaker_core::FieldStore;
 
@@ -32,6 +33,11 @@ pub struct PlateState {
     /// Simulation time (My) of this plate's most recent suture, or
     /// [`NEVER_SUTURED`] if it has none.
     pub youngest_suture_my: f32,
+    /// When this plate last nucleated a rift or was born of a split
+    /// ([`NEVER_SUTURED`] = never): rifting relieves the stress a driver
+    /// needs, so nucleation observes a refractory period from here
+    /// (WO-0006 S2).
+    pub youngest_rift_my: f32,
     /// Accumulated rotation not yet applied by advection (row-major). Slow
     /// plates bank sub-cell motion here and commit it once it reaches about
     /// one cell, so they never freeze to the grid.
@@ -48,6 +54,10 @@ pub struct PlateState {
     pub boundary_cells: u32,
     pub subducting_cells: u32,
     pub colliding_cells: u32,
+    /// Strength-weighted continent-continent contact (Σ strength(cell) over
+    /// colliding contact cells, WO-0006 S2): the R_bnd input — a contact
+    /// with a craton resists harder than one with a fresh suture.
+    pub colliding_strength: f32,
     /// Cells on a divergent boundary (ridge-push driver).
     pub ridge_cells: u32,
     /// Transform-only boundary cells (transform-friction resistance).
@@ -72,9 +82,94 @@ pub struct SlabSegment {
     pub attached: bool,
 }
 
-/// Sentinel for "no suture yet" — old enough that the breakup rule treats a
-/// never-sutured supercontinent as eligible.
+/// Sentinel for "no suture yet" (per plate and per cell) — old enough that
+/// every age-since-suture ramp (strength healing, mantle insulation) reads a
+/// never-sutured plate as fully aged.
 pub const NEVER_SUTURED: f32 = -1.0e9;
+
+/// The three physical rift drivers of model §5. `u8` repr so the keyframe
+/// stores it directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RiftDriverKind {
+    /// A mantle plume that has sat under continental crust ≥ 20 My.
+    Plume = 0,
+    /// Back-arc extension inboard of a trench consuming old lithosphere.
+    BackArc = 1,
+    /// Slab pull on two roughly opposite sides puts the interior in tension.
+    OpposingSlabs = 2,
+}
+
+/// One live rift: nucleated by a §5 driver, growing along the path of least
+/// strength (amendment A: it advances only while driver stress exceeds local
+/// strength). Two tips walk outward from the nucleation cell; a tip is done
+/// when it reaches the plate boundary. A completed rift (both tips done)
+/// stays in the ledger until its corridor oceanizes and splits the plate —
+/// the split event is attributed to `kind`. Part of the keyframe: rift
+/// growth is sim state, so resume must replay it bit-exactly.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ActiveRift {
+    pub plate: u32,
+    pub kind: RiftDriverKind,
+    /// Driver stress, compared against `strength()` at every advance.
+    pub stress: f32,
+    pub tip_a: u32,
+    pub tip_b: u32,
+    pub done_a: bool,
+    pub done_b: bool,
+    /// Nucleation time (My): completed rifts are pruned from the ledger a
+    /// long time after starting if their split never materializes.
+    pub started_my: f32,
+}
+
+/// How a microplate came to exist (model §6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MicroplateOrigin {
+    /// Plate area isolated against an active trench when the connecting
+    /// crust was consumed (Farallon → Juan de Fuca remnant).
+    TrenchTrapped,
+    /// A back-arc rift oceanized and detached the arc sliver.
+    BackArcBasin,
+    /// A rift re-nucleated on the far side of a microcontinent and
+    /// transferred it (Jan Mayen style).
+    RidgeJump,
+}
+
+/// One entry of the run's event log (WO-0006 S2): every suture and split
+/// carries the condition or driver that caused it. Diagnostics only — events
+/// never feed back into the dynamics, so they are not keyframed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TectonicEvent {
+    /// Plate `b` merged into `a` after the three §3 conditions held for
+    /// `SUTURE_AFTER_MY`; the contact spanned `contact_fraction` of the
+    /// smaller plate's perimeter when it fired.
+    Suture {
+        a: u32,
+        b: u32,
+        t: f32,
+        contact_fraction: f32,
+    },
+    RiftStart {
+        plate: u32,
+        driver: RiftDriverKind,
+        t: f32,
+    },
+    /// The rift stalled (stress no longer exceeded strength ahead of a tip);
+    /// its cells keep maturing as a failed-rift scar.
+    RiftFailed { plate: u32, t: f32 },
+    /// A rift corridor oceanized across the plate and split it.
+    Split {
+        parent: u32,
+        child: u32,
+        driver: RiftDriverKind,
+        t: f32,
+    },
+    Microplate {
+        id: u32,
+        origin: MicroplateOrigin,
+        t: f32,
+    },
+}
 
 /// Slow-collision timer for one unordered plate pair (a < b), for the suture
 /// rule. Kept sorted by (a, b) — fixed iteration order.
@@ -110,8 +205,38 @@ pub struct Keyframe {
     pub slab_plate: Vec<u16>,
     /// When that slab went under (My; 0 where `slab_plate` is none).
     pub slab_since_my: Vec<u16>,
+    /// When this cell last sat on a suture (My; `u16::MAX` = never) — the
+    /// suture scar that feeds the strength field (WO-0006 S2).
+    pub suture_at_my: Vec<u16>,
+    /// Per hotspot: how long it has sat under continental crust (My,
+    /// continuous) — the plume rift driver's clock. Indexed like the
+    /// history's hotspot list.
+    pub hotspot_cont_my: Vec<u16>,
+    /// Live rift ledger (active and completed-awaiting-split).
+    pub rifts: Vec<ActiveRift>,
     pub plates: Vec<PlateState>,
     pub collisions: Vec<PairTimer>,
+}
+
+/// `suture_at_my` cell encoding: `u16::MAX` is the NEVER_SUTURED sentinel,
+/// so real times saturate one step short of it.
+#[inline]
+fn enc_suture(v: f32) -> u16 {
+    if v < 0.0 {
+        u16::MAX
+    } else {
+        v.round().clamp(0.0, 65_534.0) as u16
+    }
+}
+
+/// The value a decoded suture cell holds; quantize_state must mirror this.
+#[inline]
+pub(super) fn dec_suture(q: u16) -> f32 {
+    if q == u16::MAX {
+        NEVER_SUTURED
+    } else {
+        q as f32
+    }
 }
 
 /// Round, then clamp. Rounding (not truncation) is what makes the encoding
@@ -132,7 +257,7 @@ fn enc_i16(v: f32) -> i16 {
 impl Keyframe {
     /// Approximate heap size in bytes (per-cell arrays dominate).
     pub fn approx_bytes(&self) -> usize {
-        self.elev_m.len() * 20
+        self.elev_m.len() * 22
             + self.plates.len() * std::mem::size_of::<PlateState>()
             + self
                 .plates
@@ -160,6 +285,9 @@ impl Keyframe {
         features: &[u32],
         slab_plate: &[u16],
         slab_since_my: &[f32],
+        suture_at_my: &[f32],
+        hotspot_cont_my: &[f32],
+        rifts: Vec<ActiveRift>,
         plates: Vec<PlateState>,
         collisions: Vec<PairTimer>,
     ) -> Keyframe {
@@ -177,6 +305,9 @@ impl Keyframe {
             flags: Vec::with_capacity(n),
             slab_plate: slab_plate.to_vec(),
             slab_since_my: Vec::with_capacity(n),
+            suture_at_my: Vec::with_capacity(n),
+            hotspot_cont_my: hotspot_cont_my.iter().map(|&v| enc_u16(v)).collect(),
+            rifts,
             plates,
             collisions,
         };
@@ -189,6 +320,7 @@ impl Keyframe {
             kf.rift_age_my.push(enc_u16(rift_age[i]));
             kf.buildup_ckm.push(enc_u16(buildup[i] * 100.0));
             kf.slab_since_my.push(enc_u16(slab_since_my[i]));
+            kf.suture_at_my.push(enc_suture(suture_at_my[i]));
             let mut f = (features[i] & 0xff) as u16;
             if crust_type[i] != 0 {
                 f |= KF_CONTINENT_BIT;
@@ -271,7 +403,11 @@ pub struct RunDiagnostics {
     pub cont_gained_by_advection: u64,
     pub cont_gained_by_arc: u64,
     pub suture_count: u64,
+    /// Rift-to-oceanization plate splits (WO-0006 S2: the only breakup path).
     pub breakup_count: u64,
+    pub rift_start_count: u64,
+    pub rift_failed_count: u64,
+    pub microplate_count: u64,
 }
 
 /// The full keyframed history of one tectonic run.
@@ -317,6 +453,18 @@ mod tests {
         let feats = vec![0u32, 0b1_0000, 0b100, 0b10, 0, 0b1];
         let slab_plate = vec![u16::MAX, 3, u16::MAX, u16::MAX, 0, u16::MAX];
         let slab_since = vec![0.0f32, 140.0, 0.0, 0.0, 12.0, 0.0];
+        let suture_at = vec![NEVER_SUTURED, 118.0, NEVER_SUTURED, 0.0, 90_000.0, 30.4];
+        let hotspot_cont = vec![0.0f32, 24.0, 7.6];
+        let rifts = vec![ActiveRift {
+            plate: 2,
+            kind: RiftDriverKind::BackArc,
+            stress: 0.5,
+            tip_a: 1,
+            tip_b: 4,
+            done_a: true,
+            done_b: false,
+            started_my: 100.0,
+        }];
         let kf = Keyframe::encode(
             120.0,
             -230.0,
@@ -331,6 +479,9 @@ mod tests {
             &feats,
             &slab_plate,
             &slab_since,
+            &suture_at,
+            &hotspot_cont,
+            rifts.clone(),
             vec![],
             vec![],
         );
@@ -342,6 +493,14 @@ mod tests {
         // Slab ledger cells round-trip exactly (WO-0006 S1).
         assert_eq!(kf.slab_plate, slab_plate);
         assert_eq!(kf.slab_since_my, &[0u16, 140, 0, 0, 12, 0]);
+        // Suture scars round-trip; NEVER_SUTURED maps to the u16::MAX
+        // sentinel and real times saturate below it (WO-0006 S2).
+        assert_eq!(kf.suture_at_my, &[u16::MAX, 118, u16::MAX, 0, 65_534, 30]);
+        assert_eq!(dec_suture(kf.suture_at_my[0]), NEVER_SUTURED);
+        assert_eq!(dec_suture(kf.suture_at_my[1]), 118.0);
+        // Hotspot residence clocks and the rift ledger survive the trip.
+        assert_eq!(kf.hotspot_cont_my, &[0u16, 24, 8]);
+        assert_eq!(kf.rifts, rifts);
 
         let mut fields = FieldStore::new(n);
         kf.write_fields(&mut fields);
@@ -379,6 +538,9 @@ mod tests {
                     flags: vec![],
                     slab_plate: vec![],
                     slab_since_my: vec![],
+                    suture_at_my: vec![],
+                    hotspot_cont_my: vec![],
+                    rifts: vec![],
                     plates: vec![],
                     collisions: vec![],
                 })

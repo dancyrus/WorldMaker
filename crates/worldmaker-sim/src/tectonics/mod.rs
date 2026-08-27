@@ -25,7 +25,8 @@ mod setup;
 mod step;
 
 pub use keyframe::{
-    Keyframe, PairTimer, PlateState, RunDiagnostics, SlabSegment, TectonicsHistory, NEVER_SUTURED,
+    ActiveRift, Keyframe, MicroplateOrigin, PairTimer, PlateState, RiftDriverKind, RunDiagnostics,
+    SlabSegment, TectonicEvent, TectonicsHistory, NEVER_SUTURED,
 };
 pub use step::SimState;
 
@@ -254,6 +255,9 @@ pub fn run_history(
             cont_gained_by_arc: sim.cont_gained_by_arc,
             suture_count: sim.suture_count,
             breakup_count: sim.breakup_count,
+            rift_start_count: sim.rift_start_count,
+            rift_failed_count: sim.rift_failed_count,
+            microplate_count: sim.microplate_count,
         },
     })
 }

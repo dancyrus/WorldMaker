@@ -117,9 +117,11 @@ const BATLOW: [(f32, [f32; 3]); 7] = [
     (1.0000, rgb(250, 204, 250)),
 ];
 
-/// 24 categorical plate colors, chosen for pairwise distinctness at full
+/// 48 categorical plate colors, chosen for pairwise distinctness at full
 /// saturation range (Kelly/Glasbey style, dark and light alternating).
-const PLATE_COLORS: [[f32; 3]; 24] = [
+/// Extended 24 → 48 in WO-0006 S2: with no plate ceiling and §6
+/// microplates, the census can exceed the old palette.
+const PLATE_COLORS: [[f32; 3]; 48] = [
     rgb(230, 25, 75),
     rgb(60, 180, 75),
     rgb(255, 225, 25),
@@ -144,6 +146,30 @@ const PLATE_COLORS: [[f32; 3]; 24] = [
     rgb(0, 220, 130),
     rgb(100, 155, 255),
     rgb(60, 60, 60),
+    rgb(120, 60, 255),
+    rgb(0, 90, 60),
+    rgb(255, 90, 130),
+    rgb(150, 200, 20),
+    rgb(70, 25, 130),
+    rgb(255, 170, 0),
+    rgb(40, 90, 140),
+    rgb(200, 0, 150),
+    rgb(120, 220, 180),
+    rgb(90, 40, 20),
+    rgb(250, 230, 130),
+    rgb(30, 30, 200),
+    rgb(180, 180, 180),
+    rgb(110, 140, 80),
+    rgb(255, 120, 255),
+    rgb(0, 60, 20),
+    rgb(140, 90, 200),
+    rgb(230, 80, 20),
+    rgb(20, 160, 90),
+    rgb(200, 200, 90),
+    rgb(90, 200, 250),
+    rgb(160, 20, 60),
+    rgb(240, 170, 140),
+    rgb(60, 110, 20),
 ];
 
 /// Boundary-line styling on the plates layer, by classified type.
@@ -197,34 +223,15 @@ pub const CAT_CONTINENT: u32 = 1 << 16;
 /// - `x`: Elevation/Plates = raw keyframe-relative meters (no neighbor
 ///   averaging — pinned); CrustAge = ramp coordinate t (continents store 0,
 ///   never read — masked interpolation); Thickness = ramp coordinate t.
-/// - `y`: bits 0..=7 plate rank (≤ 23), bits 8..=9 boundary code (0 none,
-///   1 trench/convergent, 2 ridge/divergent, 3 transform, priority as the
-///   old bake), bit 16 continent flag, rest zero.
+/// - `y`: bits 0..=7 plate color index (id % 48, WO-0006 S2), bits 8..=9
+///   boundary code (0 none, 1 trench/convergent, 2 ridge/divergent,
+///   3 transform, priority as the old bake), bit 16 continent flag, rest
+///   zero.
 ///
 /// No sea level (GPU uniform), no overlay (separate buffer), no colors
 /// (GPU LUT).
 pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
     let n = kf.elev_m.len();
-
-    // Plate ids grow monotonically across breakups, so raw id % 24 lets two
-    // alive plates share a color. Rank the ids actually present in this
-    // keyframe instead: at most 24 plates are alive, so ranks never collide.
-    let plate_rank: Vec<u16> = if layer.shades_as_plates() {
-        let mut ids: Vec<u16> = kf
-            .plates
-            .iter()
-            .filter(|p| p.alive)
-            .map(|p| p.id as u16)
-            .collect();
-        ids.sort_unstable();
-        let mut rank = vec![0u16; ids.last().map(|&m| m as usize + 1).unwrap_or(1)];
-        for (r, &id) in ids.iter().enumerate() {
-            rank[id as usize] = r as u16;
-        }
-        rank
-    } else {
-        Vec::new()
-    };
 
     let mut out: Vec<[u32; 2]> = Vec::with_capacity(n);
     (0..n)
@@ -250,11 +257,10 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
             };
             let mut cat = 0u32;
             if layer.shades_as_plates() {
-                let rank = plate_rank
-                    .get(kf.plate_id[c] as usize)
-                    .copied()
-                    .unwrap_or(kf.plate_id[c]);
-                cat |= (rank as u32 % PLATE_COLORS.len() as u32) & 0xFF;
+                // Plate ids are stable across a plate's whole life, so its
+                // color never changes as the census around it does; id % 48
+                // (WO-0006 S2) accepts occasional collisions in exchange.
+                cat |= (kf.plate_id[c] as u32 % PLATE_COLORS.len() as u32) & 0xFF;
             }
             let bnd: u32 = if flags & F_BND_CONVERGENT != 0 {
                 1
@@ -289,7 +295,7 @@ pub const LUT_ROWS: u32 = 8;
 ///      two-texel mix reproduces the CPU ramp exactly
 ///   1  hypsometric land: texel i = hypsometric((i/255)·5500)
 ///   2  viridis (age t)     3  batlow (thickness t)
-///   4  24 plate colors in texels 0..24; oceanic-darkened ×0.55 in 32..56
+///   4  48 plate colors in texels 0..48; oceanic-darkened ×0.55 in 64..112
 ///   5  fixed colors: 0 trench, 1 ridge, 2 transform, 3 age-continent,
 ///      4 paint-continent, 5 paint-ocean, 6 hotspot, 7 outside-map
 ///      background, 8 velocity-arrow white
@@ -310,7 +316,7 @@ pub fn bake_palette_lut() -> Vec<u8> {
     }
     for (r, c) in PLATE_COLORS.iter().enumerate() {
         set(4, r, *c);
-        set(4, 32 + r, [c[0] * 0.55, c[1] * 0.55, c[2] * 0.55]);
+        set(4, 64 + r, [c[0] * 0.55, c[1] * 0.55, c[2] * 0.55]);
     }
     for (i, c) in [
         BOUNDARY_TRENCH,
@@ -383,7 +389,7 @@ mod tests {
         for (r, c) in PLATE_COLORS.iter().enumerate() {
             assert_eq!(texel(4, r), pack3(*c));
             assert_eq!(
-                texel(4, 32 + r),
+                texel(4, 64 + r),
                 pack3([c[0] * 0.55, c[1] * 0.55, c[2] * 0.55])
             );
         }
@@ -402,10 +408,10 @@ mod tests {
             assert_eq!(texel(5, i), pack3(*c));
         }
         // Reserved texels stay zero.
-        for i in 24..32 {
+        for i in 48..64 {
             assert_eq!(texel(4, i), 0);
         }
-        for i in 56..256 {
+        for i in 112..256 {
             assert_eq!(texel(4, i), 0);
         }
         for i in 9..256 {
