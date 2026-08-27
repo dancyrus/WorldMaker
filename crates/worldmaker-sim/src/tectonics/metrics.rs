@@ -526,10 +526,7 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
             if !p.alive {
                 slow_my[pid] = 0.0;
             } else if p.speed_deg_my < LIVELINESS_SPEED_FLOOR {
-                let exempt = kf
-                    .collisions
-                    .iter()
-                    .any(|t| t.a == p.id || t.b == p.id);
+                let exempt = kf.collisions.iter().any(|t| t.a == p.id || t.b == p.id);
                 if exempt {
                     continue; // pause, don't reset
                 }

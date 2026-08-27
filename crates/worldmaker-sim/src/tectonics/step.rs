@@ -81,7 +81,7 @@ pub(super) const SPEED_MAX: f32 = 2.0;
 /// 1995). Segments detach individually (Dan's amendment C): continuous
 /// subduction keeps a rolling attached slab; pull fades only after
 /// subduction stops. Detached segments are dropped after 2× this age.
-pub(super) const SLAB_DETACH_MY: f32 = 100.0;
+pub const SLAB_DETACH_MY: f32 = 100.0;
 /// Banked sub-cell rotation commits once it reaches this fraction of a cell.
 const COMMIT_FRACTION: f32 = 0.75;
 /// Oceanic crust created at ridges: thickness (km).

@@ -25,6 +25,7 @@ use worldmaker_sim::{NoiseElevationStage, Pipeline, StageContext, WorldState};
 struct Args {
     screenshots_dir: Option<PathBuf>,
     wo4_dir: Option<PathBuf>,
+    wo6_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
     tectonics_out: Option<PathBuf>,
@@ -39,6 +40,7 @@ fn parse_args() -> Args {
     let mut out = Args {
         screenshots_dir: None,
         wo4_dir: None,
+        wo6_dir: None,
         perf_out: None,
         determinism_out: None,
         tectonics_out: None,
@@ -55,6 +57,9 @@ fn parse_args() -> Args {
             // WO-0004 documentation shots (hud-1440, plate-velocity,
             // velocity-field) into the given directory.
             "--wo4-shots" => out.wo4_dir = take_value(&a, args.next()).map(PathBuf::from),
+            // WO-0006 plate-physics documentation shots (plates-0500/1000/
+            // 2000, elevation-2000, overlay-1000, velocity-1000).
+            "--wo6-shots" => out.wo6_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--perf-out" => out.perf_out = take_value(&a, args.next()).map(PathBuf::from),
             "--determinism-out" => {
                 out.determinism_out = take_value(&a, args.next()).map(PathBuf::from)
@@ -278,6 +283,7 @@ fn main() {
     let script = app::Script {
         screenshots_dir: args.screenshots_dir,
         wo4_dir: args.wo4_dir,
+        wo6_dir: args.wo6_dir,
         perf_out: args.perf_out,
         grid_build_ms,
         seed: args.seed,
