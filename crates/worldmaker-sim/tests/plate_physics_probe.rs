@@ -173,7 +173,8 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
             .iter()
             .map(|t| (t.a, t.b, t.slow_collision_my))
             .collect();
-        let (pre_cells, pre_cont) = counts_per_plate(&sim.plate_id, &sim.crust_type, pre_plate_slots);
+        let (pre_cells, pre_cont) =
+            counts_per_plate(&sim.plate_id, &sim.crust_type, pre_plate_slots);
 
         sim.step(seed, step_idx);
 
@@ -209,7 +210,7 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
         // Breakup fired this step?
         if sim.breakup_count > prev_breakups {
             let new_id = pre_plate_slots; // plates only grow by breakup
-            // The split plate: its youngest_suture_my was reset to pre_t.
+                                          // The split plate: its youngest_suture_my was reset to pre_t.
             let split = (0..pre_plate_slots).find(|&pid| {
                 sim.plates[pid].alive
                     && sim.plates[pid].youngest_suture_my == pre_t
@@ -220,8 +221,7 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
                 let cont_total: u32 = pre_cont.iter().sum();
                 let cont_threshold = (cont_total as f32 * BREAKUP_AREA_FRACTION) as u32;
                 let by_area = pre_cells[pid] > area_threshold;
-                let by_cont_share =
-                    cont_total > n as u32 / 20 && pre_cont[pid] > cont_threshold;
+                let by_cont_share = cont_total > n as u32 / 20 && pre_cont[pid] > cont_threshold;
                 // The step runs suture timers BEFORE maybe_breakup, so a
                 // timer can mature mid-step: gridlock is also attributed
                 // when a pre-step timer sits one step (2 My) below the
@@ -328,10 +328,7 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
 fn plate_physics_probe() {
     let grid = Arc::new(Grid::build(6));
     let date = today_utc_iso();
-    for (label, seed) in [
-        ("cyrus", seed_from_text("cyrus")),
-        ("42", 42u64),
-    ] {
+    for (label, seed) in [("cyrus", seed_from_text("cyrus")), ("42", 42u64)] {
         eprintln!("probing seed {label} ({seed:#x}) ...");
         let metrics = run_probe(label, seed, &grid);
         eprintln!(
