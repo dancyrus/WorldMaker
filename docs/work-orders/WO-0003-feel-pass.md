@@ -1,6 +1,7 @@
 # WO-0003 — Feel pass (v0.2.1)
 
-**Status: OPEN** — started 2026-08-25 on Daniels-MacBook-Air (M1).
+**Status: CLOSED — v0.2.1 (2026-08-27, Daniels-MacBook-Air).** Started
+2026-08-25 on Daniels-MacBook-Air (M1).
 Baseline: main @ 9d5d272 (4 commits past tag v0.2.0 — sea-level drift + Mac
 baseline; this is what Dan plays with, so it is the "before" state).
 
@@ -66,8 +67,12 @@ unchecked box.
 - [x] Phase 1 acceptance re-passes end to end (all_acceptance_pass = true:
       drift 4.1%, alive 6–12, age-depth 2.77%, Ashman 6.53, arcs 100%)
       → tectonics-feelpass-Daniels-MacBook-Air.json
-- [x] L9 cadence = 100 My implemented + logged (2 Gy ≈ 0.88 GB); doc comment +
-      CLAUDE.md updated; XL rows: 1 Gy L8 17.6 s / 535 MB, L9 109 s / 461 MB
+      (S4 note: Fix 4 later moved age-depth to 3.7% and Ashman to 9.17 —
+      still passing; current-main numbers are in tectonics-fix4-*.json)
+- [x] L9 cadence = 100 My implemented + logged (2 Gy ≈ 0.88 GB — a sizing
+      projection from the measured 1 Gy row, not itself a results-JSON
+      measurement); doc comment + CLAUDE.md updated; XL rows (measured):
+      1 Gy L8 17.6 s / 535 MB, L9 109 s / 461 MB
 - [x] harness.rs: plategen metric rows + WM_HARNESS_XL L8/L9 rows
 - [x] Goldens regenerated exactly once (M3 f28e896): elevation
       0xf751…5b62 → 0x7b43_ec03_a6ef_ca2a, plates 0x70df…653d →
@@ -163,19 +168,36 @@ Session 3 owns the instructions: [WO-0003-S3.md](WO-0003-S3.md).
 
 Session 4 owns the instructions: [WO-0003-S4.md](WO-0003-S4.md).
 
-- [ ] Bounded verification pass: at most ten short agents, one per acceptance
-      area (correctness, determinism, performance, UX-contract, repo hygiene
-      covered), vs the real build; confirmed findings fixed
-- [ ] AFTER screenshots via Track C's parity machinery (defaults force seed
-      cyrus, Standard7, detail 1.0, matching the committed BEFORE set); plus
-      coastline close-up at High8 default with render detail on, and a
-      plates-layer before/after pair → docs/media/feel-pass/
-- [ ] Sim suite re-run at close; record that Tracks C and A moved no golden
-      hash after Fix 4's sanctioned move
-- [ ] Interaction contract + all decisions in docs/plan/decision-log.md
-- [ ] CI green; branches merged and deleted; tag v0.2.1; roadmap status updated
-- [ ] Plain-English report to Dan (what changed in each fix, how to see it at
-      home, headline numbers in plain terms, open questions for Phase 2)
+- [x] Bounded verification pass: exactly ten agents (2026-08-27), one per
+      area — pending-edit guard, plate-generator gates, liveliness gates,
+      render-only guard, Eckert IV, presets/CLI, golden integrity, CI config,
+      checklist truth, report accuracy. Every area verified; confirmed
+      findings fixed in the close commit (see decision-log 2026-08-27 S4
+      row: perf re-measured at A0 350 m, crust-type golden pinned, Eckert
+      polar band tested, guard needles + CLI-value warnings added, stale
+      comment fixed). Accepted residuals, deliberately not "fixed": the
+      render-only guard is structural (build_world takes no render argument
+      — the equality assertions prove determinism, the signature proves
+      independence); Eckert IV is std-float view math, allowed because no
+      projection value enters any golden-hashed path; the re-judging panel's
+      retuned PNGs live in the judge record + JSON rows, not committed
+      images; main has no GitHub branch protection (blocked by session
+      permissions; see decision-log note).
+- [x] AFTER screenshots via Track C's parity machinery (parity forced seed
+      cyrus, Standard7, Detail 1.0; framing sanity-checked against BEFORE —
+      plates pair matches at t = 250 My) plus coast-high8.png (High8
+      defaults, octaves 5 / A0 350 m) → docs/media/feel-pass/after/
+- [x] Sim suite re-run at close (2026-08-27, 15/15 binaries green): Tracks C
+      and A (Sessions 1 and 3) moved NO golden hash after Fix 4's sanctioned
+      move — elevation 0x857b_8233_0e24_2c03, plates 0xa8c4_9d9b_f779_59e8,
+      phase-0 noise 0xa86a_7471_79a3_5a46 all byte-identical, verified both
+      by the suite and by a commit-by-commit git audit of the golden file
+- [x] Interaction contract (2026-08-25 standing row) + all decisions in
+      docs/plan/decision-log.md
+- [x] CI green on every WO-0003 PR (#6, #10, #13, #15 all 4/4 checks);
+      branches merged and deleted; tag v0.2.1; roadmap row 1½ added
+- [x] Plain-English report to Dan delivered in the S4 session (fixes, how to
+      see each at home, headline numbers, Phase 2 open questions)
 
 Scope guard: no erosion, rivers, plate drag, climate — Phase 2.
 If context runs short: commit, push, update the boxes, stop cleanly with a

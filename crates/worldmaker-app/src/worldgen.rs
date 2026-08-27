@@ -72,6 +72,13 @@ mod tests {
             bytemuck::bytes_of(&u_hi),
             "the render path DID change between the two settings"
         );
+        // Detail alone must reach the uniform: same sea level, amp 0 vs max.
+        let u_detail = crate::render::pack_shade_params(42, 0, 5, -4000.0, 350.0, cells);
+        assert_ne!(
+            bytemuck::bytes_of(&u_lo),
+            bytemuck::bytes_of(&u_detail),
+            "detail amplitude never reached the shade uniform"
+        );
 
         let (w1, h1) =
             super::build_world(grid.clone(), 42, exhaustive_default_params(), None).unwrap();

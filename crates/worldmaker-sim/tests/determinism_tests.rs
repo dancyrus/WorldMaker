@@ -72,6 +72,11 @@ fn fixed_seed_reproduces_committed_hash() {
 /// hashes equal these constants by construction).
 const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x857b_8233_0e24_2c03;
 const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xa8c4_9d9b_f779_59e8;
+/// Pinned at WO-0003 close (S4 audit): the harness had recorded this hash in
+/// every results JSON but no test asserted it, leaving crust type free to
+/// drift cross-platform unnoticed. Value from the same Fix 4 harness run as
+/// the two constants above.
+const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0xf771_678a_67d5_19a4;
 
 #[test]
 fn tectonics_reproduces_committed_goldens() {
@@ -89,6 +94,11 @@ fn tectonics_reproduces_committed_goldens() {
     assert_eq!(
         plate_hash, GOLDEN_TECTONIC_PLATES_L6_SEED42,
         "tectonic plate ids drifted from the committed golden"
+    );
+    let crust_hash = hash_u32_slice(world.fields.get_u32(tectonics::CRUST_TYPE).unwrap());
+    assert_eq!(
+        crust_hash, GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42,
+        "tectonic crust type drifted from the committed golden"
     );
 }
 

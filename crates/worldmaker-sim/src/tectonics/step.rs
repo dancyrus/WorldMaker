@@ -408,8 +408,9 @@ impl SimState {
             let rot = rotation3(axis, ang);
             p.pole = normalize3(mat3_mul(&rot, p.pole));
             // Slab pull / collision damping from last step's boundary makeup.
-            // The speed floor collapses with collision fraction so jammed
-            // plates can stop (continental-area conservation).
+            // The speed floor eases with collision fraction but never below
+            // SPEED_FLOOR_JAMMED: a fully jammed plate keeps a residual
+            // convergence creep instead of stopping dead (Fix 4 liveliness).
             let target = p.base_speed_deg_my
                 * (1.0 + SLAB_PULL_GAIN * f_sub)
                 * (1.0 - COLLISION_DAMP * f_coll);

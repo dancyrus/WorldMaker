@@ -51,16 +51,20 @@ fn parse_args() -> Args {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--screenshots" => out.screenshots_dir = args.next().map(PathBuf::from),
+            "--screenshots" => out.screenshots_dir = take_value(&a, args.next()).map(PathBuf::from),
             // WO-0004 documentation shots (hud-1440, plate-velocity,
             // velocity-field) into the given directory.
-            "--wo4-shots" => out.wo4_dir = args.next().map(PathBuf::from),
-            "--perf-out" => out.perf_out = args.next().map(PathBuf::from),
-            "--determinism-out" => out.determinism_out = args.next().map(PathBuf::from),
-            "--tectonics-results" => out.tectonics_out = args.next().map(PathBuf::from),
+            "--wo4-shots" => out.wo4_dir = take_value(&a, args.next()).map(PathBuf::from),
+            "--perf-out" => out.perf_out = take_value(&a, args.next()).map(PathBuf::from),
+            "--determinism-out" => {
+                out.determinism_out = take_value(&a, args.next()).map(PathBuf::from)
+            }
+            "--tectonics-results" => {
+                out.tectonics_out = take_value(&a, args.next()).map(PathBuf::from)
+            }
             // World flags (d3a §10.2). --seed is hashed later by the exact
             // seed-box path (seed_from_text), keeping script/UI parity.
-            "--seed" => out.seed = args.next(),
+            "--seed" => out.seed = take_value(&a, args.next()),
             "--preset" => match args.next() {
                 Some(v) => match app::Preset::from_cli(&v) {
                     Some(p) => out.preset = Some(p),
@@ -80,6 +84,15 @@ fn parse_args() -> Args {
         }
     }
     out
+}
+
+/// Take a flag's raw value; a trailing flag with no value warns instead of
+/// silently leaving the slot empty (D4: the wrapper scripts grep "ignoring").
+fn take_value(flag: &str, value: Option<String>) -> Option<String> {
+    if value.is_none() {
+        log::warn!("ignoring {flag} with no value");
+    }
+    value
 }
 
 /// Parse one flag value; unknown-arg policy is warn-and-ignore, and wrapper

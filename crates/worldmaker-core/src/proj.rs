@@ -114,6 +114,13 @@ impl Projection {
 /// θ = sign(φ)·π/2 — the Newton derivative 2·cos θ·(1 + cos θ) vanishes at the
 /// pole. The iterates approach the root monotonically from below (the residual
 /// is concave increasing on [0, π/2]), so cos θ stays positive throughout.
+///
+/// Accuracy at the pole (WO-0003 close audit): the short-circuit snaps the
+/// strip |φ| ≥ 89.9745° onto the pole line, so a round trip there can move a
+/// point by up to ~4.5e-4 rad (~2.8 km) toward the pole; between ~89.83° and
+/// the snap the cap is exhausted with residual ≤ ~8e-6 rad. Both bounds are
+/// asserted by `polar_band_roundtrip` below — view-path math only, never in
+/// any golden-hashed sim path.
 fn eckert4_theta(lat: f64) -> f64 {
     const HALF_PI: f64 = std::f64::consts::FRAC_PI_2;
     const ITER_CAP: usize = 12;
@@ -232,6 +239,33 @@ mod tests {
                         (lat - lat2).abs() < 1e-4 && (lon - lon2).abs() < 1e-4,
                         "{:?} roundtrip drift at lat {ilat} lon {ilon}: {lat2} {lon2}",
                         p
+                    );
+                }
+            }
+        }
+    }
+
+    /// The band the dense test skips: 89°..90° in 0.005° steps, all three
+    /// projections. Eckert IV's pole snap (see `eckert4_theta`) makes 5e-4
+    /// rad the honest bound here — a ~3 km polar cap reads as exactly 90°,
+    /// which the map painter accepts and this test pins so it cannot widen.
+    #[test]
+    fn polar_band_roundtrip() {
+        for p in Projection::ALL {
+            for i in 0..=200 {
+                let lat_deg = 89.0 + i as f32 * 0.005;
+                for &sign in &[1.0f32, -1.0] {
+                    let lat = sign * lat_deg * PI / 180.0;
+                    let lon = 33.0 * PI / 180.0;
+                    let (x, y) = p.project(lat, lon);
+                    let (lat2, _lon2) = p
+                        .invert(x, y)
+                        .unwrap_or_else(|| panic!("{:?} invert failed at lat {lat_deg}", p));
+                    assert!(
+                        (lat - lat2).abs() < 5e-4,
+                        "{:?} polar roundtrip drift at lat {}: got {lat2}",
+                        p,
+                        sign * lat_deg
                     );
                 }
             }

@@ -297,6 +297,10 @@ mod tests {
             ["Sim", "Job"],
             ["thread::", "spawn"],
             ["mp", "sc"],
+            // The app's own sim entry points: this module lives in a crate
+            // that CAN link the sim, so the wall here is lexical only.
+            ["build", "_world"],
+            ["world", "gen"],
         ] {
             let needle = parts.concat();
             assert!(
