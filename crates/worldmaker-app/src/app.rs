@@ -160,6 +160,17 @@ enum ScriptState {
     Closing,
 }
 
+/// A resolved deferred flat centering (see `WorldApp::flat_center_applied`).
+struct FlatCenterApplied {
+    lat: f32,
+    lon: f32,
+    zoom: f32,
+    /// The canvas rect the pan was computed against.
+    rect: egui::Rect,
+    /// Flat frames rendered with the pan applied against that same rect.
+    frames: u32,
+}
+
 /// A tectonic simulation running on a worker thread.
 struct SimJob {
     progress: Arc<Progress>,
@@ -234,6 +245,14 @@ pub struct WorldApp {
     /// against the real canvas rect on the next flat frame (the coast-crop
     /// stage sets it; pan depends on rect size, unknown at stage setup).
     flat_center_target: Option<(f32, f32, f32)>,
+    /// Once the deferred centering resolves: the request, the rect it was
+    /// resolved against, and how many flat frames have rendered with the pan
+    /// applied. drive_shot refuses to capture until the pan has been on
+    /// screen for >= 1 frame against a stable rect (decision-log 2026-08-27:
+    /// one sweep coast crop shot open ocean when the capture beat the pan);
+    /// a rect change re-resolves and restarts the count. Manual pan/zoom
+    /// clears it.
+    flat_center_applied: Option<FlatCenterApplied>,
 
     // Cursor readout: (canvas name, cell id, lat deg, lon deg).
     hover: Option<(&'static str, u32, f32, f32)>,
@@ -360,6 +379,7 @@ impl WorldApp {
             flat_pan: [0.0, 0.0],
             flat_zoom: 1.0,
             flat_center_target: None,
+            flat_center_applied: None,
             hover: None,
             pick_hint: None,
             frame_times: Vec::with_capacity(240),
@@ -783,6 +803,27 @@ impl WorldApp {
             let (fx, fy) = self.projection.project(lat, lon);
             self.flat_zoom = zoom;
             self.flat_pan = [-fx * base[0] * zoom, fy * base[1] * zoom];
+            self.flat_center_applied = Some(FlatCenterApplied {
+                lat,
+                lon,
+                zoom,
+                rect,
+                frames: 0,
+            });
+        } else if let Some(applied) = &mut self.flat_center_applied {
+            if applied.rect != rect {
+                // The canvas rect moved after the pan was resolved (window
+                // still settling): the framing is stale, so re-center against
+                // the real rect and restart the settle count.
+                let base = flat_base_half_extents(self.projection, rect.width(), rect.height());
+                let (fx, fy) = self.projection.project(applied.lat, applied.lon);
+                self.flat_zoom = applied.zoom;
+                self.flat_pan = [-fx * base[0] * applied.zoom, fy * base[1] * applied.zoom];
+                applied.rect = rect;
+                applied.frames = 0;
+            } else {
+                applied.frames = applied.frames.saturating_add(1);
+            }
         }
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         let painting = self.tool != Tool::None;
@@ -790,6 +831,7 @@ impl WorldApp {
             let d = response.drag_delta();
             self.flat_pan[0] += d.x;
             self.flat_pan[1] += d.y;
+            self.flat_center_applied = None;
         }
         if response.hovered() {
             let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
@@ -805,6 +847,7 @@ impl WorldApp {
                     self.flat_pan[1] = (self.flat_pan[1] - (pos.y - c.y)) * scale + (pos.y - c.y);
                 }
                 self.flat_zoom = new_zoom;
+                self.flat_center_applied = None;
             }
         }
 
@@ -1119,6 +1162,11 @@ impl WorldApp {
     /// Screenshot stages: the Phase 0 trio plus the Phase 1 documentation
     /// shots (plates layer mid-run, a mountain range, timeline mid-scrub).
     fn setup_shot_stage(&mut self, stage: usize) -> &'static str {
+        // Each stage starts with a clean centering slate: only the coast
+        // stage below re-arms the deferred pan, and drive_shot's capture
+        // guard keys off these two fields.
+        self.flat_center_target = None;
+        self.flat_center_applied = None;
         let kf_count = self
             .history
             .as_ref()
@@ -1239,9 +1287,27 @@ impl WorldApp {
             self.needs_bake = true;
             log::info!("screenshot stage {stage}: {}", NAMES[shot]);
         }
-        if frames == 30 && !requested {
-            requested = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        if frames >= 30 && !requested {
+            // Capture guard (decision-log 2026-08-27): one sweep run shot the
+            // coast crop as open ocean because the capture fired before the
+            // deferred pan resolved. Refuse to shoot until the pan request is
+            // consumed AND the resolved pan has been on screen for at least
+            // one full frame against an unchanged rect; bail out loudly after
+            // ~10 s so a wedged pan can't hang a scripted run silently.
+            let pan_ready = self.flat_center_target.is_none()
+                && self
+                    .flat_center_applied
+                    .as_ref()
+                    .is_none_or(|a| a.frames >= 1);
+            if pan_ready || frames >= 600 {
+                if !pan_ready {
+                    log::error!(
+                        "screenshot stage {stage}: deferred pan never settled after {frames} frames — capturing anyway; framing is suspect"
+                    );
+                }
+                requested = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            }
         }
         // Collect a delivered screenshot.
         let image = ctx.input(|i| {
