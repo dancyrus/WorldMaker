@@ -715,7 +715,6 @@ pub struct PhysicsTracker {
     // Metric 8 (per plate id).
     slow_my: Vec<f32>,
     slow_flagged: Vec<bool>,
-    slow_contact_my: Vec<f32>,
     slow_violations: Vec<String>,
     // Scratch.
     comp_seen: Vec<bool>,
@@ -945,7 +944,6 @@ impl PhysicsTracker {
             settled_free_n: 0,
             slow_my: Vec::new(),
             slow_flagged: Vec::new(),
-            slow_contact_my: Vec::new(),
             slow_violations: Vec::new(),
             comp_seen: vec![false; sim.grid.cell_count() as usize],
         }
@@ -1163,7 +1161,6 @@ impl PhysicsTracker {
         if self.slow_my.len() < np {
             self.slow_my.resize(np, 0.0);
             self.slow_flagged.resize(np, false);
-            self.slow_contact_my.resize(np, 0.0);
             self.slab_free_my.resize(np, 0.0);
         }
         for pid in 0..np {
@@ -1213,33 +1210,22 @@ impl PhysicsTracker {
             // clock pauses (not resets) while the plate is in a
             // continent-continent collision (it carries a §3 pair timer).
             if p.speed_deg_my < LIVELINESS_SPEED_FLOOR {
-                let in_contact = sim
+                let exempt = sim
                     .collisions
                     .iter()
                     .any(|t| t.a == pid as u32 || t.b == pid as u32);
-                let exempt = in_contact;
                 if !exempt {
                     self.slow_my[pid] += dt;
-                    if in_contact {
-                        self.slow_contact_my[pid] += dt;
-                    }
                     if self.slow_my[pid] > LIVELINESS_SLOW_MAX_MY && !self.slow_flagged[pid] {
                         self.slow_flagged[pid] = true;
                         self.slow_violations.push(format!(
-                            "plate {} below {} deg/My for {} My ending {} My \
-                             ({} My of it in cc contact, {} cells)",
-                            pid,
-                            LIVELINESS_SPEED_FLOOR,
-                            self.slow_my[pid],
-                            sim.t_my,
-                            self.slow_contact_my[pid],
-                            cells[pid]
+                            "plate {} below {} deg/My for {} My ending {} My ({} cells)",
+                            pid, LIVELINESS_SPEED_FLOOR, self.slow_my[pid], sim.t_my, cells[pid]
                         ));
                     }
                 }
             } else {
                 self.slow_my[pid] = 0.0;
-                self.slow_contact_my[pid] = 0.0;
             }
         }
     }
