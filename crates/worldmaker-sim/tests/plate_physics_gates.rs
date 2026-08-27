@@ -37,7 +37,7 @@
 //!   landmass, and the 200 My per-plate rift refractory caps dispersal
 //!   pace (missing physics: stress-axis-directed rift propagation).
 //! - m5a zero exclaves (ARMED): the §7 invariant, every sample.
-//! - m5b backstop budget: ~2–9k cells per 100 My vs target ≤ 10 —
+//! - m5b backstop budget: ~8–10k cells per 100 My vs target ≤ 10 —
 //!   RECORDED. The forward-scatter advection sheds seam fragments every
 //!   step as a matter of course; a ≤10-cell budget needs
 //!   connectivity-aware advection, not coefficients.
