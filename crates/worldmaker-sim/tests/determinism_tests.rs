@@ -61,12 +61,17 @@ fn fixed_seed_reproduces_committed_hash() {
 /// (judge panel 3–0, re-judging panel 3–0; decision log), and the craton
 /// stream's draw alignment is geometry-entangled with the plate map, so
 /// continents and elevation move with it — a whole-world regeneration, not
-/// a red flag. Old values 0xf751_0e72_14ed_5b62 / 0x70df_6db8_ec5f_653d;
-/// new values from the M3 harness run on Daniels-MacBook-Air
-/// (docs/results/tectonics-feelpass-Daniels-MacBook-Air.json, whose
-/// determinism hashes equal these constants by construction).
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x7b43_ec03_a6ef_ca2a;
-const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0x1690_72d7_7080_3f71;
+/// a red flag. Old M3 values 0x7b43_ec03_a6ef_ca2a / 0x1690_72d7_7080_3f71.
+/// BOTH regenerated again 2026-08-27 for WO-0003 Fix 4 — the second
+/// sanctioned move (decision log): the plate-motion force model changed
+/// (jammed speed floor 0.05 instead of 0, suture threshold 1.2 with timer
+/// hysteresis, floor gridlock breaker, SPEED_MAX 2.0), which alters every
+/// step of every run — a whole-world change by design. Values from the
+/// Fix 4 harness run on Daniels-MacBook-Air
+/// (docs/results/tectonics-fix4-Daniels-MacBook-Air.json, whose determinism
+/// hashes equal these constants by construction).
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x857b_8233_0e24_2c03;
+const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xa8c4_9d9b_f779_59e8;
 
 #[test]
 fn tectonics_reproduces_committed_goldens() {

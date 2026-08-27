@@ -13,7 +13,7 @@ use worldmaker_core::Grid;
 
 use super::keyframe::{PlateState, IDENTITY3, NEVER_SUTURED};
 use super::plate_gen;
-use super::step::{SimState, OCEAN_THICKNESS_KM};
+use super::step::{SimState, OCEAN_THICKNESS_KM, SPEED_MAX, SPEED_MIN};
 use super::{TectonicsParams, STAGE_ID};
 
 /// Continental crust fraction relative to the land-fraction target: the
@@ -57,7 +57,7 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         let mut prng = sub_rng(master_seed, STAGE_ID, &format!("plate-init-{pid}"));
         let speed = ((SPEED_MEAN + SPEED_SIGMA * gaussian_f32(&mut prng)).abs()
             * params.tectonic_vigor)
-            .clamp(0.1, 1.2);
+            .clamp(SPEED_MIN, SPEED_MAX);
         s.plates.push(PlateState {
             id: pid as u32,
             alive: true,

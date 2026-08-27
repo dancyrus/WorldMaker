@@ -23,15 +23,23 @@ fn cell_spacing_km(n_cells: usize) -> f64 {
 }
 
 fn run(level: u32, span_my: f32) -> anyhow::Result<(WorldState, f64)> {
+    run_with(
+        level,
+        SEED,
+        TectonicsParams {
+            span_my,
+            ..TectonicsParams::default()
+        },
+    )
+}
+
+fn run_with(level: u32, seed: u64, params: TectonicsParams) -> anyhow::Result<(WorldState, f64)> {
     let grid = Arc::new(Grid::build(level));
     let mut world = WorldState::new(grid);
     let mut pipe = Pipeline::new();
-    pipe.push(Box::new(TectonicsStage::new(TectonicsParams {
-        span_my,
-        ..TectonicsParams::default()
-    })));
+    pipe.push(Box::new(TectonicsStage::new(params)));
     let t0 = Instant::now();
-    pipe.run(&StageContext::new(SEED), &mut world)?;
+    pipe.run(&StageContext::new(seed), &mut world)?;
     Ok((world, t0.elapsed().as_secs_f64()))
 }
 
@@ -317,6 +325,30 @@ fn stability(
     pass
 }
 
+/// WO-0003 Fix 4 liveliness gates (7.1 ownership-overlap, 7.2 speed-floor)
+/// over a run's history. Implementation and constants are canonical in
+/// `tectonics::metrics`; the CI gate tests (liveliness_tests.rs) enforce
+/// the same functions. Violation lines go into the JSON verbatim so a
+/// failure is diagnosable from the results file alone.
+fn liveliness_rows(
+    history: &TectonicsHistory,
+    prefix: &str,
+    m: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let rep = metrics::liveliness(history);
+    m.insert(
+        format!("liveliness_{prefix}overlap_violations"),
+        serde_json::json!(rep.overlap_violations),
+    );
+    m.insert(
+        format!("liveliness_{prefix}speed_violations"),
+        serde_json::json!(rep.speed_violations),
+    );
+    let pass = rep.pass();
+    m.insert(format!("liveliness_{prefix}pass"), serde_json::json!(pass));
+    pass
+}
+
 /// The 5 fixed WO-0003 Fix 2 competition seeds (pinned in Stage D).
 /// 0xc4be0bf8f497a575 = seed_from_text("cyrus"), the app-default seed of the
 /// committed BEFORE screenshots.
@@ -479,7 +511,7 @@ pub fn run_tectonics_harness(out: &std::path::Path) -> anyhow::Result<()> {
     all_pass &= bytes <= 1_000_000_000;
     drop(world);
 
-    // --- 2 Gy at L6: long-run stability ---
+    // --- 2 Gy at L6: long-run stability + liveliness (WO-0003 Fix 4) ---
     log::info!("harness: 2 Gy L6 stability");
     let (world, secs) = run(6, 2000.0)?;
     m.insert(
@@ -487,6 +519,28 @@ pub fn run_tectonics_harness(out: &std::path::Path) -> anyhow::Result<()> {
         serde_json::json!((secs * 100.0).round() / 100.0),
     );
     all_pass &= stability(world.history.as_ref().unwrap(), &mut m);
+    all_pass &= liveliness_rows(world.history.as_ref().unwrap(), "", &mut m);
+    drop(world);
+
+    // --- liveliness echo at Dan's recorded freeze settings (WO-0003 Fix 4:
+    // seed box "dan", 8 plates, land 0.40, vigor 1.73, 2 Gy, L6) ---
+    log::info!("harness: liveliness echo (seed dan, 2 Gy L6)");
+    let (world, secs) = run_with(
+        6,
+        worldmaker_core::hash::seed_from_text("dan"),
+        TectonicsParams {
+            plate_count: 8,
+            land_fraction: 0.40,
+            tectonic_vigor: 1.73,
+            span_my: 2000.0,
+            ..TectonicsParams::default()
+        },
+    )?;
+    m.insert(
+        "run_echo_dan_2gy_l6_s".into(),
+        serde_json::json!((secs * 100.0).round() / 100.0),
+    );
+    all_pass &= liveliness_rows(world.history.as_ref().unwrap(), "echo_dan_", &mut m);
     drop(world);
 
     // --- determinism: same seed, same hashes, twice ---

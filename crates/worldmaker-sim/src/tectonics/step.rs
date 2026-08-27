@@ -62,9 +62,22 @@ const COLLISION_SATURATION_MIN_CELLS: f32 = 4.0;
 /// few steps instead of grinding tens of My of margin away.
 const SPEED_RELAX_UP: f32 = 0.15;
 const SPEED_RELAX_DOWN: f32 = 0.5;
-/// Speed clamp, deg/My (spec).
-const SPEED_MIN: f32 = 0.1;
-const SPEED_MAX: f32 = 1.2;
+/// Speed clamp, deg/My (spec; shared with setup's base-speed draw).
+pub(super) const SPEED_MIN: f32 = 0.1;
+/// Raised 1.2 → 2.0 (WO-0003 Fix 4): at tectonic_vigor 1.73 the old cap
+/// pegged most base speeds and every slab-pull target at 1.2, so vigor
+/// stopped spreading speeds. 2.0 sits above the fastest draw at the maximum
+/// vigor 2.0 (|N(0.5, 0.15)| × 2), so the clamp is a safety rail again, not
+/// the operating point.
+pub(super) const SPEED_MAX: f32 = 2.0;
+/// Speed floor of a fully jammed plate (f_coll = 1), deg/My. The old floor
+/// `SPEED_MIN * (1 - f_coll)` collapsed to exactly zero, and with the
+/// slab-pull target also zeroed by COLLISION_DAMP the clamp held jammed
+/// plates at 0.00 deg/My forever (WO-0003 Fix 4 diagnosis). A jammed plate
+/// now keeps this residual creep — ~0.55 cm/yr at the rotation equator, at
+/// the suture threshold scale, so welded pairs still read slow and suture —
+/// and can never freeze to the grid permanently.
+pub(super) const SPEED_FLOOR_JAMMED: f32 = 0.05;
 /// Euler-pole random walk, degrees (1 sigma) per step.
 const POLE_WALK_DEG: f32 = 0.6;
 /// Banked sub-cell rotation commits once it reaches this fraction of a cell.
@@ -96,8 +109,22 @@ const RIFT_OCEANIZE_KM: f32 = 25.0;
 /// classification noise on quasi-transform boundaries cannot mature a rift).
 const RIFT_DECAY_MULT: f32 = 2.0;
 /// Slow-collision threshold for suturing (cm/yr) and required duration (My).
-const SUTURE_SLOW_CMYR: f32 = 0.5;
-const SUTURE_AFTER_MY: f32 = 30.0;
+/// Raised 0.5 → 1.2 (WO-0003 Fix 4): two fully jammed plates now creep at
+/// the SPEED_FLOOR_JAMMED residual instead of stopping dead, which closes
+/// their contact at up to ~1.1 cm/yr (2 × 0.05 deg/My at the rotation
+/// equator). At 0.5 that creep read as *active* convergence, reset the pair
+/// timer every step, and welded pairs ground against each other forever —
+/// the threshold must sit above the jam-creep ceiling so a stalled
+/// collision always matures toward suture.
+const SUTURE_SLOW_CMYR: f32 = 1.2;
+pub(super) const SUTURE_AFTER_MY: f32 = 30.0;
+/// Fast-convergence steps decay the pair timer at 2× real time instead of
+/// hard-resetting it (WO-0003 Fix 4): a welded pair's escape attempts
+/// flicker the mean above SUTURE_SLOW_CMYR for a few steps at a time, and
+/// with a hard reset those flickers postponed suturing by hundreds of My
+/// (measured: a weld formed at ~1270 My did not suture until ~1610 My).
+/// Same hysteresis pattern as RIFT_DECAY_MULT.
+const SUTURE_DECAY_MULT: f32 = 2.0;
 /// Plate-count floor (suturing stops) and ceiling (breakup stops).
 const PLATE_FLOOR: usize = 6;
 const PLATE_CEIL: usize = 24;
@@ -386,7 +413,7 @@ impl SimState {
             let target = p.base_speed_deg_my
                 * (1.0 + SLAB_PULL_GAIN * f_sub)
                 * (1.0 - COLLISION_DAMP * f_coll);
-            let floor = SPEED_MIN * (1.0 - f_coll);
+            let floor = SPEED_MIN - (SPEED_MIN - SPEED_FLOOR_JAMMED) * f_coll;
             let relax = if target < p.speed_deg_my {
                 SPEED_RELAX_DOWN
             } else {
@@ -939,13 +966,15 @@ impl SimState {
                 .find(|t| t.a == *a && t.b == *b)
                 .map(|t| t.slow_collision_my)
                 .unwrap_or(0.0);
-            // Slow (< 0.5 cm/yr) contact accumulates — including the
-            // sub-threshold and mildly-negative band, which is where jammed
-            // collisions live; fast active convergence resets.
+            // Slow contact accumulates — including the sub-threshold and
+            // mildly-negative band, which is where jammed collisions live;
+            // fast active convergence decays with hysteresis (see
+            // SUTURE_DECAY_MULT), so escape flickers cannot postpone a
+            // mature weld indefinitely.
             let t = if mean < SUTURE_SLOW_CMYR {
                 old + DT_MY
             } else {
-                0.0
+                (old - SUTURE_DECAY_MULT * DT_MY).max(0.0)
             };
             next.push(PairTimer {
                 a: *a,
@@ -1013,6 +1042,31 @@ impl SimState {
                 && (self.plate_cells[pid] > threshold
                     || (cont_total > n as u32 / 20 && cont_per_plate[pid] > cont_threshold))
                 && self.t_my - self.plates[pid].youngest_suture_my > BREAKUP_SUTURE_AGE_MY
+        });
+        // Gridlock breaker (WO-0003 Fix 4): at the plate floor suturing is
+        // blocked, so a matured slow collision would weld plates forever if
+        // no supercontinent ever formed to trigger a breakup (the engine
+        // death diagnosed in the decision log, 2026-08-26). Break up the
+        // most-continental eligible plate instead: the one-plate window is
+        // immediately spent on the oldest matured pair, which is exactly the
+        // breakup↔suture limit cycle — now reachable without a
+        // supercontinent, so welded continents always become one plate.
+        let candidate = candidate.or_else(|| {
+            let gridlocked = self.alive_plates() <= PLATE_FLOOR
+                && self
+                    .collisions
+                    .iter()
+                    .any(|t| t.slow_collision_my >= SUTURE_AFTER_MY);
+            if !gridlocked {
+                return None;
+            }
+            (0..self.plates.len())
+                .filter(|&pid| {
+                    self.plates[pid].alive
+                        && cont_per_plate[pid] >= 32 // rift needs a continental interior
+                        && self.t_my - self.plates[pid].youngest_suture_my > BREAKUP_SUTURE_AGE_MY
+                })
+                .max_by_key(|&pid| (cont_per_plate[pid], std::cmp::Reverse(pid)))
         });
         let Some(pid) = candidate else { return };
 

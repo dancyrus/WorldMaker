@@ -104,28 +104,31 @@ unchecked box.
 Session 2 owns the instructions, the measurement record, and the diagnosis:
 [WO-0003-S2.md](WO-0003-S2.md). All changes in worldmaker-sim.
 
-- [ ] Cap collision braking below a full stop; a jammed plate keeps a small
-      residual convergence
-- [ ] Mantle-drag floor: an alive plate's speed relaxes toward a small
+- [x] Cap collision braking below a full stop; a jammed plate keeps a small
+      residual convergence (SPEED_FLOOR_JAMMED 0.05 deg/My at f_coll = 1)
+- [x] Mantle-drag floor: an alive plate's speed relaxes toward a small
       nonzero base when boundary forces vanish, so a plate whose partner
-      rifts away wakes up
-- [ ] Close the classification gap: a continent-continent boundary below the
+      rifts away wakes up (verified by trace: recovery well within 100 My)
+- [x] Close the classification gap: a continent-continent boundary below the
       classify threshold for longer than the suture timer sutures anyway;
-      motionless welded continents are one plate
-- [ ] Soften or widen the speed clamp so vigor spreads speeds instead of
-      pegging them
-- [ ] Liveliness gates in harness JSON + fast CI test (the gate class Phase 1
+      motionless welded continents are one plate (SUTURE_SLOW_CMYR 1.2 above
+      the jam-creep ceiling + 2× timer decay instead of hard reset + floor
+      gridlock breaker in maybe_breakup; S2 record §5)
+- [x] Soften or widen the speed clamp so vigor spreads speeds instead of
+      pegging them (SPEED_MAX 2.0, shared with setup's base-speed draw)
+- [x] Liveliness gates in harness JSON + fast CI test (the gate class Phase 1
       missed): no alive plate of ≥50 cells keeps ownership overlap ≥ 0.985
       across a 300 My window unless inside an active collision younger than
       the suture timer; no alive plate holds speed < 0.05 deg/My for more
-      than 200 My
-- [ ] Echo run at Dan's exact recorded settings (seed "dan", 8 plates, 0.40,
-      1.73, 2 Gy) passes both liveliness gates
-- [ ] Full Phase 1 acceptance + plate-generator gates + seed-42 2 Gy
+      than 200 My (tectonics::metrics::liveliness; exemptions logged in S2)
+- [x] Echo run at Dan's exact recorded settings (seed "dan", 8 plates, 0.40,
+      1.73, 2 Gy) passes both liveliness gates (CI test + harness rows)
+- [x] Full Phase 1 acceptance + plate-generator gates + seed-42 2 Gy
       stability gate re-run green; if stability breaks, retune inside the
       pinned area bands using the documented breakup↔suture diagnosis and
-      log it — do not weaken the gate
-- [ ] SECOND sanctioned golden regeneration (Fix 2's "exactly once"
+      log it — do not weaken the gate (no retune needed: drift 2.1%, alive
+      6–12; tectonics-fix4-Daniels-MacBook-Air.json)
+- [x] SECOND sanctioned golden regeneration (Fix 2's "exactly once"
       bookkeeping closed at M3): tectonic goldens move once more, as the
       final commit of the Fix 4 session, decision-log entry in the same
       style
