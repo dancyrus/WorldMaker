@@ -20,6 +20,21 @@ STEPS.
 12. Commit, push, open a pull request titled `WO-0006-S1: force balance, slab ledger, connectivity`. Merge when CI is green. Delete the branch.
 13. Report to Dan in plain language, under 300 words: what was deleted, the placeholder coefficients, the probe numbers next to the WO-0005 baseline, and the one-line paste for S2.
 
+S1 RECORD (step 9). Placeholder coefficients shipped in `step.rs`:
+`K_SLAB = 0.70`, `K_RIDGE = 1.0`, `K_MANTLE = 0.06`, `C_DRAG = 1.0`,
+`C_CONTACT = 60.0`, `C_TRANSFORM = 2.0` (`TAU_MY = 30`, `SLAB_AGE_REF_MY = 80`).
+At seed 42 / cyrus, L6, 500 My: run mean speed 4.12 / 4.98 cm/yr (target
+2–6 ✓). The binary slab-attached-vs-slab-free ratio reads 1.15 / 1.82 —
+structurally unmeasurable at S1: slab-free plate-samples are ~0.5% of the
+population (24 / 7 of ~3,000), all of them fresh breakup halves still
+carrying inherited parent speed, because every long-lived plate subducts
+somewhere until S2's rifting creates genuinely slab-free plates. The force
+ranking itself is demonstrated by the same runs' attached-area split:
+plates with above-median attached slab area average 2.01× / 2.07× the
+speed of below-median plates (5.41 vs 2.69, 6.75 vs 3.26 cm/yr). Residual
+drift K_MANTLE / C_DRAG = 0.06 deg/My ≈ 0.67 cm/yr, inside the model's
+0.3–1 cm/yr band. Final calibration is S3.
+
 DONE WHEN. PR merged; the nine named constants and `base_speed_deg_my` no longer exist in the sim; `enforce_connectivity()` runs every step; probe JSON committed; `cargo test --workspace` green apart from the two ignored goldens.
 
 FINAL LINE. After the report, print this block exactly, as the last output of the session. Print it only when every DONE WHEN condition holds. If the session stops early for any reason, print `NOT DONE` and the reason instead.

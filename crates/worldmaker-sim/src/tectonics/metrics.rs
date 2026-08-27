@@ -467,8 +467,7 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
                     speed_n += 1;
                 }
             }
-            let free_mover =
-                speed_sum / speed_n.max(1) as f64 >= LIVELINESS_FREE_MIN_SPEED as f64;
+            let free_mover = speed_sum / speed_n.max(1) as f64 >= LIVELINESS_FREE_MIN_SPEED as f64;
             if free_mover {
                 continue;
             }

@@ -241,10 +241,7 @@ fn resume_from_keyframe_is_bit_exact() {
         assert_eq!(kf.buildup_ckm, orig.buildup_ckm, "buildup at t={t}");
         // Slab-ledger cells (WO-0006 S1): the round trip must preserve them.
         assert_eq!(kf.slab_plate, orig.slab_plate, "slab plate at t={t}");
-        assert_eq!(
-            kf.slab_since_my, orig.slab_since_my,
-            "slab since at t={t}"
-        );
+        assert_eq!(kf.slab_since_my, orig.slab_since_my, "slab since at t={t}");
         // Plate-level state, field by field (PlateState is raw f32s).
         assert_eq!(kf.plates.len(), orig.plates.len(), "plate count at t={t}");
         for (pk, po) in kf.plates.iter().zip(&orig.plates) {

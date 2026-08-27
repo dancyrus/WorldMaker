@@ -21,8 +21,8 @@ use rand::RngCore;
 use rayon::prelude::*;
 
 use worldmaker_core::dmath::{
-    add3, cross3, dot3, mat3_mul, mat3_mul3, mat3_transpose, normalize3, random_tangent,
-    rotation3, scale3, sub3,
+    add3, cross3, dot3, mat3_mul, mat3_mul3, mat3_transpose, normalize3, random_tangent, rotation3,
+    scale3, sub3,
 };
 use worldmaker_core::rng::sub_rng;
 use worldmaker_core::Grid;
@@ -50,12 +50,12 @@ const CLASSIFY_CMYR: f32 = 0.4;
 // S1 values below are placeholders calibrated only to §9 metric 7's coarse
 // shape (mean speed and slab ranking) — final calibration is WO-0006 S3.
 /// Slab pull per attached-slab cell (age-weighted): the dominant driver.
-const K_SLAB: f32 = 0.40;
+const K_SLAB: f32 = 0.70;
 /// Ridge push per divergent boundary cell (~an order below slab pull).
 const K_RIDGE: f32 = 1.0;
 /// Residual mantle traction per plate cell; K_MANTLE / C_DRAG is the
 /// residual drift of a slab-free, ridge-free plate (~0.8 cm/yr).
-const K_MANTLE: f32 = 0.07;
+const K_MANTLE: f32 = 0.06;
 /// Basal drag per plate cell (the normalization of the balance).
 const C_DRAG: f32 = 1.0;
 /// Continent-continent contact resistance per contact cell (strength = 1.0
@@ -898,10 +898,9 @@ impl SimState {
         // longest shared border (tie → lowest plate id). One pass gathers
         // fragment cell lists; borders are then counted per fragment.
         let mut frag_cells: Vec<Vec<u32>> = vec![Vec::new(); comp_plate.len()];
-        for c in 0..n {
-            let ci = comp_of[c] as usize;
-            if keep[comp_plate[ci] as usize] != ci as u32 {
-                frag_cells[ci].push(c as u32);
+        for (c, &ci) in comp_of.iter().enumerate() {
+            if keep[comp_plate[ci as usize] as usize] != ci {
+                frag_cells[ci as usize].push(c as u32);
             }
         }
         let mut target = vec![u32::MAX; comp_plate.len()];
@@ -930,9 +929,8 @@ impl SimState {
             }
             target[ci] = best;
         }
-        for c in 0..n {
-            let ci = comp_of[c] as usize;
-            let t = target[ci];
+        for (c, &ci) in comp_of.iter().enumerate() {
+            let t = target[ci as usize];
             if t != u32::MAX {
                 self.plate_cells[self.plate_id[c] as usize] -= 1;
                 self.plate_cells[t as usize] += 1;
@@ -1009,8 +1007,7 @@ impl SimState {
                         let a_subducts = if hard_a || hard_b {
                             !hard_a && hard_b
                         } else {
-                            age[c] > age[nb as usize]
-                                || (age[c] == age[nb as usize] && a > b)
+                            age[c] > age[nb as usize] || (age[c] == age[nb as usize] && a > b)
                         };
                         if a_subducts {
                             let t = cross3(xa, e);
@@ -1562,5 +1559,161 @@ impl SimState {
     /// Count of alive plates.
     pub fn alive_plates(&self) -> usize {
         self.plates.iter().filter(|p| p.alive).count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_plate(id: u32, speed: f32) -> PlateState {
+        PlateState {
+            id,
+            alive: true,
+            pole: [0.0, 0.0, 1.0],
+            speed_deg_my: speed,
+            youngest_suture_my: super::super::keyframe::NEVER_SUTURED,
+            pending_rot: IDENTITY3,
+            pending_deg: 0.0,
+            slab: Vec::new(),
+            boundary_cells: 0,
+            subducting_cells: 0,
+            colliding_cells: 0,
+            ridge_cells: 0,
+            transform_cells: 0,
+            drive_torque: [0.0; 3],
+        }
+    }
+
+    /// A minimal one-plate state for exercising motion_update directly.
+    fn one_plate_state(area_cells: u32, speed: f32) -> SimState {
+        let grid = Arc::new(Grid::build(2));
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, speed));
+        s.plate_cells = vec![area_cells];
+        s.boundary_cells = vec![0];
+        s.subducting_cells = vec![0];
+        s.colliding_cells = vec![0];
+        s.ridge_cells = vec![0];
+        s.transform_cells = vec![0];
+        s.torques = vec![[0.0; 3]];
+        s
+    }
+
+    /// §1: with no slab, no ridge, and no boundary resistance, the balance
+    /// is residual traction over basal drag — speed relaxes to
+    /// K_MANTLE / C_DRAG regardless of plate size or starting speed.
+    #[test]
+    fn zero_drivers_relax_to_residual_drift() {
+        let v_resid = K_MANTLE / C_DRAG;
+        for (area, start) in [(100u32, 1.5f32), (5000, 0.0), (321, v_resid)] {
+            let mut s = one_plate_state(area, start);
+            for _ in 0..2000 {
+                s.motion_update();
+            }
+            let v = s.plates[0].speed_deg_my;
+            assert!(
+                (v - v_resid).abs() < 1e-4,
+                "area {area}, start {start}: relaxed to {v}, want {v_resid}"
+            );
+        }
+    }
+
+    /// §1: an attached slab segment is a driver — the same plate with one
+    /// attached segment ends up faster than without.
+    #[test]
+    fn attached_slab_outpulls_slab_free() {
+        let mut free = one_plate_state(1000, 0.3);
+        let mut pulled = one_plate_state(1000, 0.3);
+        pulled.plates[0].slab.push(SlabSegment {
+            area_cells: 200,
+            age_at_subduction_my: 80.0,
+            subducted_at_my: 0.0,
+            attached: true,
+        });
+        // A detached copy of the same segment must NOT pull.
+        let mut detached = one_plate_state(1000, 0.3);
+        detached.plates[0].slab.push(SlabSegment {
+            area_cells: 200,
+            age_at_subduction_my: 80.0,
+            subducted_at_my: 0.0,
+            attached: false,
+        });
+        for _ in 0..100 {
+            free.motion_update();
+            pulled.motion_update();
+            detached.motion_update();
+        }
+        let (vf, vp, vd) = (
+            free.plates[0].speed_deg_my,
+            pulled.plates[0].speed_deg_my,
+            detached.plates[0].speed_deg_my,
+        );
+        assert!(vp > vf, "attached slab must pull: {vp} <= {vf}");
+        assert_eq!(vd, vf, "a detached slab must not pull");
+    }
+
+    /// §7: a hand-built two-fragment plate leaves enforce_connectivity as
+    /// one component, the smaller fragment reassigned to its border plate.
+    #[test]
+    fn connectivity_backstop_reunifies_fragments() {
+        let grid = Arc::new(Grid::build(3));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.3));
+        s.plates.push(test_plate(1, 0.3));
+        // Plate 1 = a large patch around cell 40 (3 rings) plus a distant
+        // exclave around cell 600 (1 ring); plate 0 owns the rest.
+        let grow = |seed: u32, rings: u32| {
+            let mut cells = vec![seed];
+            for _ in 0..rings {
+                let mut next = cells.clone();
+                for &c in &cells {
+                    next.extend_from_slice(grid.neighbors_of(c));
+                }
+                next.sort_unstable();
+                next.dedup();
+                cells = next;
+            }
+            cells
+        };
+        let main_patch = grow(40, 3);
+        let exclave = grow(600, 1);
+        assert!(main_patch.len() > exclave.len());
+        for &c in main_patch.iter().chain(&exclave) {
+            s.plate_id[c as usize] = 1;
+        }
+        s.plate_cells = vec![0, 0];
+        for &p in &s.plate_id {
+            s.plate_cells[p as usize] += 1;
+        }
+
+        s.enforce_connectivity();
+
+        assert_eq!(s.connectivity_reassigned, exclave.len() as u64);
+        // Every plate-1 cell now reachable from the main patch: BFS count
+        // equals the plate-1 census (one component).
+        let census = s.plate_id.iter().filter(|&&p| p == 1).count();
+        let mut seen = vec![false; n];
+        let start = *main_patch.first().unwrap() as usize;
+        assert_eq!(s.plate_id[start], 1);
+        let mut queue = VecDeque::from([start as u32]);
+        seen[start] = true;
+        let mut count = 0;
+        while let Some(c) = queue.pop_front() {
+            count += 1;
+            for &nb in grid.neighbors_of(c) {
+                if !seen[nb as usize] && s.plate_id[nb as usize] == 1 {
+                    seen[nb as usize] = true;
+                    queue.push_back(nb);
+                }
+            }
+        }
+        assert_eq!(count, census, "plate 1 must be a single component");
+        assert_eq!(census, main_patch.len(), "the largest fragment is kept");
+        // The exclave went to the only bordering plate.
+        for &c in &exclave {
+            assert_eq!(s.plate_id[c as usize], 0);
+        }
     }
 }
