@@ -76,7 +76,9 @@ fn liveliness_gates_dan_echo() {
 fn probe_freeze_report() {
     // Env overrides for probing other configurations (WM_PROBE_DAN=1 probes
     // the gate-7.3 echo configuration).
-    let dan = std::env::var("WM_PROBE_DAN").map(|v| v == "1").unwrap_or(false);
+    let dan = std::env::var("WM_PROBE_DAN")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     let params = if dan {
         TectonicsParams {
             plate_count: 8,

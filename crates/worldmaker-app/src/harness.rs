@@ -345,10 +345,7 @@ fn liveliness_rows(
         serde_json::json!(rep.speed_violations),
     );
     let pass = rep.pass();
-    m.insert(
-        format!("liveliness_{prefix}pass"),
-        serde_json::json!(pass),
-    );
+    m.insert(format!("liveliness_{prefix}pass"), serde_json::json!(pass));
     pass
 }
 
