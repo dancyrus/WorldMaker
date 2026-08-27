@@ -134,19 +134,23 @@ Session 2 owns the instructions, the measurement record, and the diagnosis:
 ### Track A — pending edits (merges last, rebases on C)
 
 Session 3 owns the instructions: [WO-0003-S3.md](WO-0003-S3.md).
-- [ ] pending-edits module: ordered stroke list (CratonPaint cells ±1 /
-      HotspotAdd / HotspotRemove unit vectors)
-- [ ] Structural guard: stroke path has no route to Pipeline::run, enforced by test
-- [ ] Badge counts strokes; Ctrl+Z pops newest; Discard clears; Regenerate folds
-      into TectonicsParams overlays, clears, runs history off-thread w/ progress+cancel
-- [ ] Preset switch discards pending craton strokes, keeps hotspot strokes; seed
-      change keeps everything; logged in decision-log contract
-- [ ] Pending overlay (tint+outline) rendered via frozen interface, world behind
-- [ ] Stroke type serde Serialize/Deserialize in worldmaker-io beside save stubs
-      (stubs stay stubs)
-- [ ] View controls stay live (sea level, layers, projections, timeline, Detail)
-- [ ] Sim tests re-run green after A merges (golden hashes unmoved)
-- [ ] Track A merged green
+- [x] pending-edits module: ordered stroke list (CratonPaint cells ±1 /
+      HotspotAdd / HotspotRemove unit vectors) — worldmaker-io/src/pending.rs
+- [x] Structural guard: stroke path has no route to Pipeline::run, enforced by test
+      (crate wall + io-manifest test + lexical scans + start_job count == 3 tripwire)
+- [x] Badge counts strokes; Cmd/Ctrl+Z pops newest (live first, Undo button
+      mirrors it); Discard clears; Regenerate folds into TectonicsParams
+      overlays, clears, runs history off-thread w/ existing progress+cancel
+- [x] Preset switch discards pending craton strokes, keeps hotspot strokes; seed
+      change keeps everything; logged in decision-log contract (2026-08-25 rows)
+- [x] Pending overlay (tint+outline) rendered via frozen interface, world behind
+      (live stroke included; works mid-run off the hotspot fold base)
+- [x] Stroke type serde Serialize/Deserialize in worldmaker-io beside save stubs
+      (stubs stay stubs; JSON shape pinned by test)
+- [x] View controls stay live (sea level, layers, projections, timeline, Detail)
+- [x] Sim tests re-run green after A merges (golden hashes unmoved; verified on
+      main @ PR #13 merge, 2026-08-27, tectonics_reproduces_committed_goldens ok)
+- [x] Track A merged green (PR #13, all CI checks)
 
 ## Stage V — verify + close
 
