@@ -24,6 +24,7 @@ use worldmaker_sim::{NoiseElevationStage, Pipeline, StageContext, WorldState};
 
 struct Args {
     screenshots_dir: Option<PathBuf>,
+    wo4_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
     tectonics_out: Option<PathBuf>,
@@ -37,6 +38,7 @@ struct Args {
 fn parse_args() -> Args {
     let mut out = Args {
         screenshots_dir: None,
+        wo4_dir: None,
         perf_out: None,
         determinism_out: None,
         tectonics_out: None,
@@ -50,6 +52,9 @@ fn parse_args() -> Args {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--screenshots" => out.screenshots_dir = args.next().map(PathBuf::from),
+            // WO-0004 documentation shots (hud-1440, plate-velocity,
+            // velocity-field) into the given directory.
+            "--wo4-shots" => out.wo4_dir = args.next().map(PathBuf::from),
             "--perf-out" => out.perf_out = args.next().map(PathBuf::from),
             "--determinism-out" => out.determinism_out = args.next().map(PathBuf::from),
             "--tectonics-results" => out.tectonics_out = args.next().map(PathBuf::from),
@@ -234,6 +239,7 @@ fn main() {
     if (args.determinism_out.is_some() || args.tectonics_out.is_some())
         && args.perf_out.is_none()
         && args.screenshots_dir.is_none()
+        && args.wo4_dir.is_none()
     {
         return;
     }
@@ -258,6 +264,7 @@ fn main() {
     let perf_mode = args.perf_out.is_some();
     let script = app::Script {
         screenshots_dir: args.screenshots_dir,
+        wo4_dir: args.wo4_dir,
         perf_out: args.perf_out,
         grid_build_ms,
         seed: args.seed,

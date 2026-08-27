@@ -12,7 +12,7 @@
 //! pipelines that draw the chains live in render.rs.
 
 use worldmaker_core::Grid;
-use worldmaker_sim::tectonics::{F_BND_CONVERGENT, F_BND_DIVERGENT};
+use worldmaker_sim::tectonics::{PlateState, F_BND_CONVERGENT, F_BND_DIVERGENT};
 
 /// One smoothed boundary polyline; `btype` is the boundary code (1 trench /
 /// convergent, 2 ridge / divergent, 3 transform), `pts` unit vectors.
@@ -310,6 +310,220 @@ fn chaikin_once(pts: &[[f32; 3]], closed: bool) -> Vec<[f32; 3]> {
     }
 }
 
+// ----- velocity arrows (WO-0004 steps 6–7) -----
+//
+// The two velocity layers draw white arrows over the Plates base through
+// the same ribbon path as the boundary chains: each arrow is two open
+// polylines (shaft + V head) tagged BTYPE_ARROW, so both canvases and both
+// keyframe scrub / projection behaviors come for free.
+
+/// Ribbon btype for velocity arrows: fs_bnd maps btype -> LUT row 5 texel
+/// (btype - 1), so 9 reads texel 8 — ARROW_WHITE in layers.rs.
+pub const BTYPE_ARROW: u8 = 9;
+
+/// Longest per-plate arrow, radians of arc on the unit sphere. Calibrated
+/// to ~8% of the canvas width on the globe at zoom 1 (WO-0004 step 6):
+/// the globe's screen radius is 0.45 × the canvas minor dimension, so
+/// 0.08 / 0.45 ≈ 0.178 rad projects to 8% of the width at the disc center.
+const ARROW_MAX_ARC: f32 = 0.178;
+/// Longest velocity-field arrow: 2.5% of canvas width (0.025 / 0.45).
+const ARROW_FIELD_MAX_ARC: f32 = 0.056;
+/// V-head wing length as a fraction of the shaft arc, and the wing
+/// half-angle away from the reversed shaft direction.
+const ARROW_HEAD_FRAC: f32 = 0.35;
+const ARROW_HEAD_ANGLE: f32 = 0.5; // radians (~29°)
+/// Below this arc an arrow would be sub-pixel noise: skip it.
+const ARROW_MIN_ARC: f32 = 1e-3;
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn norm(v: [f32; 3]) -> f32 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+/// Walk from unit point `p` along unit tangent `d` by `arc` radians of
+/// great circle.
+fn geodesic_step(p: [f32; 3], d: [f32; 3], arc: f32) -> [f32; 3] {
+    let (c, s) = (arc.cos(), arc.sin());
+    normalize([
+        p[0] * c + d[0] * s,
+        p[1] * c + d[1] * s,
+        p[2] * c + d[2] * s,
+    ])
+}
+
+/// Surface velocity of a plate rotation at unit point `r`: v = ω × r with
+/// ω = pole × speed_deg_my. Units are deg/My; the vector lies in the
+/// tangent plane at `r` and vanishes at the rotation poles.
+pub fn surface_velocity(pole: [f32; 3], speed_deg_my: f32, r: [f32; 3]) -> [f32; 3] {
+    let w = [
+        pole[0] * speed_deg_my,
+        pole[1] * speed_deg_my,
+        pole[2] * speed_deg_my,
+    ];
+    cross(w, r)
+}
+
+/// Append one arrow at unit point `base` pointing along unit tangent `dir`,
+/// `arc` radians long: an open shaft chain plus an open V-head chain.
+fn push_arrow(chains: &mut Vec<BoundaryChain>, base: [f32; 3], dir: [f32; 3], arc: f32) {
+    if arc < ARROW_MIN_ARC {
+        return;
+    }
+    let tip = geodesic_step(base, dir, arc);
+    // Forward tangent at the tip, and the sideways tangent there.
+    let (c, s) = (arc.cos(), arc.sin());
+    let fwd = normalize([
+        dir[0] * c - base[0] * s,
+        dir[1] * c - base[1] * s,
+        dir[2] * c - base[2] * s,
+    ]);
+    let side = normalize(cross(tip, fwd));
+    let wing_arc = arc * ARROW_HEAD_FRAC;
+    let (ha_c, ha_s) = (ARROW_HEAD_ANGLE.cos(), ARROW_HEAD_ANGLE.sin());
+    let wing = |sgn: f32| -> [f32; 3] {
+        let d = normalize([
+            -fwd[0] * ha_c + side[0] * ha_s * sgn,
+            -fwd[1] * ha_c + side[1] * ha_s * sgn,
+            -fwd[2] * ha_c + side[2] * ha_s * sgn,
+        ]);
+        geodesic_step(tip, d, wing_arc)
+    };
+    let (wl, wr) = (wing(1.0), wing(-1.0));
+    chains.push(BoundaryChain {
+        btype: BTYPE_ARROW,
+        pts: vec![base, tip],
+        closed: false,
+    });
+    chains.push(BoundaryChain {
+        btype: BTYPE_ARROW,
+        pts: vec![wl, tip, wr],
+        closed: false,
+    });
+}
+
+/// Index alive plates by their (monotonically grown) id; dead slots None.
+fn alive_by_id(plates: &[PlateState]) -> Vec<Option<usize>> {
+    let max_id = plates.iter().map(|p| p.id as usize).max().unwrap_or(0);
+    let mut idx = vec![None; max_id + 1];
+    for (i, p) in plates.iter().enumerate() {
+        if p.alive {
+            idx[p.id as usize] = Some(i);
+        }
+    }
+    idx
+}
+
+/// The fastest alive plate's speed; arrow lengths are proportional to
+/// speed_deg_my with the fastest pinned at the layer's max arc.
+fn max_alive_speed(plates: &[PlateState]) -> f32 {
+    plates
+        .iter()
+        .filter(|p| p.alive)
+        .map(|p| p.speed_deg_my)
+        .fold(0.0, f32::max)
+}
+
+/// One arrow per alive plate at its area centroid (WO-0004 step 6).
+/// Serial id-ordered accumulation — deterministic.
+pub fn plate_velocity_arrows(
+    grid: &Grid,
+    plate_id: &[u16],
+    plates: &[PlateState],
+) -> Vec<BoundaryChain> {
+    let idx = alive_by_id(plates);
+    let max_speed = max_alive_speed(plates);
+    if max_speed <= 0.0 {
+        return Vec::new();
+    }
+    // Cells are near-equal-area Goldberg cells, so the unweighted mean of
+    // member cell centers is the area centroid to well under a cell width.
+    let mut sums = vec![[0f64; 3]; plates.len()];
+    let mut counts = vec![0u32; plates.len()];
+    for (p, &pid) in grid.positions.iter().zip(plate_id) {
+        let Some(&Some(i)) = idx.get(pid as usize) else {
+            continue;
+        };
+        sums[i][0] += p[0] as f64;
+        sums[i][1] += p[1] as f64;
+        sums[i][2] += p[2] as f64;
+        counts[i] += 1;
+    }
+    let mut chains = Vec::new();
+    for (i, plate) in plates.iter().enumerate() {
+        if !plate.alive || counts[i] == 0 {
+            continue;
+        }
+        let s = sums[i];
+        let len = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
+        if len < 1e-9 {
+            continue; // degenerate: members average to the sphere center
+        }
+        let centroid = [
+            (s[0] / len) as f32,
+            (s[1] / len) as f32,
+            (s[2] / len) as f32,
+        ];
+        let v = surface_velocity(plate.pole, plate.speed_deg_my, centroid);
+        let vn = norm(v);
+        if vn < 1e-6 {
+            continue; // centroid at the rotation pole: no direction
+        }
+        let dir = [v[0] / vn, v[1] / vn, v[2] / vn];
+        push_arrow(
+            &mut chains,
+            centroid,
+            dir,
+            ARROW_MAX_ARC * plate.speed_deg_my / max_speed,
+        );
+    }
+    chains
+}
+
+/// One arrow per sample point (WO-0004 step 7): each sample maps to its
+/// containing cell at the active level, whose plate supplies pole + speed.
+pub fn velocity_field_arrows(
+    grid: &Grid,
+    samples: &[[f32; 3]],
+    plate_id: &[u16],
+    plates: &[PlateState],
+) -> Vec<BoundaryChain> {
+    let idx = alive_by_id(plates);
+    let max_speed = max_alive_speed(plates);
+    if max_speed <= 0.0 {
+        return Vec::new();
+    }
+    let mut chains = Vec::new();
+    let mut hint = None;
+    for &p in samples {
+        let cell = grid.nearest_cell(p, hint);
+        hint = Some(cell);
+        let Some(&Some(i)) = idx.get(plate_id[cell as usize] as usize) else {
+            continue;
+        };
+        let plate = &plates[i];
+        let v = surface_velocity(plate.pole, plate.speed_deg_my, p);
+        let vn = norm(v);
+        if vn < 1e-6 {
+            continue;
+        }
+        let dir = [v[0] / vn, v[1] / vn, v[2] / vn];
+        push_arrow(
+            &mut chains,
+            p,
+            dir,
+            ARROW_FIELD_MAX_ARC * plate.speed_deg_my / max_speed,
+        );
+    }
+    chains
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,6 +600,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// WO-0004 step 9: v = ω × r is zero at the rotation poles and has
+    /// magnitude speed_deg_my, tangent to the sphere, on the rotation
+    /// equator.
+    #[test]
+    fn surface_velocity_pole_and_equator() {
+        // A pole nowhere near a coordinate axis.
+        let pole = normalize([0.3, -0.5, 0.81]);
+        let speed = 0.7f32;
+        // At the rotation poles the velocity vanishes.
+        for r in [pole, [-pole[0], -pole[1], -pole[2]]] {
+            assert!(norm(surface_velocity(pole, speed, r)) < 1e-6);
+        }
+        // On the rotation equator (r ⊥ pole): |v| = speed, v ⊥ r (tangent
+        // plane), v ⊥ pole (motion is around the pole).
+        let r = normalize(cross(pole, [0.0, 0.0, 1.0]));
+        let v = surface_velocity(pole, speed, r);
+        assert!(
+            (norm(v) - speed).abs() < 1e-5,
+            "|v| = {} != {speed}",
+            norm(v)
+        );
+        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        assert!(dot(v, r).abs() < 1e-6, "v not in the tangent plane at r");
+        assert!(dot(v, pole).abs() < 1e-6, "v not perpendicular to the pole");
     }
 
     #[test]

@@ -201,7 +201,9 @@ pub fn pack_shade_params(
 pub fn layer_flags(layer: Layer, debug_cell_bounds: bool, debug_legacy_bands: bool) -> u32 {
     let id = match layer {
         Layer::Elevation => 0u32,
-        Layer::Plates => 1,
+        // The velocity layers draw the Plates layer underneath their
+        // arrows (WO-0004): same shader path.
+        Layer::Plates | Layer::PlateVelocity | Layer::VelocityField => 1,
         Layer::CrustAge => 2,
         Layer::Thickness => 3,
     };

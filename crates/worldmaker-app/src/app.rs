@@ -84,8 +84,15 @@ enum Tool {
     Hotspot,
 }
 
-/// Timeline playback speed while "Play" is on, in My per real second.
-const PLAY_MY_PER_SECOND: f32 = 100.0;
+/// Playback-speed choices (WO-0004 step 2), in My per real second, with
+/// their multiplier labels relative to the old fixed 100 My/s.
+const PLAY_SPEEDS: [(f32, &str); 5] = [
+    (25.0, "0.25×"),
+    (50.0, "0.5×"),
+    (100.0, "1×"),
+    (200.0, "2×"),
+    (400.0, "4×"),
+];
 /// Render-detail fBm defaults, fixed by the WO-0003 leg-4 24-config sweep
 /// (decision-log 2026-08-27). The Detail slider scales amplitude only:
 /// 0 = exactly the no-noise image, 1 = the tuned default.
@@ -103,6 +110,9 @@ const UNDO_STROKE: egui::KeyboardShortcut =
 /// Scripted modes and world flags, driven from the command line (d3a §10.2).
 pub struct Script {
     pub screenshots_dir: Option<PathBuf>,
+    /// `--wo4-shots`: the WO-0004 documentation set (hud-1440,
+    /// plate-velocity, velocity-field) into this directory.
+    pub wo4_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -144,6 +154,12 @@ impl Script {
 enum ScriptState {
     Idle,
     Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0004 screenshot set (steps 4 and 11).
+    Wo4Shot {
         stage: usize,
         frames: u32,
         requested: bool,
@@ -216,6 +232,9 @@ pub struct WorldApp {
     present_kf: usize,
     playing: bool,
     play_accum: f32,
+    /// Timeline playback speed while "Play" is on, My per real second
+    /// (WO-0004 step 2; was the constant PLAY_MY_PER_SECOND = 100).
+    play_my_per_s: f32,
 
     // Controls.
     seed_text: String,
@@ -241,6 +260,10 @@ pub struct WorldApp {
     debug_legacy_bands: bool,
     tool: Tool,
     brush_radius_km: f32,
+    /// Velocity-field sample directions (WO-0004 step 7): every cell center
+    /// at icosphere level 4 (2,562 unit vectors), built lazily on the first
+    /// Velocity field bake and grid-independent thereafter.
+    velocity_samples: Option<Vec<[f32; 3]>>,
 
     // Canvas view state.
     globe: GlobeView,
@@ -353,7 +376,12 @@ impl WorldApp {
             plate_count: 12,
             land_fraction: 0.29,
             tectonic_vigor: 1.0,
-            span_my: 500.0,
+            // The WO-0004 shot set views t = 600 My, past the default span.
+            span_my: if script.wo4_dir.is_some() {
+                1000.0
+            } else {
+                500.0
+            },
             hotspot_count: 6,
             craton_paint: BTreeMap::new(),
             hotspot_overlay: None,
@@ -361,6 +389,7 @@ impl WorldApp {
             present_kf: 0,
             playing: false,
             play_accum: 0.0,
+            play_my_per_s: 100.0,
             seed_text,
             master_seed,
             sea_level_m: 0.0,
@@ -376,6 +405,7 @@ impl WorldApp {
             debug_legacy_bands: false,
             tool: Tool::None,
             brush_radius_km: 600.0,
+            velocity_samples: None,
             globe: GlobeView {
                 yaw: 0.0,
                 pitch: 0.35,
@@ -404,6 +434,12 @@ impl WorldApp {
                 }
             } else if script.screenshots_dir.is_some() {
                 ScriptState::Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo4_dir.is_some() {
+                ScriptState::Wo4Shot {
                     stage: 0,
                     frames: 0,
                     requested: false,
@@ -589,14 +625,34 @@ impl WorldApp {
             let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
             self.values_gen += 1;
             // Smoothed boundary polylines are Plates-layer styling (d3a §8):
-            // extracted from this keyframe's plate assignment only there,
-            // empty everywhere else.
-            let boundaries = if self.layer == Layer::Plates {
-                Arc::new(crate::boundaries::extract(
-                    &self.grid,
-                    &kf.plate_id,
-                    &kf.flags,
-                ))
+            // extracted from this keyframe's plate assignment there and on
+            // the two velocity layers (which draw Plates underneath,
+            // WO-0004), empty everywhere else. Velocity arrows ride the same
+            // chain set, so they re-extract per viewed keyframe (step 8).
+            let boundaries = if self.layer.shades_as_plates() {
+                let mut set = crate::boundaries::extract(&self.grid, &kf.plate_id, &kf.flags);
+                match self.layer {
+                    Layer::PlateVelocity => {
+                        set.chains.extend(crate::boundaries::plate_velocity_arrows(
+                            &self.grid,
+                            &kf.plate_id,
+                            &kf.plates,
+                        ))
+                    }
+                    Layer::VelocityField => {
+                        let samples = self
+                            .velocity_samples
+                            .get_or_insert_with(|| Grid::build(4).positions.clone());
+                        set.chains.extend(crate::boundaries::velocity_field_arrows(
+                            &self.grid,
+                            samples,
+                            &kf.plate_id,
+                            &kf.plates,
+                        ));
+                    }
+                    _ => {}
+                }
+                Arc::new(set)
             } else {
                 Arc::new(BoundarySet::empty())
             };
@@ -924,21 +980,52 @@ impl WorldApp {
                 );
                 ui.separator();
 
+                // View resets (WO-0004 step 5).
+                if ui.button("Reset globe").clicked() {
+                    self.reset_globe_view();
+                }
+                if ui.button("Reset map").clicked() {
+                    self.reset_map_view();
+                }
+                if ui.button("Reset both").clicked() {
+                    self.reset_globe_view();
+                    self.reset_map_view();
+                }
+            });
+
+            // Second row (WO-0004 step 4): debug toggles, then Detail and
+            // FPS — moved down so the first row fits a 1440 px window.
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut self.debug_cell_bounds, "Cell bounds");
+                ui.checkbox(&mut self.debug_legacy_bands, "Legacy bands");
+                ui.separator();
+
                 ui.label("Detail:");
                 // Render-detail amplitude, off -> tuned default. Live uniform
                 // like sea level (minimal slider; placement finalized leg 4).
                 ui.add(egui::Slider::new(&mut self.detail, 0.0..=1.0).fixed_decimals(2));
-                ui.separator();
-
-                // Debug toggles (uniform bits; final top-bar layout in leg 4).
-                ui.checkbox(&mut self.debug_cell_bounds, "Cell bounds");
-                ui.checkbox(&mut self.debug_legacy_bands, "Legacy bands");
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("{:.0} FPS", self.fps()));
                 });
             });
         });
+    }
+
+    /// WO-0004 step 5: home the globe camera.
+    fn reset_globe_view(&mut self) {
+        self.globe.zoom = 1.0;
+        self.globe.yaw = 0.0;
+        self.globe.pitch = 0.0;
+    }
+
+    /// WO-0004 step 5: home the flat map (any deferred centering cleared,
+    /// like a manual pan would).
+    fn reset_map_view(&mut self) {
+        self.flat_zoom = 1.0;
+        self.flat_pan = [0.0, 0.0];
+        self.flat_center_target = None;
+        self.flat_center_applied = None;
     }
 
     fn side_panel(&mut self, root: &mut egui::Ui) {
@@ -1132,6 +1219,16 @@ impl WorldApp {
                 .unwrap_or((0, 10.0));
             ui.add_enabled_ui(kf_count > 1 && self.job.is_none(), |ui| {
                 ui.horizontal(|ui| {
+                    // Step back / play / step forward / speed (WO-0004
+                    // steps 2–3). Stepping always stops playback.
+                    if ui.button("⏮").clicked() {
+                        let prev = self.viewing_kf.saturating_sub(1);
+                        self.playing = false;
+                        if prev != self.viewing_kf {
+                            self.viewing_kf = prev;
+                            self.needs_bake = true;
+                        }
+                    }
                     let icon = if self.playing { "⏸" } else { "▶" };
                     if ui.button(icon).clicked() {
                         self.playing = !self.playing;
@@ -1140,6 +1237,27 @@ impl WorldApp {
                         }
                         self.play_accum = 0.0;
                     }
+                    if ui.button("⏭").clicked() {
+                        let next = (self.viewing_kf + 1).min(kf_count.saturating_sub(1));
+                        self.playing = false;
+                        if next != self.viewing_kf {
+                            self.viewing_kf = next;
+                            self.needs_bake = true;
+                        }
+                    }
+                    let speed_label = PLAY_SPEEDS
+                        .iter()
+                        .find(|(v, _)| *v == self.play_my_per_s)
+                        .map(|(_, l)| *l)
+                        .unwrap_or("1×");
+                    egui::ComboBox::from_id_salt("play-speed")
+                        .selected_text(speed_label)
+                        .width(52.0)
+                        .show_ui(ui, |ui| {
+                            for (v, l) in PLAY_SPEEDS {
+                                ui.selectable_value(&mut self.play_my_per_s, v, l);
+                            }
+                        });
 
                     let mut idx = self.viewing_kf.min(kf_count.saturating_sub(1));
                     let width = ui.available_width() - 330.0;
@@ -1174,7 +1292,7 @@ impl WorldApp {
 
             // Playback advance.
             if self.playing && kf_count > 1 {
-                self.play_accum += frame_dt * PLAY_MY_PER_SECOND / interval;
+                self.play_accum += frame_dt * self.play_my_per_s / interval;
                 let steps = self.play_accum as usize;
                 if steps > 0 {
                     self.play_accum -= steps as f32;
@@ -1282,7 +1400,93 @@ impl WorldApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             ScriptState::Shot { .. } => self.drive_shot(ctx),
+            ScriptState::Wo4Shot { .. } => self.drive_wo4(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
+        }
+    }
+
+    /// WO-0004 screenshot set: the HUD-fit check at a 1440 px wide window
+    /// (step 4) and the two velocity layers at t = 600 My, Split view,
+    /// Eckert IV (step 11). World flags (seed, preset) come from the CLI.
+    fn drive_wo4(&mut self, ctx: &egui::Context) {
+        const NAMES: [&str; 3] = ["hud-1440", "plate-velocity", "velocity-field"];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo4Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            let kf_600 = self
+                .history
+                .as_ref()
+                .map(|h| {
+                    ((600.0 / h.keyframe_interval_my).round() as usize).min(h.keyframes.len() - 1)
+                })
+                .unwrap_or(0);
+            match stage {
+                0 => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                        1440.0, 900.0,
+                    )));
+                    self.view_mode = ViewMode::Split;
+                    self.layer = Layer::Elevation;
+                }
+                1 => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                        1600.0, 900.0,
+                    )));
+                    self.view_mode = ViewMode::Split;
+                    self.projection = Projection::EckertIv;
+                    self.layer = Layer::PlateVelocity;
+                    self.viewing_kf = kf_600;
+                }
+                _ => {
+                    self.layer = Layer::VelocityField;
+                    self.viewing_kf = kf_600;
+                }
+            }
+            self.needs_bake = true;
+            log::info!("wo4 screenshot stage {stage}: {}", NAMES[stage]);
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo4_dir.clone().unwrap();
+            let name = NAMES[stage];
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < NAMES.len() {
+                ScriptState::Wo4Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo4Shot {
+                stage,
+                frames,
+                requested,
+            };
         }
     }
 
