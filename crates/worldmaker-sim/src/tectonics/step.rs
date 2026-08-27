@@ -394,6 +394,24 @@ impl SimState {
             };
             p.speed_deg_my =
                 (p.speed_deg_my + relax * (target - p.speed_deg_my)).clamp(floor, SPEED_MAX);
+            // TEMP WO-0003-S2 step-2 instrumentation (removed before merge).
+            if std::env::var("WM_MOTION_TRACE").ok().as_deref() == Some(&pid.to_string())
+                && step_idx % 25 == 0
+            {
+                eprintln!(
+                    "t={:6.0} plate {pid}: bnd={} sub={} coll={} f_sub={:.3} f_coll={:.3} target={:.4} floor={:.4} speed={:.4} base={:.4}",
+                    step_idx as f32 * DT_MY,
+                    self.boundary_cells[pid],
+                    self.subducting_cells[pid],
+                    self.colliding_cells[pid],
+                    f_sub,
+                    f_coll,
+                    target,
+                    floor,
+                    p.speed_deg_my,
+                    p.base_speed_deg_my,
+                );
+            }
             // Bank this step's rotation; advection commits it when it
             // reaches a usable fraction of a cell.
             let step_rot = rotation3(p.pole, p.speed_deg_my * DEG2RAD * DT_MY);
