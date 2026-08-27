@@ -132,7 +132,11 @@ Session 2 owns the instructions, the measurement record, and the diagnosis:
       bookkeeping closed at M3): tectonic goldens move once more, as the
       final commit of the Fix 4 session, decision-log entry in the same
       style
-- [ ] Fix 4 merged green
+- [x] Fix 4 merged green (PR #15, all CI checks; branch deleted; merge
+      commit 0650dee. Note: Track A merged before Fix 4 in practice —
+      PR #13/#14 landed first and Fix 4 rebased onto them; the sim goldens
+      were unaffected by A, and the Fix 4 golden move is the branch's final
+      substantive commit as ordered)
 
 ### Track A — pending edits (merges last, rebases on C)
 
