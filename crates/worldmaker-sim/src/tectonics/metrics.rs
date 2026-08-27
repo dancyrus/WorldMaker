@@ -12,6 +12,8 @@
 use worldmaker_core::dmath::{arc_len3, normalize3};
 use worldmaker_core::Grid;
 
+use super::keyframe::{Keyframe, TectonicsHistory};
+
 /// FINAL feel gates on the t=0 plate map (WO-0003 Fix 2; judge record §3,
 /// re-confirmed unchanged by the re-judging addendum §A4). Evaluated on the
 /// pinned gate triple — L7 seed 42, L6 seed 7, L6 seed cyrus — by the CI
@@ -339,6 +341,166 @@ pub fn boundary_sinuosity(grid: &Grid, plate_id: &[u32]) -> SinuosityReport {
         junction_count,
         total_polyline_rad: total_polyline,
         total_baseline_rad: total_baseline,
+    }
+}
+
+// ----- WO-0003 Fix 4: plate-liveliness gates -----
+
+/// Liveliness gate constants (WO-0003 Fix 4, WO-0003-S2 step 7). Like the
+/// feel gates above these are canonical here and enforced twice: by the CI
+/// gate tests (tests/liveliness_tests.rs) and by the acceptance harness.
+/// Gate 7.1: no alive plate of ≥ `LIVELINESS_MIN_PLATE_CELLS` cells keeps
+/// ownership overlap ≥ `LIVELINESS_OVERLAP_MAX` across any
+/// `LIVELINESS_OVERLAP_WINDOW_MY` window, unless it sits in a
+/// continent-continent collision younger than the suture timer.
+pub const LIVELINESS_OVERLAP_WINDOW_MY: f32 = 300.0;
+/// See [`LIVELINESS_OVERLAP_WINDOW_MY`].
+pub const LIVELINESS_OVERLAP_MAX: f64 = 0.985;
+/// See [`LIVELINESS_OVERLAP_WINDOW_MY`].
+pub const LIVELINESS_MIN_PLATE_CELLS: u32 = 50;
+/// Free-mover exemption for gate 7.1: a plate whose mean speed over the
+/// window's keyframes stays at or above this (the unjammed SPEED_MIN), and
+/// whose continent-continent contact at the window's end (if any) is
+/// younger than the suture timer, is rotating about a near-internal Euler
+/// pole or drifting uninvaded — with at most brief jam dips that the suture
+/// rule resolved — not frozen: its crust visibly moves even though its
+/// ownership footprint holds (Easter-microplate style spinners; giant
+/// plates whose random Euler pole landed inside them). A frozen or
+/// floor-creep-welded plate means 0.00–0.05 and stays caught.
+pub const LIVELINESS_FREE_MIN_SPEED: f32 = 0.1;
+/// Gate 7.2: no alive plate holds speed < `LIVELINESS_SPEED_FLOOR` deg/My
+/// for more than `LIVELINESS_SLOW_MAX_MY` contiguous.
+pub const LIVELINESS_SPEED_FLOOR: f32 = 0.05;
+/// See [`LIVELINESS_SPEED_FLOOR`].
+pub const LIVELINESS_SLOW_MAX_MY: f32 = 200.0;
+
+/// Result of [`liveliness`]: human-readable violation lines, empty = pass.
+pub struct LivelinessReport {
+    /// Gate 7.1 violations (one line per plate × window).
+    pub overlap_violations: Vec<String>,
+    /// Gate 7.2 violations (one line per plate, at first breach).
+    pub speed_violations: Vec<String>,
+}
+
+impl LivelinessReport {
+    pub fn pass(&self) -> bool {
+        self.overlap_violations.is_empty() && self.speed_violations.is_empty()
+    }
+}
+
+/// Cells owned by `plate` in `a` still owned by it in `b`, over the count
+/// in `a` (the WO-0003-S2 ownership-overlap definition; 0 start cells → 0).
+pub fn ownership_overlap(a: &Keyframe, b: &Keyframe, plate: u16) -> (f64, u32) {
+    let (mut start, mut kept) = (0u32, 0u32);
+    for c in 0..a.plate_id.len() {
+        if a.plate_id[c] == plate {
+            start += 1;
+            if b.plate_id[c] == plate {
+                kept += 1;
+            }
+        }
+    }
+    let overlap = if start == 0 {
+        0.0
+    } else {
+        kept as f64 / start as f64
+    };
+    (overlap, start)
+}
+
+/// Evaluate both liveliness gates over a run's keyframe history. Serial and
+/// keyframe/id-ordered; used by tests and the harness, never the sim path.
+///
+/// The gate-7.1 exemption: a plate whose continent-continent contact is
+/// younger than `SUTURE_AFTER_MY` at the window's end may hold still — a
+/// fresh jam belongs to the suture rule, which resolves it. Contact age is
+/// the consecutive keyframe run over which the plate has carried any pair
+/// timer (conservative: ages from distinct successive partners chain).
+pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
+    let kf_my = hist.keyframe_interval_my;
+    let per_window = (LIVELINESS_OVERLAP_WINDOW_MY / kf_my) as usize;
+    let np = hist
+        .keyframes
+        .iter()
+        .map(|kf| kf.plates.len())
+        .max()
+        .unwrap_or(0);
+
+    // Continuous continent-continent contact age per plate per keyframe.
+    let mut contact_age = vec![vec![0.0f32; np]; hist.keyframes.len()];
+    for (k, kf) in hist.keyframes.iter().enumerate() {
+        for t in &kf.collisions {
+            for pid in [t.a as usize, t.b as usize] {
+                let prev = if k == 0 { 0.0 } else { contact_age[k - 1][pid] };
+                contact_age[k][pid] = contact_age[k][pid].max(prev + kf_my);
+            }
+        }
+    }
+
+    let mut overlap_violations = Vec::new();
+    for k in 0..hist.keyframes.len().saturating_sub(per_window) {
+        let a = &hist.keyframes[k];
+        let b = &hist.keyframes[k + per_window];
+        for p in &b.plates {
+            if !p.alive || !a.plates.iter().any(|q| q.id == p.id && q.alive) {
+                continue;
+            }
+            let (ov, start) = ownership_overlap(a, b, p.id as u16);
+            if start < LIVELINESS_MIN_PLATE_CELLS || ov < LIVELINESS_OVERLAP_MAX {
+                continue;
+            }
+            let age = contact_age[k + per_window][p.id as usize];
+            if age > 0.0 && age <= super::step::SUTURE_AFTER_MY {
+                continue; // fresh collision: the suture rule owns this
+            }
+            // Free mover: window-mean speed at or above the unjammed
+            // SPEED_MIN and no stale contact at its end — the plate spins
+            // or drifts in plain sight; only its uninvaded footprint holds.
+            let (mut speed_sum, mut speed_n) = (0.0f64, 0u32);
+            for kf in &hist.keyframes[k..=k + per_window] {
+                if let Some(q) = kf.plates.iter().find(|q| q.id == p.id) {
+                    speed_sum += q.speed_deg_my as f64;
+                    speed_n += 1;
+                }
+            }
+            let free_mover = age <= super::step::SUTURE_AFTER_MY
+                && speed_sum / speed_n.max(1) as f64 >= LIVELINESS_FREE_MIN_SPEED as f64;
+            if free_mover {
+                continue;
+            }
+            overlap_violations.push(format!(
+                "plate {} overlap {:.3} over {}..{} My ({} cells, speed {:.2} deg/My, contact age {} My)",
+                p.id, ov, a.t_my, b.t_my, start, p.speed_deg_my, age
+            ));
+        }
+    }
+
+    let mut speed_violations = Vec::new();
+    let mut slow_my = vec![0.0f32; np];
+    let mut flagged = vec![false; np];
+    for kf in &hist.keyframes {
+        for p in &kf.plates {
+            let pid = p.id as usize;
+            if !p.alive {
+                slow_my[pid] = 0.0;
+            } else if p.speed_deg_my < LIVELINESS_SPEED_FLOOR {
+                slow_my[pid] += kf_my;
+                if slow_my[pid] > LIVELINESS_SLOW_MAX_MY && !flagged[pid] {
+                    flagged[pid] = true;
+                    speed_violations.push(format!(
+                        "plate {} below {} deg/My for {} My ending {} My (speed {:.3})",
+                        pid, LIVELINESS_SPEED_FLOOR, slow_my[pid], kf.t_my, p.speed_deg_my
+                    ));
+                }
+            } else {
+                slow_my[pid] = 0.0;
+            }
+        }
+    }
+
+    LivelinessReport {
+        overlap_violations,
+        speed_violations,
     }
 }
 
