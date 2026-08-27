@@ -24,8 +24,9 @@ struct ShadeParams {
     // Master seed as two u32 lanes - never through f32.
     seed_lo: u32,
     seed_hi: u32,
-    // bits 0..=3 layer id (0 elevation, 1 plates, 2 crust age, 3 thickness);
-    // bit 8 debug true-cell boundaries; bit 9 debug legacy boundary bands.
+    // bits 0..=3 layer id (0 elevation, 1 plates, 2 crust age, 3 thickness,
+    // 4 overlay); bit 8 debug true-cell boundaries; bit 9 debug legacy
+    // boundary bands.
     layer_flags: u32,
     // Render-detail fBm octaves.
     octaves: u32,
@@ -46,6 +47,9 @@ const LF_DEBUG_BANDS: u32 = 512u; // 1 << 9
 const CAT_RANK_MASK: u32 = 0xFFu;
 const CAT_BND_SHIFT: u32 = 8u;
 const CAT_CONTINENT: u32 = 65536u; // 1 << 16
+// Overlay layer (WO-0006 S3): bits 20..=27 carry the slab plate's color
+// index; the scalar carries the slab fade (0 = no slab under this cell).
+const CAT_SLAB_SHIFT: u32 = 20u;
 
 // Overlay-word bits (pending_edits.rs, frozen in feel-pass-design.md D1).
 const OVERLAY_TINT_MASK: u32 = 0xFu;
@@ -215,6 +219,23 @@ fn resolve_fragment(
         }
     } else if layer == 3u {
         color = lut_ramp(3u, dot(w, s));
+    } else if layer == 4u {
+        // Overlay (WO-0006 S3): the Plates layer at 40% brightness as the
+        // base; a cell above a subducted slab draws the slab plate's color,
+        // mixed in by the baked fade so fresh slabs are bright and
+        // detached slabs fade back into the base. Winner cell only - the
+        // slab footprint keeps crisp true-cell shapes like Plates.
+        let rank = cat_win & CAT_RANK_MASK;
+        let oceanic = (cat_win & CAT_CONTINENT) == 0u;
+        let base = lut_texel(4u, rank + select(0u, 64u, oceanic)) * 0.4;
+        var s_arr = array<f32, 3>(s.x, s.y, s.z);
+        let fade = s_arr[k_win];
+        if fade > 0.0 {
+            let slab = lut_texel(4u, (cat_win >> CAT_SLAB_SHIFT) & 0xFFu);
+            color = mix(base, slab, fade);
+        } else {
+            color = base;
+        }
     } else {
         // Elevation: the rasterizer interpolates the VALUE (via w), render
         // detail adds sub-cell relief, then the live sea level thresholds

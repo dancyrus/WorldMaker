@@ -15,7 +15,9 @@
 
 use rayon::prelude::*;
 
-use worldmaker_sim::tectonics::{Keyframe, F_BND_CONVERGENT, F_BND_DIVERGENT, F_BND_TRANSFORM};
+use worldmaker_sim::tectonics::{
+    Keyframe, F_BND_CONVERGENT, F_BND_DIVERGENT, F_BND_TRANSFORM, SLAB_DETACH_MY, SLAB_NONE,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
@@ -25,16 +27,21 @@ pub enum Layer {
     Thickness,
     PlateVelocity,
     VelocityField,
+    /// WO-0006 S3: the slab ledger made visible — the Plates layer dimmed
+    /// to 40% with each cell above a subducted slab drawn in the slab
+    /// plate's color, fading as the slab ages toward detachment.
+    Overlay,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 6] = [
+    pub const ALL: [Layer; 7] = [
         Layer::Elevation,
         Layer::Plates,
         Layer::CrustAge,
         Layer::Thickness,
         Layer::PlateVelocity,
         Layer::VelocityField,
+        Layer::Overlay,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -44,6 +51,7 @@ impl Layer {
             Layer::Thickness => "Thickness",
             Layer::PlateVelocity => "Plate velocity",
             Layer::VelocityField => "Velocity field",
+            Layer::Overlay => "Overlay",
         }
     }
     /// The two velocity layers draw the Plates layer underneath their
@@ -254,13 +262,29 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
                 Layer::Thickness => {
                     ((kf.thickness_ckm[c] as f32 * 0.01 - 5.0) / 65.0).clamp(0.0, 1.0)
                 }
+                Layer::Overlay => {
+                    // Slab fade: 1.0 the step it went under, 0.0 at the
+                    // detachment age — detached slabs fade out into the
+                    // dimmed plates base.
+                    if kf.slab_plate[c] == SLAB_NONE {
+                        0.0
+                    } else {
+                        (1.0 - (kf.t_my - kf.slab_since_my[c] as f32) / SLAB_DETACH_MY)
+                            .clamp(0.0, 1.0)
+                    }
+                }
             };
             let mut cat = 0u32;
-            if layer.shades_as_plates() {
+            if layer.shades_as_plates() || layer == Layer::Overlay {
                 // Plate ids are stable across a plate's whole life, so its
                 // color never changes as the census around it does; id % 48
                 // (WO-0006 S2) accepts occasional collisions in exchange.
                 cat |= (kf.plate_id[c] as u32 % PLATE_COLORS.len() as u32) & 0xFF;
+            }
+            if layer == Layer::Overlay && kf.slab_plate[c] != SLAB_NONE {
+                // Bits 20..=27: the slab plate's color index (same stable
+                // id % 48 rule), read by the shader's Overlay branch.
+                cat |= ((kf.slab_plate[c] as u32 % PLATE_COLORS.len() as u32) & 0xFF) << 20;
             }
             let bnd: u32 = if flags & F_BND_CONVERGENT != 0 {
                 1
@@ -429,7 +453,7 @@ mod tests {
     /// variant is added, forcing this test — and ALL — to be updated.
     #[test]
     fn layer_all_lists_every_variant_once() {
-        const VARIANT_COUNT: usize = 6;
+        const VARIANT_COUNT: usize = 7;
         assert_eq!(Layer::ALL.len(), VARIANT_COUNT);
         for l in Layer::ALL {
             match l {
@@ -438,7 +462,8 @@ mod tests {
                 | Layer::CrustAge
                 | Layer::Thickness
                 | Layer::PlateVelocity
-                | Layer::VelocityField => {}
+                | Layer::VelocityField
+                | Layer::Overlay => {}
             }
         }
         for (i, a) in Layer::ALL.iter().enumerate() {

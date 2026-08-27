@@ -66,20 +66,43 @@ fn fixed_seed_reproduces_committed_hash() {
 /// sanctioned move (decision log): the plate-motion force model changed
 /// (jammed speed floor 0.05 instead of 0, suture threshold 1.2 with timer
 /// hysteresis, floor gridlock breaker, SPEED_MAX 2.0), which alters every
-/// step of every run — a whole-world change by design. Values from the
-/// Fix 4 harness run on Daniels-MacBook-Air
-/// (docs/results/tectonics-fix4-Daniels-MacBook-Air.json, whose determinism
-/// hashes equal these constants by construction).
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x857b_8233_0e24_2c03;
-const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xa8c4_9d9b_f779_59e8;
+/// step of every run — a whole-world change by design. Old Fix 4 values
+/// 0x857b_8233_0e24_2c03 / 0xa8c4_9d9b_f779_59e8 / crust
+/// 0xf771_678a_67d5_19a4.
+/// ALL THREE regenerated 2026-08-28 for WO-0006 — the third sanctioned
+/// golden move (decision log, "third sanctioned golden move, WO-0006"):
+/// S1–S3 replaced the plate-motion model wholesale (force balance + slab
+/// ledger, strength-field suture/rifting, S3 calibration of every §1/§4
+/// coefficient), which alters every step of every run from t = 0 — a
+/// whole-world change by design. Values from print_tectonic_goldens on
+/// Daniels-MacBook-Air at the S3 calibrated constants; the phase-0 noise
+/// golden above verified UNMOVED in the same suite run.
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x2916_52b9_61e3_f74c;
+const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xa154_6f8c_7944_6284;
 /// Pinned at WO-0003 close (S4 audit): the harness had recorded this hash in
 /// every results JSON but no test asserted it, leaving crust type free to
-/// drift cross-platform unnoticed. Value from the same Fix 4 harness run as
-/// the two constants above.
-const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0xf771_678a_67d5_19a4;
+/// drift cross-platform unnoticed. Regenerated with the pair above.
+const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0x08f5_c8f9_67db_bc04;
+
+/// Golden-regeneration aid: prints the three tectonic hashes for the
+/// current build. Used exactly once per sanctioned golden move.
+#[test]
+#[ignore = "dev aid: prints the tectonic golden hashes"]
+fn print_tectonic_goldens() {
+    let grid = Arc::new(Grid::build(6));
+    let mut world = WorldState::new(grid);
+    let mut pipe = Pipeline::new();
+    pipe.push(Box::new(TectonicsStage::new(TectonicsParams::default())));
+    pipe.run(&StageContext::new(42), &mut world).unwrap();
+    let elev_hash = hash_f32_slice(world.fields.get(tectonics::ELEVATION_M).unwrap());
+    let plate_hash = hash_u32_slice(world.fields.get_u32(tectonics::PLATE_ID).unwrap());
+    let crust_hash = hash_u32_slice(world.fields.get_u32(tectonics::CRUST_TYPE).unwrap());
+    println!("GOLDEN_TECTONIC_ELEVATION_L6_SEED42 = {elev_hash:#018x}");
+    println!("GOLDEN_TECTONIC_PLATES_L6_SEED42 = {plate_hash:#018x}");
+    println!("GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42 = {crust_hash:#018x}");
+}
 
 #[test]
-#[ignore = "WO-0006 in progress; regenerated in S3"]
 fn tectonics_reproduces_committed_goldens() {
     let grid = Arc::new(Grid::build(6));
     let mut world = WorldState::new(grid);

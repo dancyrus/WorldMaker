@@ -28,7 +28,7 @@ pub use keyframe::{
     ActiveRift, Keyframe, MicroplateOrigin, PairTimer, PlateState, RiftDriverKind, RunDiagnostics,
     SlabSegment, TectonicEvent, TectonicsHistory, NEVER_SUTURED,
 };
-pub use step::SimState;
+pub use step::{SimState, SLAB_DETACH_MY, SLAB_NONE};
 
 use worldmaker_core::hash::{fnv1a_continue, FNV_OFFSET};
 

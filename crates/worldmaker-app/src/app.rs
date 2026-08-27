@@ -113,6 +113,11 @@ pub struct Script {
     /// `--wo4-shots`: the WO-0004 documentation set (hud-1440,
     /// plate-velocity, velocity-field) into this directory.
     pub wo4_dir: Option<PathBuf>,
+    /// `--wo6-shots`: the WO-0006 plate-physics documentation set
+    /// (plates-0500/1000/2000, elevation-2000, overlay-1000,
+    /// velocity-1000; Split view, Eckert IV) into this directory. The run
+    /// forces a 2 Gy span; seed and preset come from the CLI.
+    pub wo6_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -160,6 +165,12 @@ enum ScriptState {
     },
     /// WO-0004 screenshot set (steps 4 and 11).
     Wo4Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0006 S3 screenshot set (step 6).
+    Wo6Shot {
         stage: usize,
         frames: u32,
         requested: bool,
@@ -376,8 +387,11 @@ impl WorldApp {
             plate_count: 12,
             land_fraction: 0.29,
             tectonic_vigor: 1.0,
-            // The WO-0004 shot set views t = 600 My, past the default span.
-            span_my: if script.wo4_dir.is_some() {
+            // The WO-0004 shot set views t = 600 My, past the default
+            // span; the WO-0006 set spans the full 2 Gy history.
+            span_my: if script.wo6_dir.is_some() {
+                2000.0
+            } else if script.wo4_dir.is_some() {
                 1000.0
             } else {
                 500.0
@@ -440,6 +454,12 @@ impl WorldApp {
                 }
             } else if script.wo4_dir.is_some() {
                 ScriptState::Wo4Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo6_dir.is_some() {
+                ScriptState::Wo6Shot {
                     stage: 0,
                     frames: 0,
                     requested: false,
@@ -1406,6 +1426,7 @@ impl WorldApp {
             }
             ScriptState::Shot { .. } => self.drive_shot(ctx),
             ScriptState::Wo4Shot { .. } => self.drive_wo4(ctx),
+            ScriptState::Wo6Shot { .. } => self.drive_wo6(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -1488,6 +1509,90 @@ impl WorldApp {
             };
         } else {
             self.script_state = ScriptState::Wo4Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0006 S3 screenshot set (step 6): the plate-physics documentation
+    /// shots — Plates at 500/1000/2000 My, Elevation at 2000 My, the slab
+    /// Overlay and plate velocity at 1000 My. All Split view, Eckert IV;
+    /// seed and preset come from the CLI (the WO pins seed cyrus, Draft6).
+    fn drive_wo6(&mut self, ctx: &egui::Context) {
+        const SHOTS: [(&str, f32); 6] = [
+            ("plates-0500", 500.0),
+            ("plates-1000", 1000.0),
+            ("plates-2000", 2000.0),
+            ("elevation-2000", 2000.0),
+            ("overlay-1000", 1000.0),
+            ("velocity-1000", 1000.0),
+        ];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo6Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            let (name, t_my) = SHOTS[stage];
+            let kf = self
+                .history
+                .as_ref()
+                .map(|h| {
+                    ((t_my / h.keyframe_interval_my).round() as usize).min(h.keyframes.len() - 1)
+                })
+                .unwrap_or(0);
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            self.view_mode = ViewMode::Split;
+            self.projection = Projection::EckertIv;
+            self.viewing_kf = kf;
+            self.layer = match stage {
+                0..=2 => Layer::Plates,
+                3 => Layer::Elevation,
+                4 => Layer::Overlay,
+                _ => Layer::PlateVelocity,
+            };
+            self.needs_bake = true;
+            log::info!("wo6 screenshot stage {stage}: {name}");
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo6_dir.clone().unwrap();
+            let name = SHOTS[stage].0;
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo6Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo6Shot {
                 stage,
                 frames,
                 requested,

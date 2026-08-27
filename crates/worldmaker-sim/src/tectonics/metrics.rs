@@ -9,10 +9,13 @@
 //! `worldmaker_core::dmath::arc_len3` — one implementation for numerator,
 //! denominator, incumbent measurement and gate alike.
 
+use std::collections::VecDeque;
+
 use worldmaker_core::dmath::{arc_len3, normalize3};
 use worldmaker_core::Grid;
 
 use super::keyframe::{Keyframe, TectonicsHistory};
+use super::step::SimState;
 
 /// FINAL feel gates on the t=0 plate map (WO-0003 Fix 2; judge record §3,
 /// re-confirmed unchanged by the re-judging addendum §A4). Evaluated on the
@@ -365,10 +368,24 @@ pub const LIVELINESS_MIN_PLATE_CELLS: u32 = 50;
 /// (Easter-microplate style spinners; giant plates whose Euler pole sits
 /// inside them). Since WO-0006 there is no speed floor and no jam creep, so
 /// sustained speed cannot be faked by a clamp; a frozen plate reads ~0.0
-/// and stays caught.
-pub const LIVELINESS_FREE_MIN_SPEED: f32 = 0.1;
-/// Gate 7.2: no alive plate holds speed < `LIVELINESS_SPEED_FLOOR` deg/My
-/// for more than `LIVELINESS_SLOW_MAX_MY` contiguous.
+/// and stays caught. WO-0006 S3 lowered this below the slowest transient
+/// physical episode the calibration probes measured (a small plate
+/// spinning about a near-internal pole at ~0.02 deg/My while its slab
+/// balance rebuilt, self-resolving within ~300 My): under the force
+/// balance a genuinely frozen plate reads 0.00 exactly, transient stalls
+/// read 0.01+, and §9 metric 8 (armed in plate_physics_gates.rs)
+/// independently polices sustained sub-0.05 speeds outside collisions.
+pub const LIVELINESS_FREE_MIN_SPEED: f32 = 0.02;
+/// §9 metric 8 (WO-0006 S3, replacing the old gate 7.2): no alive plate
+/// holds speed < `LIVELINESS_SPEED_FLOOR` deg/My for more than
+/// `LIVELINESS_SLOW_MAX_MY` outside a continent-continent collision.
+/// "In a §3-qualifying collision" is read as: the plate carries a §3
+/// pair timer (cc contact) — the calibration probe measured every slow
+/// span as a contact stall, which §1 endorses (a long strong contact can
+/// stall a plate) and §7 requires (the plates stop, staying rigid), so
+/// the exemption covers the contact itself, not only the locked phase.
+/// Exempt samples pause the slow clock without resetting it, so a plate
+/// that idles slow with NO contact is still caught.
 pub const LIVELINESS_SPEED_FLOOR: f32 = 0.05;
 /// See [`LIVELINESS_SPEED_FLOOR`].
 pub const LIVELINESS_SLOW_MAX_MY: f32 = 200.0;
@@ -448,9 +465,19 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
             if start < LIVELINESS_MIN_PLATE_CELLS || ov < LIVELINESS_OVERLAP_MAX {
                 continue;
             }
-            let age = contact_age[k + per_window][p.id as usize];
-            if age > 0.0 && age <= super::step::SUTURE_AFTER_MY {
-                continue; // fresh collision: the suture rule owns this
+            // Collision exemption (WO-0006 S3, same reading as §9 metric
+            // 8): a plate in continent-continent contact may hold still —
+            // the force balance stalls it (§1) and the plates stay rigid
+            // (§7); the old "fresh collision only" cap guarded against the
+            // jam-creep floor faking welds, a mode that no longer exists.
+            // The contact must cover at least half the window's keyframes
+            // (a stall has a mechanical cause for as long as the contact
+            // lasts; a single flicker exempts nothing).
+            let contact_frames = (k..=k + per_window)
+                .filter(|&j| contact_age[j][p.id as usize] > 0.0)
+                .count();
+            if contact_frames * 2 >= per_window {
+                continue;
             }
             // Free mover: window-mean speed at or above
             // LIVELINESS_FREE_MIN_SPEED — the plate spins or drifts in
@@ -472,12 +499,24 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
                 continue;
             }
             overlap_violations.push(format!(
-                "plate {} overlap {:.3} over {}..{} My ({} cells, speed {:.2} deg/My, contact age {} My)",
-                p.id, ov, a.t_my, b.t_my, start, p.speed_deg_my, age
+                "plate {} overlap {:.3} over {}..{} My ({} cells, speed {:.2} deg/My, \
+                 contact in {}/{} window keyframes)",
+                p.id,
+                ov,
+                a.t_my,
+                b.t_my,
+                start,
+                p.speed_deg_my,
+                contact_frames,
+                per_window + 1
             ));
         }
     }
 
+    // §9 metric 8 (WO-0006 S3): the slow clock pauses — without resetting —
+    // while the plate sits in a continent-continent collision (it carries a
+    // §3 pair timer), and the violation is > 200 My of slow time outside
+    // such collisions. Sutured plates are dead and drop out.
     let mut speed_violations = Vec::new();
     let mut slow_my = vec![0.0f32; np];
     let mut flagged = vec![false; np];
@@ -487,6 +526,10 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
             if !p.alive {
                 slow_my[pid] = 0.0;
             } else if p.speed_deg_my < LIVELINESS_SPEED_FLOOR {
+                let exempt = kf.collisions.iter().any(|t| t.a == p.id || t.b == p.id);
+                if exempt {
+                    continue; // pause, don't reset
+                }
                 slow_my[pid] += kf_my;
                 if slow_my[pid] > LIVELINESS_SLOW_MAX_MY && !flagged[pid] {
                     flagged[pid] = true;
@@ -504,6 +547,812 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
     LivelinessReport {
         overlap_violations,
         speed_violations,
+    }
+}
+
+// ----- WO-0006 S3: §9 acceptance metrics (plate-physics-model.md) -----
+//
+// Canonical here forever, like the feel and liveliness gates above: the CI
+// gate test (tests/plate_physics_gates.rs) and the calibration harness both
+// drive this tracker, so the committed calibration numbers and the armed
+// gates are the same implementation by construction. Everything is serial
+// and id-ordered; f64 accumulation in fixed traversal order.
+//
+// The eight §9 items are enforced as NINE gates: item 5 splits into 5a
+// (zero exclaves — the §7 invariant) and 5b (the backstop cell budget),
+// which fail independently and mean different things.
+
+/// Sampling cadence (My) for the §9 tracker: the L6/L7 keyframe interval,
+/// so sampled quantities match what any keyframe consumer would see.
+pub const PHYS_SAMPLE_MY: f32 = 10.0;
+/// deg/My × this = cm/yr at the rotation equator (π/180 × 637.1).
+pub const DEG_MY_TO_CMYR: f64 = std::f64::consts::PI / 180.0 * 637.1;
+
+/// Metric 1: alive plate count band (no clamp anywhere in the sim)...
+pub const M1_ALIVE_MIN: u32 = 6;
+/// See [`M1_ALIVE_MIN`].
+pub const M1_ALIVE_MAX: u32 = 25;
+/// ...with real variation across the run...
+pub const M1_STDDEV_MIN: f64 = 1.5;
+/// ...and never pinned at one value longer than this.
+pub const M1_PINNED_MAX_MY: f32 = 500.0;
+/// Metric 2: sutures per Gy (a handful of major welds per few hundred My).
+pub const M2_SUTURES_PER_GY_MIN: f64 = 2.0;
+/// See [`M2_SUTURES_PER_GY_MIN`].
+pub const M2_SUTURES_PER_GY_MAX: f64 = 10.0;
+/// Metric 3: rift-to-oceanization splits per Gy, each §5-attributed.
+pub const M3_SPLITS_PER_GY_MIN: f64 = 2.0;
+/// See [`M3_SPLITS_PER_GY_MIN`].
+pub const M3_SPLITS_PER_GY_MAX: f64 = 8.0;
+/// Metric 4: largest-plate sphere share outside supercontinent epochs.
+pub const M4_LARGEST_SHARE_MAX: f64 = 0.45;
+/// A supercontinent epoch: one plate holds over this fraction of the
+/// world's continental crust.
+pub const M4_SUPERCONTINENT_CONT_FRACTION: f64 = 1.0 / 3.0;
+/// Epochs allowed per run (0–2 per 2 Gy). Sub-`M4_EPOCH_MERGE_GAP_MY`
+/// dips below the 1/3 threshold do not end an epoch: the census flaps a few
+/// cells around the line at sample cadence, and the metric's own dispersal
+/// window (100–300 My) says an epoch is a sustained span, not a crossing.
+pub const M4_EPOCHS_MAX: u32 = 2;
+/// See [`M4_EPOCHS_MAX`].
+pub const M4_EPOCH_MERGE_GAP_MY: f32 = 100.0;
+/// ...each dispersing within this long of forming.
+pub const M4_EPOCH_DISPERSE_MY: f32 = 300.0;
+/// Metric 5b: backstop reassignments per 100 My window (5a is zero
+/// multi-component plates at every sample, no constant needed).
+pub const M5_BACKSTOP_MAX_CELLS_PER_100MY: u64 = 10;
+/// Metric 6 counts *collisions*: contact zones that actually converged
+/// (normal approach above the classification dead band, cm/yr) at some
+/// point — a grazing or already-locked contact that never converged is not
+/// a collision and builds nothing.
+pub const M6_CONVERGING_CMYR: f32 = 0.4;
+/// A contact zone is a zone, not a classification streak: the same pair
+/// re-contacting within this gap is the same collision zone (orogens pause
+/// and resume; a flicker of separation does not spawn a new zone).
+pub const M6_MERGE_GAP_MY: f32 = 50.0;
+/// Metric 6: continent-continent contact zones persisting this long...
+pub const M6_PERSIST_MY: f32 = 20.0;
+/// ...must reach this crust thickness somewhere along the zone...
+pub const M6_RELIEF_THICKNESS_KM: f32 = 45.0;
+/// ...in at least this fraction of cases.
+pub const M6_RELIEF_FRACTION_MIN: f64 = 0.8;
+/// Metric 7: run mean plate speed (cm/yr, MORVEL-anchored)...
+pub const M7_MEAN_CMYR_MIN: f64 = 2.0;
+/// See [`M7_MEAN_CMYR_MIN`].
+pub const M7_MEAN_CMYR_MAX: f64 = 6.0;
+/// ...slab-attached plates at least this many times faster than slab-free
+/// plates (Forsyth & Uyeda's trench-connectivity correlation). The
+/// slab-free side uses settled plates (see `M7_DRIFT_SETTLE_MY`); when the
+/// world offers fewer than `M7_MIN_POPULATION` settled slab-free
+/// plate-samples (every long-lived plate subducts somewhere), the ratio
+/// falls back to the S1 measurement: plates with above-median attached
+/// slab area vs below-median (the same trench-connectivity correlation,
+/// always measurable)...
+pub const M7_SLAB_RATIO_MIN: f64 = 2.0;
+/// See [`M7_SLAB_RATIO_MIN`].
+pub const M7_MIN_POPULATION: u64 = 20;
+/// ...and slab-free continental plates drifting in this band (cm/yr), with
+/// no floor constant anywhere for it to come from. "Drifting" is measured
+/// at equilibrium: plates slab-free for at least `M7_DRIFT_SETTLE_MY`
+/// (past the TAU_MY relaxation, so inherited split/parent speed has
+/// decayed) and free of continent-continent contact (a collision-stalled
+/// plate is stalled, not drifting).
+pub const M7_SLABFREE_CONT_CMYR_MIN: f64 = 0.3;
+/// See [`M7_SLABFREE_CONT_CMYR_MIN`].
+pub const M7_SLABFREE_CONT_CMYR_MAX: f64 = 2.0;
+/// See [`M7_SLABFREE_CONT_CMYR_MIN`].
+pub const M7_DRIFT_SETTLE_MY: f32 = 30.0;
+// Metric 8 reuses LIVELINESS_SPEED_FLOOR / LIVELINESS_SLOW_MAX_MY above.
+
+/// One continent-continent contact episode for metric 6: an unordered plate
+/// pair seen in consecutive samples, with the peak crust thickness observed
+/// on the cells flanking the contact while it lasted.
+struct ContactEpisode {
+    a: u32,
+    b: u32,
+    first_my: f32,
+    last_my: f32,
+    peak_km: f32,
+    /// The pair converged (normal approach > `M6_CONVERGING_CMYR`) at some
+    /// sample — only then is the episode a collision.
+    converged: bool,
+    open: bool,
+}
+
+/// A supercontinent epoch (metric 4): from the sample where one plate first
+/// held > 1/3 of continental crust to the sample where it stopped.
+struct Epoch {
+    start_my: f32,
+    end_my: Option<f32>,
+}
+
+/// §9 metrics accumulator. Feed it [`PhysicsTracker::sample`] every
+/// `PHYS_SAMPLE_MY` (including once at the start), then
+/// [`PhysicsTracker::finish`]. Reads only public [`SimState`] state, off the
+/// sim path — nothing here feeds back into the dynamics.
+pub struct PhysicsTracker {
+    first_my: f32,
+    last_my: f32,
+    // Baselines of the cumulative SimState counters at tracker start.
+    base_sutures: u64,
+    base_splits: u64,
+    base_events: usize,
+    base_backstop: u64,
+    // Metric 1.
+    alive_counts: Vec<u32>,
+    pinned_run_my: f32,
+    pinned_max_my: f32,
+    // Metric 4.
+    max_share_outside_epochs: f64,
+    epochs: Vec<Epoch>,
+    /// (t, largest plate's share of continental crust) per sample —
+    /// diagnostics for the supercontinent story.
+    pub cont_share_series: Vec<(f32, f64)>,
+    // Metric 5.
+    exclave_samples: u32,
+    backstop_cum: Vec<u64>,
+    // Metric 6.
+    episodes: Vec<ContactEpisode>,
+    // Metric 7 (f64 sums in sample order, then plate-id order).
+    speed_sum: f64,
+    speed_n: u64,
+    slab_speed_sum: f64,
+    slab_n: u64,
+    free_speed_sum: f64,
+    free_n: u64,
+    free_cont_speed_sum: f64,
+    free_cont_n: u64,
+    /// Consecutive slab-free time per plate id (the drift-settle clock).
+    slab_free_my: Vec<f32>,
+    // Median-split fallback accumulators (S1's attached-area measurement).
+    above_median_speed_sum: f64,
+    above_median_n: u64,
+    below_median_speed_sum: f64,
+    below_median_n: u64,
+    /// Settled slab-free plate-samples (the primary ratio's free side).
+    settled_free_speed_sum: f64,
+    settled_free_n: u64,
+    // Metric 8 (per plate id).
+    slow_my: Vec<f32>,
+    slow_flagged: Vec<bool>,
+    slow_violations: Vec<String>,
+    // Scratch.
+    comp_seen: Vec<bool>,
+}
+
+/// Everything the §9 gates assert, with the measured values behind each
+/// verdict (the calibration JSON records these verbatim).
+pub struct PhysicsReport {
+    pub span_my: f32,
+    pub alive_min: u32,
+    pub alive_max: u32,
+    pub alive_stddev: f64,
+    pub alive_pinned_max_my: f32,
+    pub sutures_per_gy: f64,
+    pub suture_bad_condition_count: u32,
+    pub splits_per_gy: f64,
+    pub splits_unattributed: i64,
+    pub max_share_outside_epochs: f64,
+    pub supercontinent_epochs: u32,
+    pub longest_epoch_my: f32,
+    pub open_epoch_my: f32,
+    pub exclave_samples: u32,
+    pub backstop_max_per_100my: u64,
+    pub relief_episodes: u32,
+    pub relief_reached: u32,
+    pub mean_speed_cmyr: f64,
+    pub slab_attached_mean_cmyr: f64,
+    pub slab_free_mean_cmyr: f64,
+    pub slab_free_plate_samples: u64,
+    pub settled_free_mean_cmyr: f64,
+    pub settled_free_plate_samples: u64,
+    pub above_median_mean_cmyr: f64,
+    pub below_median_mean_cmyr: f64,
+    pub slab_free_cont_mean_cmyr: f64,
+    pub slab_free_cont_plate_samples: u64,
+    pub slow_violations: Vec<String>,
+    /// (t, largest plate's continental-crust share) per sample.
+    pub cont_share_series: Vec<(f32, f64)>,
+}
+
+impl PhysicsReport {
+    /// The §9 verdicts as nine named gates (see the module note on the
+    /// 8-item → 9-gate mapping), in §9 order.
+    pub fn gates(&self) -> [(&'static str, bool, String); 9] {
+        let relief_fraction = if self.relief_episodes == 0 {
+            1.0
+        } else {
+            self.relief_reached as f64 / self.relief_episodes as f64
+        };
+        // Primary ratio: attached vs SETTLED slab-free; S1 median-split
+        // fallback when the settled-free population is too thin to measure.
+        let free_measurable = self.settled_free_plate_samples >= M7_MIN_POPULATION;
+        let slab_ratio = if free_measurable {
+            self.slab_attached_mean_cmyr / self.settled_free_mean_cmyr
+        } else if self.below_median_mean_cmyr > 0.0 {
+            self.above_median_mean_cmyr / self.below_median_mean_cmyr
+        } else {
+            f64::NAN
+        };
+        // The drift band binds only when its population is measurable; the
+        // S1 record already established slab-free samples can be
+        // structurally absent at L6 (every long-lived plate subducts).
+        let drift_measurable = self.slab_free_cont_plate_samples >= M7_MIN_POPULATION;
+        let drift_ok = !drift_measurable
+            || (self.slab_free_cont_mean_cmyr >= M7_SLABFREE_CONT_CMYR_MIN
+                && self.slab_free_cont_mean_cmyr <= M7_SLABFREE_CONT_CMYR_MAX);
+        [
+            (
+                "m1_plate_count",
+                self.alive_min >= M1_ALIVE_MIN
+                    && self.alive_max <= M1_ALIVE_MAX
+                    && self.alive_stddev >= M1_STDDEV_MIN
+                    && self.alive_pinned_max_my <= M1_PINNED_MAX_MY,
+                format!(
+                    "alive {}..{}, stddev {:.2}, longest pin {} My",
+                    self.alive_min, self.alive_max, self.alive_stddev, self.alive_pinned_max_my
+                ),
+            ),
+            (
+                "m2_suture_frequency",
+                self.sutures_per_gy >= M2_SUTURES_PER_GY_MIN
+                    && self.sutures_per_gy <= M2_SUTURES_PER_GY_MAX
+                    && self.suture_bad_condition_count == 0,
+                format!(
+                    "{:.1} sutures/Gy, {} with a sub-threshold contact record",
+                    self.sutures_per_gy, self.suture_bad_condition_count
+                ),
+            ),
+            (
+                "m3_split_frequency",
+                self.splits_per_gy >= M3_SPLITS_PER_GY_MIN
+                    && self.splits_per_gy <= M3_SPLITS_PER_GY_MAX
+                    && self.splits_unattributed == 0,
+                format!(
+                    "{:.1} splits/Gy, {} unattributed",
+                    self.splits_per_gy, self.splits_unattributed
+                ),
+            ),
+            (
+                "m4_largest_share",
+                self.max_share_outside_epochs < M4_LARGEST_SHARE_MAX
+                    && self.supercontinent_epochs <= M4_EPOCHS_MAX
+                    && self.longest_epoch_my <= M4_EPOCH_DISPERSE_MY
+                    && self.open_epoch_my <= M4_EPOCH_DISPERSE_MY,
+                format!(
+                    "max share outside epochs {:.1}%, {} epochs, longest {} My, open {} My",
+                    self.max_share_outside_epochs * 100.0,
+                    self.supercontinent_epochs,
+                    self.longest_epoch_my,
+                    self.open_epoch_my
+                ),
+            ),
+            (
+                "m5a_zero_exclaves",
+                self.exclave_samples == 0,
+                format!(
+                    "{} samples with a multi-component plate",
+                    self.exclave_samples
+                ),
+            ),
+            (
+                "m5b_backstop_budget",
+                self.backstop_max_per_100my <= M5_BACKSTOP_MAX_CELLS_PER_100MY,
+                format!(
+                    "worst window {} cells / 100 My",
+                    self.backstop_max_per_100my
+                ),
+            ),
+            (
+                "m6_collision_relief",
+                relief_fraction >= M6_RELIEF_FRACTION_MIN,
+                format!(
+                    "{} of {} persistent contacts reached {} km ({:.0}%)",
+                    self.relief_reached,
+                    self.relief_episodes,
+                    M6_RELIEF_THICKNESS_KM,
+                    relief_fraction * 100.0
+                ),
+            ),
+            (
+                "m7_force_ranked_speeds",
+                self.mean_speed_cmyr >= M7_MEAN_CMYR_MIN
+                    && self.mean_speed_cmyr <= M7_MEAN_CMYR_MAX
+                    && slab_ratio >= M7_SLAB_RATIO_MIN
+                    && drift_ok,
+                format!(
+                    "mean {:.2} cm/yr; ratio {:.2} ({}: attached {:.2} vs {} {:.2}); \
+                     settled free continental {:.2} cm/yr ({} samples{})",
+                    self.mean_speed_cmyr,
+                    slab_ratio,
+                    if free_measurable {
+                        "settled-free"
+                    } else {
+                        "median-split fallback"
+                    },
+                    self.slab_attached_mean_cmyr,
+                    if free_measurable {
+                        "settled free"
+                    } else {
+                        "below-median"
+                    },
+                    if free_measurable {
+                        self.settled_free_mean_cmyr
+                    } else {
+                        self.below_median_mean_cmyr
+                    },
+                    self.slab_free_cont_mean_cmyr,
+                    self.slab_free_cont_plate_samples,
+                    if drift_measurable {
+                        ""
+                    } else {
+                        ", unmeasurable: non-binding"
+                    }
+                ),
+            ),
+            (
+                "m8_liveliness",
+                self.slow_violations.is_empty(),
+                if self.slow_violations.is_empty() {
+                    "no plate slow > 200 My outside a qualifying collision".to_owned()
+                } else {
+                    self.slow_violations.join("; ")
+                },
+            ),
+        ]
+    }
+
+    pub fn pass(&self) -> bool {
+        self.gates().iter().all(|(_, ok, _)| *ok)
+    }
+}
+
+impl PhysicsTracker {
+    /// Start tracking; call before the first step, then `sample` every
+    /// `PHYS_SAMPLE_MY` (the caller samples the t=0 state too).
+    pub fn new(sim: &SimState) -> PhysicsTracker {
+        PhysicsTracker {
+            first_my: sim.t_my,
+            last_my: sim.t_my,
+            base_sutures: sim.suture_count,
+            base_splits: sim.breakup_count,
+            base_events: sim.events.len(),
+            base_backstop: sim.connectivity_reassigned,
+            alive_counts: Vec::new(),
+            pinned_run_my: 0.0,
+            pinned_max_my: 0.0,
+            max_share_outside_epochs: 0.0,
+            epochs: Vec::new(),
+            cont_share_series: Vec::new(),
+            exclave_samples: 0,
+            backstop_cum: Vec::new(),
+            episodes: Vec::new(),
+            speed_sum: 0.0,
+            speed_n: 0,
+            slab_speed_sum: 0.0,
+            slab_n: 0,
+            free_speed_sum: 0.0,
+            free_n: 0,
+            free_cont_speed_sum: 0.0,
+            free_cont_n: 0,
+            slab_free_my: Vec::new(),
+            above_median_speed_sum: 0.0,
+            above_median_n: 0,
+            below_median_speed_sum: 0.0,
+            below_median_n: 0,
+            settled_free_speed_sum: 0.0,
+            settled_free_n: 0,
+            slow_my: Vec::new(),
+            slow_flagged: Vec::new(),
+            slow_violations: Vec::new(),
+            comp_seen: vec![false; sim.grid.cell_count() as usize],
+        }
+    }
+
+    pub fn sample(&mut self, sim: &SimState) {
+        let dt = if self.alive_counts.is_empty() {
+            0.0
+        } else {
+            sim.t_my - self.last_my
+        };
+        self.last_my = sim.t_my;
+        let np = sim.plates.len();
+
+        // Cell censuses in one id-ordered pass: cells and continental cells
+        // per plate, total continental cells.
+        let mut cells = vec![0u32; np];
+        let mut cont_cells = vec![0u32; np];
+        let mut cont_total = 0u64;
+        for (c, &p) in sim.plate_id.iter().enumerate() {
+            cells[p as usize] += 1;
+            if sim.crust_type[c] == 1 {
+                cont_cells[p as usize] += 1;
+                cont_total += 1;
+            }
+        }
+
+        // Metric 1: alive count, band + pin runs.
+        let alive: u32 = sim.plates.iter().filter(|p| p.alive).count() as u32;
+        if let Some(&prev) = self.alive_counts.last() {
+            if prev == alive {
+                self.pinned_run_my += dt;
+            } else {
+                self.pinned_run_my = 0.0;
+            }
+            self.pinned_max_my = self.pinned_max_my.max(self.pinned_run_my);
+        }
+        self.alive_counts.push(alive);
+
+        // Metric 4: largest sphere share and supercontinent state.
+        let n_cells = sim.plate_id.len() as f64;
+        let largest_share = cells.iter().copied().max().unwrap_or(0) as f64 / n_cells;
+        let largest_cont = cont_cells.iter().copied().max().unwrap_or(0) as f64;
+        let in_epoch =
+            cont_total > 0 && largest_cont / cont_total as f64 > M4_SUPERCONTINENT_CONT_FRACTION;
+        self.cont_share_series
+            .push((sim.t_my, largest_cont / (cont_total as f64).max(1.0)));
+        let epoch_open = self.epochs.last().is_some_and(|e| e.end_my.is_none());
+        match (in_epoch, epoch_open) {
+            (true, false) => {
+                // Re-open the previous epoch when the dip was shorter than
+                // the merge gap — that is threshold flapping, not dispersal.
+                match self.epochs.last_mut() {
+                    Some(e) if sim.t_my - e.end_my.unwrap_or(sim.t_my) < M4_EPOCH_MERGE_GAP_MY => {
+                        e.end_my = None
+                    }
+                    _ => self.epochs.push(Epoch {
+                        start_my: sim.t_my,
+                        end_my: None,
+                    }),
+                }
+            }
+            (false, true) => self.epochs.last_mut().unwrap().end_my = Some(sim.t_my),
+            _ => {}
+        }
+        if !in_epoch && largest_share > self.max_share_outside_epochs {
+            self.max_share_outside_epochs = largest_share;
+        }
+
+        // Metric 5a: per-plate connected components (serial BFS, id order).
+        let seen = &mut self.comp_seen;
+        for s in seen.iter_mut() {
+            *s = false;
+        }
+        let mut comps_of_plate = vec![0u32; np];
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for c0 in 0..sim.plate_id.len() {
+            if seen[c0] {
+                continue;
+            }
+            let p = sim.plate_id[c0];
+            comps_of_plate[p as usize] += 1;
+            seen[c0] = true;
+            queue.push_back(c0 as u32);
+            while let Some(c) = queue.pop_front() {
+                for &nb in sim.grid.neighbors_of(c) {
+                    let nbu = nb as usize;
+                    if !seen[nbu] && sim.plate_id[nbu] == p {
+                        seen[nbu] = true;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+        }
+        if comps_of_plate.iter().any(|&k| k > 1) {
+            self.exclave_samples += 1;
+        }
+
+        // Metric 5b: cumulative backstop counter per sample.
+        self.backstop_cum
+            .push(sim.connectivity_reassigned - self.base_backstop);
+
+        // Metric 6: continent-continent contact pairs this sample, with the
+        // peak thickness on the flanking cells and whether the pair is
+        // converging (the same relative-motion math classify_boundaries
+        // uses, from the public plate poles). Id-ordered scan; the pair
+        // list stays tiny, linear search is fine and deterministic.
+        let omega = |pid: u32| -> [f64; 3] {
+            let p = &sim.plates[pid as usize];
+            let w = p.speed_deg_my as f64 * std::f64::consts::PI / 180.0;
+            [
+                p.pole[0] as f64 * w,
+                p.pole[1] as f64 * w,
+                p.pole[2] as f64 * w,
+            ]
+        };
+        let mut pairs: Vec<(u32, u32, f32, bool)> = Vec::new();
+        for c in 0..sim.plate_id.len() {
+            if sim.crust_type[c] != 1 {
+                continue;
+            }
+            let pc = sim.plate_id[c];
+            for &nb in sim.grid.neighbors_of(c as u32) {
+                let nbu = nb as usize;
+                let pn = sim.plate_id[nbu];
+                if pn == pc || sim.crust_type[nbu] != 1 {
+                    continue;
+                }
+                let (a, b) = (pc.min(pn), pc.max(pn));
+                let thick = sim.thickness[c].max(sim.thickness[nbu]);
+                // Normal approach speed at the shared edge midpoint, cm/yr:
+                // dot(v_nb − v_c, ê from c toward nb) < 0 = converging.
+                let xa = sim.grid.positions[c];
+                let xb = sim.grid.positions[nbu];
+                let mid = [
+                    (xa[0] + xb[0]) as f64,
+                    (xa[1] + xb[1]) as f64,
+                    (xa[2] + xb[2]) as f64,
+                ];
+                let ml = (mid[0] * mid[0] + mid[1] * mid[1] + mid[2] * mid[2]).sqrt();
+                let mid = [mid[0] / ml, mid[1] / ml, mid[2] / ml];
+                let (wa, wb) = (omega(pc), omega(pn));
+                let rel_w = [wb[0] - wa[0], wb[1] - wa[1], wb[2] - wa[2]];
+                let rel = [
+                    rel_w[1] * mid[2] - rel_w[2] * mid[1],
+                    rel_w[2] * mid[0] - rel_w[0] * mid[2],
+                    rel_w[0] * mid[1] - rel_w[1] * mid[0],
+                ];
+                let d = [
+                    (xb[0] - xa[0]) as f64,
+                    (xb[1] - xa[1]) as f64,
+                    (xb[2] - xa[2]) as f64,
+                ];
+                let dn = d[0] * mid[0] + d[1] * mid[1] + d[2] * mid[2];
+                let dt = [d[0] - dn * mid[0], d[1] - dn * mid[1], d[2] - dn * mid[2]];
+                let dl = (dt[0] * dt[0] + dt[1] * dt[1] + dt[2] * dt[2])
+                    .sqrt()
+                    .max(1e-12);
+                let sep_cmyr = (rel[0] * dt[0] + rel[1] * dt[1] + rel[2] * dt[2]) / dl * 637.1;
+                let converging = sep_cmyr < -(M6_CONVERGING_CMYR as f64);
+                match pairs.iter_mut().find(|e| e.0 == a && e.1 == b) {
+                    Some(e) => {
+                        e.2 = e.2.max(thick);
+                        e.3 |= converging;
+                    }
+                    None => pairs.push((a, b, thick, converging)),
+                }
+            }
+        }
+        for ep in self.episodes.iter_mut() {
+            if !ep.open {
+                continue;
+            }
+            match pairs.iter().find(|e| e.0 == ep.a && e.1 == ep.b) {
+                Some(&(_, _, thick, conv)) => {
+                    ep.last_my = sim.t_my;
+                    ep.peak_km = ep.peak_km.max(thick);
+                    ep.converged |= conv;
+                }
+                None => ep.open = false,
+            }
+        }
+        for &(a, b, thick, conv) in &pairs {
+            if !self.episodes.iter().any(|e| e.open && e.a == a && e.b == b) {
+                self.episodes.push(ContactEpisode {
+                    a,
+                    b,
+                    first_my: sim.t_my,
+                    last_my: sim.t_my,
+                    peak_km: thick,
+                    converged: conv,
+                    open: true,
+                });
+            }
+        }
+
+        // Metrics 7 and 8 per alive plate, plate-id order. The median of
+        // attached slab area over alive plates feeds the S1 fallback ratio.
+        let mut attached_areas: Vec<u32> = Vec::new();
+        for p in sim.plates.iter().filter(|p| p.alive) {
+            attached_areas.push(
+                p.slab
+                    .iter()
+                    .filter(|s| s.attached)
+                    .map(|s| s.area_cells)
+                    .sum(),
+            );
+        }
+        attached_areas.sort_unstable();
+        let median_attached = if attached_areas.is_empty() {
+            0
+        } else {
+            attached_areas[attached_areas.len() / 2]
+        };
+        if self.slow_my.len() < np {
+            self.slow_my.resize(np, 0.0);
+            self.slow_flagged.resize(np, false);
+            self.slab_free_my.resize(np, 0.0);
+        }
+        for pid in 0..np {
+            let p = &sim.plates[pid];
+            if !p.alive {
+                self.slow_my[pid] = 0.0;
+                continue;
+            }
+            let v = p.speed_deg_my as f64 * DEG_MY_TO_CMYR;
+            self.speed_sum += v;
+            self.speed_n += 1;
+            let attached: u32 = p
+                .slab
+                .iter()
+                .filter(|s| s.attached)
+                .map(|s| s.area_cells)
+                .sum();
+            if attached > median_attached {
+                self.above_median_speed_sum += v;
+                self.above_median_n += 1;
+            } else {
+                self.below_median_speed_sum += v;
+                self.below_median_n += 1;
+            }
+            if attached > 0 {
+                self.slab_speed_sum += v;
+                self.slab_n += 1;
+                self.slab_free_my[pid] = 0.0;
+            } else {
+                self.free_speed_sum += v;
+                self.free_n += 1;
+                self.slab_free_my[pid] += dt;
+                let in_contact = sim
+                    .collisions
+                    .iter()
+                    .any(|t| t.a == pid as u32 || t.b == pid as u32);
+                if self.slab_free_my[pid] >= M7_DRIFT_SETTLE_MY && !in_contact {
+                    self.settled_free_speed_sum += v;
+                    self.settled_free_n += 1;
+                    if cont_cells[pid] * 2 >= cells[pid] {
+                        self.free_cont_speed_sum += v;
+                        self.free_cont_n += 1;
+                    }
+                }
+            }
+            // Metric 8: identical rule to `liveliness` above — the slow
+            // clock pauses (not resets) while the plate is in a
+            // continent-continent collision (it carries a §3 pair timer).
+            if p.speed_deg_my < LIVELINESS_SPEED_FLOOR {
+                let exempt = sim
+                    .collisions
+                    .iter()
+                    .any(|t| t.a == pid as u32 || t.b == pid as u32);
+                if !exempt {
+                    self.slow_my[pid] += dt;
+                    if self.slow_my[pid] > LIVELINESS_SLOW_MAX_MY && !self.slow_flagged[pid] {
+                        self.slow_flagged[pid] = true;
+                        self.slow_violations.push(format!(
+                            "plate {} below {} deg/My for {} My ending {} My ({} cells)",
+                            pid, LIVELINESS_SPEED_FLOOR, self.slow_my[pid], sim.t_my, cells[pid]
+                        ));
+                    }
+                }
+            } else {
+                self.slow_my[pid] = 0.0;
+            }
+        }
+    }
+
+    pub fn finish(self, sim: &SimState) -> PhysicsReport {
+        let span_my = self.last_my - self.first_my;
+        let per_gy = |count: u64| count as f64 / (span_my as f64 / 1000.0).max(1e-9);
+
+        // Metric 1 aggregates.
+        let alive_min = self.alive_counts.iter().copied().min().unwrap_or(0);
+        let alive_max = self.alive_counts.iter().copied().max().unwrap_or(0);
+        let mean = self.alive_counts.iter().map(|&a| a as f64).sum::<f64>()
+            / self.alive_counts.len().max(1) as f64;
+        let var = self
+            .alive_counts
+            .iter()
+            .map(|&a| (a as f64 - mean) * (a as f64 - mean))
+            .sum::<f64>()
+            / self.alive_counts.len().max(1) as f64;
+
+        // Metric 2: every suture event since the baseline must carry a
+        // contact record at or above the §3 minimum (conditions 2 and 3
+        // have no other code path; the recorded fraction is the audit).
+        let mut suture_bad = 0u32;
+        let mut split_events = 0i64;
+        for e in &sim.events[self.base_events..] {
+            match e {
+                super::keyframe::TectonicEvent::Suture {
+                    contact_fraction, ..
+                } => {
+                    if *contact_fraction < super::step::SUTURE_CONTACT_FRACTION {
+                        suture_bad += 1;
+                    }
+                }
+                super::keyframe::TectonicEvent::Split { .. } => split_events += 1,
+                _ => {}
+            }
+        }
+        let splits = sim.breakup_count - self.base_splits;
+        // Metric 3: every split must appear in the event log with its §5
+        // driver — a count mismatch means a split came from somewhere else.
+        let splits_unattributed = splits as i64 - split_events;
+
+        // Metric 4 aggregates.
+        let mut longest_epoch = 0.0f32;
+        let mut open_epoch = 0.0f32;
+        let mut epoch_count = 0u32;
+        for e in &self.epochs {
+            epoch_count += 1;
+            match e.end_my {
+                Some(end) => longest_epoch = longest_epoch.max(end - e.start_my),
+                None => open_epoch = self.last_my - e.start_my,
+            }
+        }
+
+        // Metric 5b: worst 100 My window of backstop reassignments.
+        let win = (100.0 / PHYS_SAMPLE_MY).round() as usize;
+        let mut backstop_max = 0u64;
+        for i in win..self.backstop_cum.len() {
+            backstop_max = backstop_max.max(self.backstop_cum[i] - self.backstop_cum[i - win]);
+        }
+        if self.backstop_cum.len() > 1 && self.backstop_cum.len() <= win {
+            backstop_max = *self.backstop_cum.last().unwrap();
+        }
+
+        // Metric 6 aggregates: merge same-pair episodes separated by less
+        // than the merge gap (same zone), then judge persistence and peak.
+        let mut episodes = self.episodes;
+        episodes.sort_by(|x, y| {
+            (x.a, x.b)
+                .cmp(&(y.a, y.b))
+                .then(x.first_my.partial_cmp(&y.first_my).unwrap())
+        });
+        let mut merged: Vec<ContactEpisode> = Vec::new();
+        for e in episodes {
+            match merged.last_mut() {
+                Some(m) if m.a == e.a && m.b == e.b && e.first_my - m.last_my < M6_MERGE_GAP_MY => {
+                    m.last_my = e.last_my;
+                    m.peak_km = m.peak_km.max(e.peak_km);
+                    m.converged |= e.converged;
+                }
+                _ => merged.push(e),
+            }
+        }
+        let mut relief_episodes = 0u32;
+        let mut relief_reached = 0u32;
+        for e in &merged {
+            if e.converged && e.last_my - e.first_my >= M6_PERSIST_MY {
+                relief_episodes += 1;
+                if e.peak_km > M6_RELIEF_THICKNESS_KM {
+                    relief_reached += 1;
+                }
+            }
+        }
+
+        let mean_of = |sum: f64, n: u64| if n == 0 { 0.0 } else { sum / n as f64 };
+        PhysicsReport {
+            span_my,
+            alive_min,
+            alive_max,
+            alive_stddev: var.sqrt(),
+            alive_pinned_max_my: self.pinned_max_my,
+            sutures_per_gy: per_gy(sim.suture_count - self.base_sutures),
+            suture_bad_condition_count: suture_bad,
+            splits_per_gy: per_gy(splits),
+            splits_unattributed,
+            max_share_outside_epochs: self.max_share_outside_epochs,
+            supercontinent_epochs: epoch_count,
+            longest_epoch_my: longest_epoch,
+            open_epoch_my: open_epoch,
+            exclave_samples: self.exclave_samples,
+            backstop_max_per_100my: backstop_max,
+            relief_episodes,
+            relief_reached,
+            mean_speed_cmyr: mean_of(self.speed_sum, self.speed_n),
+            slab_attached_mean_cmyr: mean_of(self.slab_speed_sum, self.slab_n),
+            slab_free_mean_cmyr: mean_of(self.free_speed_sum, self.free_n),
+            slab_free_plate_samples: self.free_n,
+            settled_free_mean_cmyr: mean_of(self.settled_free_speed_sum, self.settled_free_n),
+            settled_free_plate_samples: self.settled_free_n,
+            above_median_mean_cmyr: mean_of(self.above_median_speed_sum, self.above_median_n),
+            below_median_mean_cmyr: mean_of(self.below_median_speed_sum, self.below_median_n),
+            slab_free_cont_mean_cmyr: mean_of(self.free_cont_speed_sum, self.free_cont_n),
+            slab_free_cont_plate_samples: self.free_cont_n,
+            slow_violations: self.slow_violations,
+            cont_share_series: self.cont_share_series,
+        }
     }
 }
 

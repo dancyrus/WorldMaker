@@ -206,6 +206,7 @@ pub fn layer_flags(layer: Layer, debug_cell_bounds: bool, debug_legacy_bands: bo
         Layer::Plates | Layer::PlateVelocity | Layer::VelocityField => 1,
         Layer::CrustAge => 2,
         Layer::Thickness => 3,
+        Layer::Overlay => 4,
     };
     id | if debug_cell_bounds {
         LF_DEBUG_CELL_BOUNDS

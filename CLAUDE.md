@@ -69,7 +69,7 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
   are just buffer updates.
 - Keyframes: 22 B/cell (WO-0006: slab ledger + suture scar); cadence 10 My
   (L6/L7), 20 My (L8), 100 My (L9); a history stores its own interval. The
-  1 GB / 2 Gy budget is defined at L7 (~0.72 GB; re-measure in WO-0006 S3).
+  1 GB / 2 Gy budget is defined at L7 (measured 0.725 GB, WO-0006 S3).
 - App builds: `cargo run --release -p worldmaker-app`. Perf harness:
   `cargo run --release -p worldmaker-app -- --perf-out <file>`. Screenshots:
   `-- --screenshots <dir>`.

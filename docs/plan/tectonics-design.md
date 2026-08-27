@@ -1,10 +1,19 @@
 # Phase 1 design: tectonics stage and era picker (as built)
 
-Design of record for WO-0002, updated to the implementation that shipped.
-The pre-implementation draft was reviewed by a five-lens adversarial agent
-panel; every accepted finding is reflected here and in the decision log.
-Reference: Cortial et al. 2019, Procedural Tectonic Planets. Constants live
-in `crates/worldmaker-sim/src/tectonics/step.rs` and the decision log.
+Design of record for WO-0002, updated to the implementation that shipped
+and to the WO-0006 plate-physics replacement (force balance, slab ledger,
+strength-field suture and rifting). The WO-0002 draft was reviewed by a
+five-lens adversarial agent panel; the WO-0005 audit
+(`docs/plan/plate-physics-audit.md`) then catalogued every ad-hoc motion
+mechanic, and `docs/plan/plate-physics-model.md` (accepted by Dan with
+amendments A-C, decision log 2026-08-27) is the design of record for
+everything in section 4 below. References: Cortial et al. 2019 for the
+grid/advection skeleton; the model document carries the geodynamics
+citations (Forsyth & Uyeda 1975, Turcotte & Schubert, Wilson 1966, Gurnis
+1988, and others) per mechanism. Constants live in
+`crates/worldmaker-sim/src/tectonics/step.rs`; the calibrated values and
+every calibration trial are in
+`docs/results/plate-physics-calibration.json`.
 
 ## 1. Data model
 
@@ -12,7 +21,10 @@ in `crates/worldmaker-sim/src/tectonics/step.rs` and the decision log.
   bitmask) beside the f32 fields — exact bit ops, no float-encoded ids.
 - Per-cell state: `elevation_m` (relative to solved sea level),
   `crust_thickness_km`, `crust_age_my`, `orogeny_age_my`, `rift_age_my`,
-  `hotspot_buildup_km` (f32); `plate_id`, `crust_type`, `features` (u32).
+  `hotspot_buildup_km` (f32); `plate_id`, `crust_type`, `features` (u32);
+  since WO-0006: `slab_plate` (u16, whose slab lies beneath this cell),
+  `slab_since_my` (when it went under), `suture_at_my` (the suture scar —
+  data, not just an event count).
   Feature bits 0–4: RIDGE, TRENCH, ARC, HOTSPOT, RIFT — all *current status*,
   rebuilt every step (no fossil flags); bits 5–7: boundary class
   (divergent/convergent/transform) for display and event gating.
@@ -53,63 +65,83 @@ axis → craton overlay applied last → hotspots ≥ 15° apart.
 
 ## 4. Time step (dt = 2 My)
 
-1. **Motion**: pole random-walk N(0, 0.6°)/step. Slab pull:
-   `target = base·(1 + f_sub)·(1 − f_coll_sat)` where f_coll saturates at
-   max(5% of boundary, 4 cells) — a continental collision along even a small
-   arc stalls the whole plate (India–Asia; conservation demands it). Braking
-   relax 0.5/step, acceleration 0.15/step; clamp [0.1·(1−f_coll), 1.2] deg/My.
-   Each step's rotation banks into a per-plate pending matrix; advection
-   commits it once the banked angle reaches 0.75 cell — slow plates never
-   freeze to the grid.
-2. **Advection** (forward-scatter + gather): committing plates scatter
-   claims (dst cell + ring) into an atomic per-cell bitmask over ≤ 32 alive
-   plates; each cell then coverage-tests its candidates by back-rotation and
-   `nearest_cell`. 0 covers → ridge crust (unless the cell was
-   transform-classified last step — hex-zigzag gating); 1 cover → copy;
-   overlap → polarity duel: "hard" crust (continent ≥ 30 km) cannot be
-   consumed, two hard plates jam in place (cell frozen, collision recorded);
-   otherwise the hard plate — or the youngest soft crust — overrides and the
-   loser is consumed (TRENCH + slab-pull stats, suppressed at transform
-   cells). Thin continent (< 30 km: island arcs, rifted slivers) is
-   subductible — the continental inventory closes. Fully consumed plates die.
-3. **Classification**: per foreign-neighbor edge, separation =
-   dot(v_n − v_c, ê_c→n) at the edge midpoint in cm/yr; divergent > +0.4,
-   convergent < −0.4, else transform. Feeds display bits, rift driver,
-   collision stats (continent-continent contact, not overlap events — slow
-   contacts must keep reading as collisions or nothing ever sutures).
-4. **Events**: arcs — BFS ring ceil(150/spacing)..floor(250/spacing) from
-   this step's trenches on the overriding plate; growth 0.6 (ocean) / 0.15
-   (continent) km/My, cap 70; oceanic cells convert to continent at 20 km.
-   Collision thickening 0.12 km/My per cm/yr, cap 70, orogeny_age = 0.
-   Rifts: +dt on continent-continent divergence, −2·dt otherwise
-   (hysteresis); thin 0.2 km/My past 20 My; oceanize below 25 km. Sutures:
-   per-pair slow-contact timers (< 0.5 cm/yr accrues, fast resets); at 30 My
-   the smaller plate merges (floor 6). Breakup: a plate over 1/3 of the
-   sphere *or* 1/3 of the world's continental crust (logged deviation —
-   breaks floor-6 gridlock) with suture age > 100 My splits along a random
-   great circle through its continental centroid; the halves get ±0.15
-   deg/My across the plane and the rift line starts mature. Hotspots: 0.8 /
-   0.4 km/My (center/ring), cap 8 km, decaying on the 200 My constant —
-   chains subside as they drift.
-5. **Aging**: ages += dt; inactive non-primordial orogens relax toward
-   38 km (×0.990049834 per step).
-6. **Elevation** (keyframe steps only; never integrated): continent
-   150 m/km above 35 km; ocean −(2600 + 365·√age) floored at −5,600;
-   trench blend 75% toward −8,500; arc +2,000 m; buildup ×1,000 (ocean) /
-   ×400 (continent) m/km; ±300 m fBm detail. Sea level is bisected (40
-   iterations, integer counts) to the ocean-fraction target ONCE, at the
-   t = 0 anchor; the datum then stays fixed for the whole run, so sea level
-   drifts with the hypsometry and coastlines flood and drain through history
-   (decision log, Dan). Elevations are stored relative to the datum, which
-   rides along in every keyframe — resume stays bit-exact — and the UI
-   sea-level slider is an offset around it.
+Replaced wholesale by WO-0006 (S1-S3); the model document is normative.
+Per step: motion -> advection -> connectivity backstop -> classification ->
+stats -> arcs -> collisions/rift maturation -> sutures -> rift splits ->
+rift growth/nucleation -> hotspots -> aging. The step is RNG-free — poles
+wander exactly when a plate's boundary makeup changes.
+
+1. **Force balance** (model §1): plates are inertialess Stokes flow.
+   `v_target = (F_slab + F_ridge + F_resid) / (R_drag + R_bnd)`, relaxed
+   over `TAU_MY`; the pole relaxes toward the summed boundary torque
+   direction on the same timescale. Slab pull comes from the plate's
+   attached slab-ledger segments weighted by thermal age at subduction;
+   ridge push from divergent boundary cells (young "nascent ridge" ocean
+   counts, so a fresh split corridor pushes its halves apart); residual
+   mantle traction `K_MANTLE·A` stands in for unsolved mantle flow — a
+   slab-free plate coasts to `K_MANTLE / C_DRAG` (~0.8 cm/yr) and that is
+   correct behavior; there is no floor. Resistance: basal drag `C_DRAG·A`,
+   strength-weighted continent-continent contact `C_CONTACT·Σ strength`,
+   and transform friction. `SPEED_MAX` survives only as a safety rail.
+2. **Slab ledger** (model §2, amendment C): every consumption step appends
+   one merged segment `{area, age_at_subduction, when, attached}` to the
+   subducting plate; segments detach individually after `SLAB_DETACH_MY`
+   (pull fades only after subduction stops), and a dead plate's ledger
+   transfers to its consumer (slabs keep sinking — Dan's ruling). The
+   per-cell `slab_plate`/`slab_since_my` fields ride with the overriding
+   plate and feed the app's Overlay layer.
+3. **Advection** (forward-scatter + gather, unchanged skeleton): overlap
+   duels as before, except the continent-continent overlap resolves to the
+   SLOWER plate — the §7 cause-removal: rigid plates cannot shed frozen
+   cells, so the plates stop instead. A serial connected-components
+   backstop runs after every advection (to a fixpoint): each plate keeps
+   its largest component and fragments reassign to the longest-border
+   neighbor; a sizable young-oceanic fragment against an active trench
+   becomes a trench-trapped microplate instead (model §6, Juan de Fuca).
+4. **Lithosphere strength** (model §4 + amendment B):
+   `S = S_type · g_age · g_suture · thickness penalties · g_insulation`,
+   ordering craton > old ocean > young continent > fresh suture or rift.
+   Primordial continent keeps ocean-grade S_type so cratons anchor ~2.0.
+   Mantle insulation under a plate holding > 1/3 of continental crust
+   weakens its continental cells toward `INSULATION_FLOOR` — amendment B's
+   supercontinent-breakup driver.
+5. **Suture** (model §3): a pair welds only when all three hold for 30 My
+   sustained — contact ≥ 30% of the smaller plate's perimeter, mean
+   relative speed across the contact < 0.4 cm/yr, and no ocean within two
+   rings of the contact on either side (the terminal act of the Wilson
+   cycle). The weld writes `suture_at_my` on every contact cell: the scar
+   weakens the strength field for `SUTURE_HEAL_MY` and is the preferred
+   path for later rifting.
+6. **Rifting** (model §5 + amendment A): a rift nucleates only at a real
+   driver — plume under continent ≥ 20 My, back-arc extension behind an
+   old-slab trench, or opposing slab pull ≥ 120° apart — and only where
+   driver stress exceeds local strength; it advances a finite
+   ~75 km/My along the weakest neighbor and stalls (= fails) the moment
+   stress no longer beats the strength ahead. A corridor that oceanizes
+   across the plate splits it; the halves' motion comes from the force
+   balance alone. No random breakup, no plate-count trigger, no area
+   quota; a 200 My per-plate refractory models stress re-accumulation.
+7. **Arcs, collisions, hotspots, aging**: unchanged from WO-0002 (arc BFS
+   bands, collision thickening 0.12 km/My per cm/yr, hotspot shields,
+   orogenic relaxation exempting primordial crust).
+
+Acceptance is the model's §9: nine gates measured by
+`tectonics::metrics::PhysicsTracker` at seeds cyrus and 42 (2 Gy, L6) and
+armed in `tests/plate_physics_gates.rs` — see that file's header for which
+clauses are armed and which are recorded-with-reasons (three §9 targets
+need mechanics the model deliberately lacks: enclosed-basin closure at
+terminal collisions, stress-directed rift pathing, connectivity-aware
+advection).
 
 ## 5. Keyframes
 
-Every 10 My (20 My at L8 — 1 GB budget), 16 B/cell: elev i16, plate u16,
-age u16, thickness u16 (×100), orogeny u16, rift u16, buildup u16 (×100),
-flags u16 (features + boundary class + crust_type in bit 15); plus exact
-per-plate state, pair timers, sea offset. Measured: 527 MB for 2 Gy at L7.
+Every 10 My (20 My at L8, 100 My at L9 — 1 GB budget), 22 B/cell since
+WO-0006: elev i16, plate u16, age u16, thickness u16 (×100), orogeny u16,
+rift u16, buildup u16 (×100), flags u16 (features + boundary class +
+crust_type in bit 15), slab_plate u16, slab_since u16, suture_at u16;
+plus exact per-plate state (including the slab ledger), pair timers, live
+rifts, sea offset. Measured (S3): 22.01 B/cell at L7, 0.725 GB for a 2 Gy
+history — inside the 1 GB budget.
 `run_history(resume: Option<ResumeFrom>)` restarts bit-exactly from any
 keyframe — the foundation for plate drag (Phase 2) and branching (Phase 6).
 
@@ -124,9 +156,12 @@ keyframe — the foundation for plate drag (Phase 2) and branching (Phase 6).
 - Rendering: per-cell RGBA8 colors baked on the CPU per (layer, keyframe,
   sea offset) into one storage buffer; globe interpolates vertex colors with
   its Lambert shade, flat looks colors up through the cell-id raster.
-  Layers: Elevation (hypsometric), Plates (24 categorical + boundary bands
-  by type), Crust age (viridis on ocean age, gray continents), Thickness
-  (batlow); Climate greyed out.
+  Layers: Elevation (hypsometric), Plates (48 categorical + smoothed
+  boundary polylines by type), Crust age (viridis on ocean age, gray
+  continents), Thickness (batlow), the two velocity layers (WO-0004), and
+  Overlay (WO-0006: Plates at 40% brightness with each cell above a
+  subducted slab drawn in the slab plate's color, fading toward
+  detachment); Climate greyed out.
 - Craton brush/eraser (radius 150–2,000 km, neighbor flood on the grid,
   both canvases through `nearest_cell`): paints a per-level overlay shown at
   t = 0; stroke end re-runs from t = 0 with the same seed. Hotspot tool:
@@ -148,3 +183,7 @@ keyframe — the foundation for plate drag (Phase 2) and branching (Phase 6).
   double-run, 2 Gy L6 stability (plate band, land fraction, continental
   inventory, sutures/breakups), timings (500 My / 1 Gy / 2 Gy) and keyframe
   memory vs budgets.
+- Plate-physics gates (WO-0006 S3): the model's §9 metrics as CI gates in
+  `tests/plate_physics_gates.rs`, canonical implementation in
+  `tectonics::metrics::PhysicsTracker`; calibration record with all
+  trials in `docs/results/plate-physics-calibration.json`.
