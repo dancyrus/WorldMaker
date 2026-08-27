@@ -3,9 +3,16 @@
 //!
 //! `SceneResources` lives in the egui renderer's callback resources. Each
 //! frame the UI submits a `GlobeCallback` / `FlatCallback` carrying the
-//! current `WorldBundle` (grid + elevation + cell-id raster) and view
-//! parameters; `prepare` uploads whatever changed (tracked by generation
-//! counters) and `paint` draws into egui's render pass.
+//! current `WorldBundle` (grid + per-cell shading values + overlay + cell-id
+//! hint raster) and view parameters; `prepare` uploads whatever changed
+//! (tracked by generation counters) and `paint` draws into egui's render
+//! pass.
+//!
+//! Since WO-0003 Fix 3 (d3a) both canvases shade PER FRAGMENT: the CPU bakes
+//! per-cell scalar VALUES (layers::bake_values), the palette lives in a GPU
+//! LUT baked from the same Rust ramps, and sea level / Detail / debug flags
+//! are pure uniform writes. The globe draws unindexed (corner-fetch from
+//! storage) so every fragment knows its triangle's three corner cells.
 
 use std::sync::Arc;
 
@@ -14,26 +21,40 @@ use eframe::wgpu::util::DeviceExt;
 
 use worldmaker_core::Grid;
 
+use crate::boundaries::BoundarySet;
+use crate::layers::{self, Layer};
+
 /// Width of the equirectangular cell-id lookup raster. Depends only on the
 /// grid level, so seed and sea-level changes never touch it.
 pub const CELL_ID_TEX_W: u32 = 4096;
 pub const CELL_ID_TEX_H: u32 = 2048;
 
-/// Immutable snapshot of the world the renderer draws. Rebuilt (as a new Arc)
-/// when the grid or the baked layer colors change.
+/// Immutable snapshot of the world the renderer draws. Republished (as a new
+/// Arc) by rebake; the three generations tell `sync_world` what to re-upload.
 pub struct WorldBundle {
     pub grid: Arc<Grid>,
-    /// Per-cell RGBA8 colors baked by the active layer (layers.rs). A layer
-    /// switch, timeline scrub, or sea-level nudge is just a rebake + one
-    /// buffer upload.
-    pub colors: Vec<u32>,
-    /// Equirectangular raster of cell ids, CELL_ID_TEX_W × CELL_ID_TEX_H.
-    /// Arc'd: depends only on the grid level, shared across every rebake.
+    /// Per-cell shading record for the active layer (layers::bake_values):
+    /// x = f32 scalar bits, y = category word (d3a §2.2). Arc'd so an
+    /// overlay-only republish is free for the values.
+    pub values: Arc<Vec<[u32; 2]>>,
+    /// A↔C overlay words, one per cell (feel-pass-design.md § D1). Rebuilt
+    /// independently of values on every rebake.
+    pub overlay: Vec<u32>,
+    /// Equirectangular *hint* raster, CELL_ID_TEX_W × CELL_ID_TEX_H R32Uint.
+    /// Arc'd: depends only on the grid level. Since the flat exact walk
+    /// (d3a §4) it is only the walk's starting hint, never the truth.
     pub cell_ids: Arc<Vec<u32>>,
+    /// Smoothed plate-boundary ribbons for the viewed keyframe (d3a §8);
+    /// empty when the layer draws none. Extraction + drawing land in leg 3.
+    pub boundaries: Arc<BoundarySet>,
     /// Bumped when the grid (and cell_ids) change.
     pub grid_gen: u64,
-    /// Bumped when the colors change (includes grid changes).
-    pub field_gen: u64,
+    /// Bumped when `values` changes (layer switch, scrub, new history).
+    /// Always bumps with grid_gen.
+    pub values_gen: u64,
+    /// Bumped when `overlay` changes (any pending-stroke mutation).
+    /// Always bumps with grid_gen.
+    pub overlay_gen: u64,
 }
 
 impl WorldBundle {
@@ -122,11 +143,92 @@ pub fn rotate_inv(m: &[[f32; 4]; 4], v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+// ----- live shading parameters (uniform-only view controls) -----
+
+/// `layer_flags` bit layout (shader must match): bits 0..=3 layer id
+/// (0 elevation, 1 plates, 2 crust age, 3 thickness); bit 8 debug true-cell
+/// boundaries; bit 9 debug legacy one-cell boundary bands.
+pub const LF_DEBUG_CELL_BOUNDS: u32 = 1 << 8;
+pub const LF_DEBUG_LEGACY_BANDS: u32 = 1 << 9;
+
+/// Shared shading sub-struct embedded in both uniform blocks (d3a §6).
+/// Sea level, Detail, layer and debug flags travel here — pure LIVE view
+/// controls: writing them costs one uniform upload, never a rebake, and the
+/// render-only guard test proves the world-building path cannot see them.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ShadeParams {
+    /// Master seed low/high u32 lanes — the u64 never passes through f32.
+    pub seed_lo: u32,
+    pub seed_hi: u32,
+    pub layer_flags: u32,
+    /// Render-detail fBm octave count (sweep default; leg 4 finalizes).
+    pub octaves: u32,
+    pub sea_level_m: f32,
+    /// Detail slider t × the default amplitude, meters. 0 = detail off.
+    pub detail_amp_m: f32,
+    /// Mean cell angular spacing sqrt(4π / cell_count), radians; the shader
+    /// derives the base noise frequency from it.
+    pub detail_cell_rad: f32,
+    pub _pad: f32,
+}
+
+/// Pack the live view controls into the uniform sub-struct. This is the one
+/// funnel through which Detail and sea level reach the GPU — the guard test
+/// in worldgen.rs packs two extreme variants and proves the world-building
+/// path is unaffected.
+pub fn pack_shade_params(
+    master_seed: u64,
+    layer_flags: u32,
+    octaves: u32,
+    sea_level_m: f32,
+    detail_amp_m: f32,
+    cell_count: u32,
+) -> ShadeParams {
+    ShadeParams {
+        seed_lo: (master_seed & 0xffff_ffff) as u32,
+        seed_hi: (master_seed >> 32) as u32,
+        layer_flags,
+        octaves,
+        sea_level_m,
+        detail_amp_m,
+        detail_cell_rad: (4.0 * std::f32::consts::PI / cell_count.max(1) as f32).sqrt(),
+        _pad: 0.0,
+    }
+}
+
+/// Build the `layer_flags` word for the active layer + debug toggles.
+pub fn layer_flags(layer: Layer, debug_cell_bounds: bool, debug_legacy_bands: bool) -> u32 {
+    let id = match layer {
+        Layer::Elevation => 0u32,
+        Layer::Plates => 1,
+        Layer::CrustAge => 2,
+        Layer::Thickness => 3,
+    };
+    id | if debug_cell_bounds {
+        LF_DEBUG_CELL_BOUNDS
+    } else {
+        0
+    } | if debug_legacy_bands {
+        LF_DEBUG_LEGACY_BANDS
+    } else {
+        0
+    }
+}
+
+/// Boundary-ribbon half-width in egui points (~1.8 pt full width); scaled by
+/// pixels-per-point into the uniforms.
+const BND_HALF_WIDTH_PT: f32 = 0.9;
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GlobeUniforms {
     rot: [[f32; 4]; 4],
+    /// x, y: camera→NDC scale; z, w: canvas rect size in framebuffer px.
     params: [f32; 4],
+    /// x: boundary-ribbon half-width in framebuffer px; y, z, w: spare.
+    bnd: [f32; 4],
+    shade: ShadeParams,
 }
 
 #[repr(C)]
@@ -135,95 +237,367 @@ struct FlatUniforms {
     center_px: [f32; 2],
     half_px: [f32; 2],
     misc: [f32; 4],
+    /// x, y: cell-id texture dims; z, w: canvas rect min in framebuffer px.
     tex: [f32; 4],
+    /// x: ribbon half-width px; y, z: canvas rect size px; w: spare.
+    bnd: [f32; 4],
+    shade: ShadeParams,
+}
+
+// ----- plate-boundary ribbons (d3a §8) -----
+
+/// Globe ribbon vertex: this point, the next point (for the screen-space
+/// direction), side (+/-1) and the boundary type. Stride 32.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BndVertex3 {
+    p: [f32; 3],
+    q: [f32; 3],
+    side: f32,
+    btype: f32,
+}
+
+/// Flat ribbon vertex in projected normalized map coordinates. Stride 24.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BndVertex2 {
+    p: [f32; 2],
+    q: [f32; 2],
+    side: f32,
+    btype: f32,
+}
+
+fn extrapolate3(last: [f32; 3], prev: [f32; 3]) -> [f32; 3] {
+    [
+        2.0 * last[0] - prev[0],
+        2.0 * last[1] - prev[1],
+        2.0 * last[2] - prev[2],
+    ]
+}
+
+fn extrapolate2(last: [f32; 2], prev: [f32; 2]) -> [f32; 2] {
+    [2.0 * last[0] - prev[0], 2.0 * last[1] - prev[1]]
+}
+
+/// Ribbon indices for one polyline starting at vertex `base`: two vertices
+/// per point (side +1 then -1), 6 indices per segment; a closed polyline
+/// adds the wrap segment.
+fn ribbon_indices(indices: &mut Vec<u32>, base: u32, n: usize, closed: bool) {
+    let segs = if closed { n } else { n - 1 };
+    for s in 0..segs {
+        let a = base + 2 * s as u32;
+        let b = base + 2 * (((s + 1) % n) as u32);
+        indices.extend_from_slice(&[a, a + 1, b, a + 1, b + 1, b]);
+    }
+}
+
+/// Ribbon geometry for the globe: chain points stay unit vectors; the VS
+/// rotates, projects and expands them per frame.
+fn build_globe_ribbons(set: &BoundarySet) -> (Vec<BndVertex3>, Vec<u32>) {
+    let mut vs = Vec::new();
+    let mut is = Vec::new();
+    for ch in &set.chains {
+        let n = ch.pts.len();
+        if n < 2 {
+            continue;
+        }
+        let base = vs.len() as u32;
+        for j in 0..n {
+            let p = ch.pts[j];
+            let q = if ch.closed {
+                ch.pts[(j + 1) % n]
+            } else if j + 1 < n {
+                ch.pts[j + 1]
+            } else {
+                extrapolate3(ch.pts[n - 1], ch.pts[n - 2])
+            };
+            let bt = ch.btype as f32;
+            vs.push(BndVertex3 {
+                p,
+                q,
+                side: 1.0,
+                btype: bt,
+            });
+            vs.push(BndVertex3 {
+                p,
+                q,
+                side: -1.0,
+                btype: bt,
+            });
+        }
+        ribbon_indices(&mut is, base, n, ch.closed);
+    }
+    (vs, is)
+}
+
+/// Ribbon geometry for the flat canvas: forward-project every chain point,
+/// split any segment crossing the antimeridian at the projected map edge
+/// (great-circle crossing latitude — projection-correct for the curved
+/// Robinson / Eckert IV edges), then pack open/closed polylines in map
+/// coordinates. Rebuilt only when the boundary set or projection changes.
+fn build_flat_ribbons(
+    set: &BoundarySet,
+    proj: worldmaker_core::Projection,
+) -> (Vec<BndVertex2>, Vec<u32>) {
+    use std::f32::consts::PI;
+    use worldmaker_core::grid::unit_to_latlon;
+    let project = |u: [f32; 3]| -> [f32; 2] {
+        let (lat, lon) = unit_to_latlon(u);
+        let (x, y) = proj.project(lat, lon);
+        [x, y]
+    };
+    let normalize = |v: [f32; 3]| -> [f32; 3] {
+        let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
+        [v[0] / len, v[1] / len, v[2] / len]
+    };
+
+    let mut polylines: Vec<(u8, Vec<[f32; 2]>, bool)> = Vec::new();
+    for ch in &set.chains {
+        let n = ch.pts.len();
+        if n < 2 {
+            continue;
+        }
+        let mut pieces: Vec<Vec<[f32; 2]>> = Vec::new();
+        let mut cur: Vec<[f32; 2]> = vec![project(ch.pts[0])];
+        let mut split_any = false;
+        let edges = if ch.closed { n } else { n - 1 };
+        for e in 0..edges {
+            let u = ch.pts[e];
+            let v = ch.pts[(e + 1) % n];
+            let (_, lon_u) = unit_to_latlon(u);
+            let (_, lon_v) = unit_to_latlon(v);
+            if (lon_u - lon_v).abs() > PI {
+                // The longitudes wrap, so the chord crosses the y = 0 plane;
+                // x < 0 there means the antimeridian (x >= 0 would be the
+                // prime meridian near a pole — no split).
+                let denom = u[1] - v[1];
+                let t = if denom.abs() > 1e-12 {
+                    u[1] / denom
+                } else {
+                    0.5
+                };
+                let c = normalize([
+                    u[0] + (v[0] - u[0]) * t,
+                    u[1] + (v[1] - u[1]) * t,
+                    u[2] + (v[2] - u[2]) * t,
+                ]);
+                if c[0] < 0.0 {
+                    let lat_c = c[2].clamp(-1.0, 1.0).asin();
+                    let sign = if lon_u > 0.0 { 1.0 } else { -1.0 };
+                    let (x_out, y_edge) = proj.project(lat_c, sign * PI);
+                    let (x_in, _) = proj.project(lat_c, -sign * PI);
+                    cur.push([x_out, y_edge]);
+                    pieces.push(std::mem::take(&mut cur));
+                    cur.push([x_in, y_edge]);
+                    split_any = true;
+                }
+            }
+            cur.push(project(v));
+        }
+        if ch.closed {
+            if split_any {
+                // The wrap edge ends back at the projection of pts[0], where
+                // the first piece began: join last into first.
+                pieces.push(std::mem::take(&mut cur));
+                let first = pieces.remove(0);
+                let last = pieces.last_mut().unwrap();
+                last.extend(first.into_iter().skip(1));
+                for pc in pieces {
+                    polylines.push((ch.btype, pc, false));
+                }
+            } else {
+                // cur = [p0, …, p_{n-1}, p0]: drop the duplicate and close.
+                cur.pop();
+                polylines.push((ch.btype, cur, true));
+            }
+        } else {
+            pieces.push(std::mem::take(&mut cur));
+            for pc in pieces {
+                polylines.push((ch.btype, pc, false));
+            }
+        }
+    }
+
+    let mut vs = Vec::new();
+    let mut is = Vec::new();
+    for (bt, pts, closed) in polylines {
+        let n = pts.len();
+        if n < 2 {
+            continue;
+        }
+        let base = vs.len() as u32;
+        for j in 0..n {
+            let p = pts[j];
+            let q = if closed {
+                pts[(j + 1) % n]
+            } else if j + 1 < n {
+                pts[j + 1]
+            } else {
+                extrapolate2(pts[n - 1], pts[n - 2])
+            };
+            let btf = bt as f32;
+            vs.push(BndVertex2 {
+                p,
+                q,
+                side: 1.0,
+                btype: btf,
+            });
+            vs.push(BndVertex2 {
+                p,
+                q,
+                side: -1.0,
+                btype: btf,
+            });
+        }
+        ribbon_indices(&mut is, base, n, closed);
+    }
+    (vs, is)
+}
+
+/// Upload one ribbon set; `None` when there is nothing to draw.
+fn create_ribbon_buffers<V: bytemuck::Pod>(
+    device: &wgpu::Device,
+    label: &str,
+    vs: &[V],
+    is: &[u32],
+) -> Option<(wgpu::Buffer, wgpu::Buffer, u32)> {
+    if is.is_empty() {
+        return None;
+    }
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(vs),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(is),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    Some((vb, ib, is.len() as u32))
 }
 
 pub struct SceneResources {
     globe_pipeline: wgpu::RenderPipeline,
     flat_pipeline: wgpu::RenderPipeline,
+    bnd_globe_pipeline: wgpu::RenderPipeline,
+    bnd_flat_pipeline: wgpu::RenderPipeline,
     globe_bind_layout: wgpu::BindGroupLayout,
     flat_bind_layout: wgpu::BindGroupLayout,
     globe_uniform: wgpu::Buffer,
     flat_uniform: wgpu::Buffer,
+    /// 256×8 palette LUT baked once from layers.rs's Rust ramps; the same
+    /// texture view is entered in BOTH bind groups.
+    _palette_tex: wgpu::Texture,
+    palette_view: wgpu::TextureView,
 
     // World-dependent resources (recreated when generations change).
-    vertex_buf: Option<wgpu::Buffer>,
-    index_buf: Option<wgpu::Buffer>,
-    index_count: u32,
-    color_buf: Option<wgpu::Buffer>,
+    positions_buf: Option<wgpu::Buffer>,
+    tri_ids_buf: Option<wgpu::Buffer>,
+    /// CSR neighbor graph (flat walk, d3a §4): verbatim copies of
+    /// `Grid::neighbor_offsets` / `Grid::neighbors`.
+    nbr_offsets_buf: Option<wgpu::Buffer>,
+    nbrs_buf: Option<wgpu::Buffer>,
+    /// 3 × triangle count: the unindexed globe draw's vertex count.
+    vertex_count: u32,
+    values_buf: Option<wgpu::Buffer>,
+    overlay_buf: Option<wgpu::Buffer>,
     cell_id_tex: Option<wgpu::Texture>,
     globe_bind: Option<wgpu::BindGroup>,
     flat_bind: Option<wgpu::BindGroup>,
     grid_gen: u64,
-    field_gen: u64,
+    values_gen: u64,
+    overlay_gen: u64,
+    /// Boundary-ribbon geometry (vertex buf, index buf, index count); None
+    /// when the current boundary set draws nothing. Globe geometry depends
+    /// only on the boundary set (keyed by values_gen — boundaries ride the
+    /// values pass); flat geometry also depends on the projection.
+    bnd_globe: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    bnd_globe_gen: u64,
+    bnd_flat: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    bnd_flat_key: (u64, u32),
+}
+
+fn storage_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn uniform_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
 }
 
 impl SceneResources {
-    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target_format: wgpu::TextureFormat,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("worldmaker-shaders"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders.wgsl").into()),
         });
 
+        // Binding slots are shared between the two pipelines wherever the
+        // WGSL module shares the resource (positions 1, values 3, overlay 4,
+        // palette 5): module-scope vars serve both entry points, so shared
+        // resources must agree on slots; per-canvas resources (uniforms at 0,
+        // tri_ids / cell_ids at 2, the flat CSR graph at 6/7) may reuse or
+        // extend the slot space because no single entry point touches both.
         let globe_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globe-bind-layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                storage_entry(1, wgpu::ShaderStages::VERTEX_FRAGMENT), // positions
+                storage_entry(2, wgpu::ShaderStages::VERTEX),          // tri_ids
+                storage_entry(3, wgpu::ShaderStages::FRAGMENT),        // cell_values
+                storage_entry(4, wgpu::ShaderStages::FRAGMENT),        // overlay
+                texture_entry(5, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         });
 
         let flat_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("flat-bind-layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                // VERTEX visibility for the boundary-ribbon VS.
+                uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                storage_entry(1, wgpu::ShaderStages::FRAGMENT), // positions
+                texture_entry(2, wgpu::TextureSampleType::Uint), // cell_ids hint
+                storage_entry(3, wgpu::ShaderStages::FRAGMENT), // cell_values
+                storage_entry(4, wgpu::ShaderStages::FRAGMENT), // overlay
+                texture_entry(5, wgpu::TextureSampleType::Float { filterable: false }),
+                storage_entry(6, wgpu::ShaderStages::FRAGMENT), // CSR offsets
+                storage_entry(7, wgpu::ShaderStages::FRAGMENT), // CSR neighbors
             ],
         });
 
@@ -245,11 +619,9 @@ impl SceneResources {
                 module: &shader,
                 entry_point: Some("vs_globe"),
                 compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 12,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                })],
+                // Unindexed corner-fetch draw: no vertex buffers at all — the
+                // vertex shader pulls corner ids + positions from storage.
+                buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -304,6 +676,97 @@ impl SceneResources {
             cache: None,
         });
 
+        // Boundary-ribbon pipelines (d3a §8): reuse each canvas's bind group
+        // layout (the ribbon shaders statically use only the uniforms and
+        // the palette), add a vertex buffer, and alpha-blend over the fill.
+        let bnd_targets = [Some(wgpu::ColorTargetState {
+            format: target_format,
+            blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let bnd_primitive = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        };
+        let vec_attr = |dims: wgpu::VertexFormat, floats: u64| -> [wgpu::VertexAttribute; 4] {
+            [
+                wgpu::VertexAttribute {
+                    format: dims,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    format: dims,
+                    offset: 4 * floats,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 8 * floats,
+                    shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 8 * floats + 4,
+                    shader_location: 3,
+                },
+            ]
+        };
+        let globe_attrs = vec_attr(wgpu::VertexFormat::Float32x3, 3);
+        let flat_attrs = vec_attr(wgpu::VertexFormat::Float32x2, 2);
+        let bnd_globe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("boundary-globe-pipeline"),
+            layout: Some(&globe_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_bnd_globe"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<BndVertex3>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &globe_attrs,
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_bnd"),
+                compilation_options: Default::default(),
+                targets: &bnd_targets,
+            }),
+            primitive: bnd_primitive,
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let bnd_flat_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("boundary-flat-pipeline"),
+            layout: Some(&flat_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_bnd_flat"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<BndVertex2>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &flat_attrs,
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_bnd"),
+                compilation_options: Default::default(),
+                targets: &bnd_targets,
+            }),
+            primitive: bnd_primitive,
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let globe_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globe-uniforms"),
             size: std::mem::size_of::<GlobeUniforms>() as u64,
@@ -317,46 +780,109 @@ impl SceneResources {
             mapped_at_creation: false,
         });
 
+        // Palette LUT: baked once from the Rust ramps, uploaded once, bound
+        // to both pipelines. Rgba8Unorm (NOT -srgb): bytes pass through, all
+        // color math stays in sRGB-encoded space (d3a §2.3 / D4).
+        let palette_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("palette-lut"),
+            size: wgpu::Extent3d {
+                width: layers::LUT_W,
+                height: layers::LUT_ROWS,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &palette_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &layers::bake_palette_lut(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(layers::LUT_W * 4),
+                rows_per_image: Some(layers::LUT_ROWS),
+            },
+            wgpu::Extent3d {
+                width: layers::LUT_W,
+                height: layers::LUT_ROWS,
+                depth_or_array_layers: 1,
+            },
+        );
+        let palette_view = palette_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
         SceneResources {
             globe_pipeline,
             flat_pipeline,
+            bnd_globe_pipeline,
+            bnd_flat_pipeline,
             globe_bind_layout,
             flat_bind_layout,
             globe_uniform,
             flat_uniform,
-            vertex_buf: None,
-            index_buf: None,
-            index_count: 0,
-            color_buf: None,
+            _palette_tex: palette_tex,
+            palette_view,
+            positions_buf: None,
+            tri_ids_buf: None,
+            nbr_offsets_buf: None,
+            nbrs_buf: None,
+            vertex_count: 0,
+            values_buf: None,
+            overlay_buf: None,
             cell_id_tex: None,
             globe_bind: None,
             flat_bind: None,
             grid_gen: 0,
-            field_gen: 0,
+            values_gen: 0,
+            overlay_gen: 0,
+            bnd_globe: None,
+            bnd_globe_gen: 0,
+            bnd_flat: None,
+            bnd_flat_key: (0, u32::MAX),
         }
     }
 
     /// Upload whatever parts of the world changed since the last frame.
     fn sync_world(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, world: &WorldBundle) {
-        if self.grid_gen != world.grid_gen {
+        let grid_changed = self.grid_gen != world.grid_gen;
+        if grid_changed {
             let grid = &world.grid;
-            let flat_positions: &[f32] = bytemuck::cast_slice(&grid.positions);
-            self.vertex_buf = Some(
+            self.positions_buf = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("cell-positions"),
+                    contents: bytemuck::cast_slice(&grid.positions),
+                    usage: wgpu::BufferUsages::STORAGE,
+                },
+            ));
+            self.tri_ids_buf = Some(
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("globe-vertices"),
-                    contents: bytemuck::cast_slice(flat_positions),
-                    usage: wgpu::BufferUsages::VERTEX,
+                    label: Some("globe-tri-ids"),
+                    contents: bytemuck::cast_slice(&grid.triangles),
+                    usage: wgpu::BufferUsages::STORAGE,
                 }),
             );
-            let indices: &[u32] = bytemuck::cast_slice(&grid.triangles);
-            self.index_buf = Some(
+            self.nbr_offsets_buf = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("csr-neighbor-offsets"),
+                    contents: bytemuck::cast_slice(&grid.neighbor_offsets),
+                    usage: wgpu::BufferUsages::STORAGE,
+                },
+            ));
+            self.nbrs_buf = Some(
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("globe-indices"),
-                    contents: bytemuck::cast_slice(indices),
-                    usage: wgpu::BufferUsages::INDEX,
+                    label: Some("csr-neighbors"),
+                    contents: bytemuck::cast_slice(&grid.neighbors),
+                    usage: wgpu::BufferUsages::STORAGE,
                 }),
             );
-            self.index_count = indices.len() as u32;
+            self.vertex_count = (grid.triangles.len() * 3) as u32;
 
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("cell-id-texture"),
@@ -392,29 +918,64 @@ impl SceneResources {
                 },
             );
             self.cell_id_tex = Some(tex);
-            // Elevation buffer is recreated below (field_gen always bumps with
-            // grid_gen); bind groups are rebuilt after that.
+            self.grid_gen = world.grid_gen;
+            // values_gen and overlay_gen always bump with grid_gen, so the
+            // right-sized buffers are recreated below and bind groups rebuilt.
         }
 
-        if self.field_gen != world.field_gen {
-            // Reuse the color buffer when only its contents changed (scrub,
-            // layer switch, sea-level drag): a queue write, no reallocation.
-            let expected_size = (world.colors.len() * 4) as u64;
-            match &self.color_buf {
-                Some(buf) if buf.size() == expected_size && self.grid_gen == world.grid_gen => {
-                    queue.write_buffer(buf, 0, bytemuck::cast_slice(&world.colors));
+        let mut rebind = grid_changed;
+        if self.values_gen != world.values_gen {
+            let bytes: &[u8] = bytemuck::cast_slice(world.values.as_slice());
+            match &self.values_buf {
+                // Reuse the buffer when only contents changed (scrub, layer
+                // switch): a queue write, no reallocation.
+                Some(buf) if buf.size() == bytes.len() as u64 && !grid_changed => {
+                    queue.write_buffer(buf, 0, bytes);
                 }
                 _ => {
-                    self.color_buf = Some(device.create_buffer_init(
+                    self.values_buf = Some(device.create_buffer_init(
                         &wgpu::util::BufferInitDescriptor {
-                            label: Some("cell-colors"),
-                            contents: bytemuck::cast_slice(&world.colors),
+                            label: Some("cell-values"),
+                            contents: bytes,
                             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         },
                     ));
                 }
             }
-            let colors = self.color_buf.as_ref().unwrap();
+            self.values_gen = world.values_gen;
+            rebind = true;
+        }
+
+        if self.overlay_gen != world.overlay_gen {
+            let bytes: &[u8] = bytemuck::cast_slice(world.overlay.as_slice());
+            match &self.overlay_buf {
+                Some(buf) if buf.size() == bytes.len() as u64 && !grid_changed => {
+                    queue.write_buffer(buf, 0, bytes);
+                }
+                _ => {
+                    self.overlay_buf = Some(device.create_buffer_init(
+                        &wgpu::util::BufferInitDescriptor {
+                            label: Some("cell-overlay"),
+                            contents: bytes,
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        },
+                    ));
+                }
+            }
+            self.overlay_gen = world.overlay_gen;
+            rebind = true;
+        }
+
+        if rebind {
+            let positions = self.positions_buf.as_ref().unwrap();
+            let tri_ids = self.tri_ids_buf.as_ref().unwrap();
+            let values = self.values_buf.as_ref().unwrap();
+            let overlay = self.overlay_buf.as_ref().unwrap();
+            let cell_id_view = self
+                .cell_id_tex
+                .as_ref()
+                .unwrap()
+                .create_view(&wgpu::TextureViewDescriptor::default());
             self.globe_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("globe-bind"),
                 layout: &self.globe_bind_layout,
@@ -425,15 +986,26 @@ impl SceneResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: colors.as_entire_binding(),
+                        resource: positions.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: tri_ids.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: values.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: overlay.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&self.palette_view),
                     },
                 ],
             }));
-            let tex_view = self
-                .cell_id_tex
-                .as_ref()
-                .unwrap()
-                .create_view(&wgpu::TextureViewDescriptor::default());
             self.flat_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("flat-bind"),
                 layout: &self.flat_bind_layout,
@@ -444,16 +1016,34 @@ impl SceneResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: colors.as_entire_binding(),
+                        resource: positions.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&tex_view),
+                        resource: wgpu::BindingResource::TextureView(&cell_id_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: values.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: overlay.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&self.palette_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: self.nbr_offsets_buf.as_ref().unwrap().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: self.nbrs_buf.as_ref().unwrap().as_entire_binding(),
                     },
                 ],
             }));
-            self.grid_gen = world.grid_gen;
-            self.field_gen = world.field_gen;
         }
     }
 }
@@ -462,6 +1052,7 @@ impl SceneResources {
 pub struct GlobeCallback {
     pub world: Arc<WorldBundle>,
     pub view: GlobeView,
+    pub shade: ShadeParams,
     /// Canvas rect in points: (center x, center y, width, height).
     pub rect_points: [f32; 4],
 }
@@ -488,11 +1079,20 @@ impl egui_wgpu::CallbackTrait for GlobeCallback {
             params: [
                 2.0 * radius_px / w_px.max(1.0),
                 2.0 * radius_px / h_px.max(1.0),
-                0.0,
-                0.0,
+                w_px,
+                h_px,
             ],
+            bnd: [BND_HALF_WIDTH_PT * ppp, 0.0, 0.0, 0.0],
+            shade: self.shade,
         };
         queue.write_buffer(&r.globe_uniform, 0, bytemuck::bytes_of(&uniforms));
+
+        // Boundary ribbons follow the values pass (empty set → None).
+        if r.bnd_globe_gen != self.world.values_gen {
+            r.bnd_globe_gen = self.world.values_gen;
+            let (vs, is) = build_globe_ribbons(&self.world.boundaries);
+            r.bnd_globe = create_ribbon_buffers(device, "boundary-globe", &vs, &is);
+        }
         Vec::new()
     }
 
@@ -503,14 +1103,22 @@ impl egui_wgpu::CallbackTrait for GlobeCallback {
         resources: &egui_wgpu::CallbackResources,
     ) {
         let r: &SceneResources = resources.get().expect("SceneResources missing");
-        let (Some(vb), Some(ib), Some(bind)) = (&r.vertex_buf, &r.index_buf, &r.globe_bind) else {
+        let Some(bind) = &r.globe_bind else { return };
+        if r.vertex_count == 0 {
             return;
-        };
+        }
         render_pass.set_pipeline(&r.globe_pipeline);
         render_pass.set_bind_group(0, bind, &[]);
-        render_pass.set_vertex_buffer(0, vb.slice(..));
-        render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..r.index_count, 0, 0..1);
+        render_pass.draw(0..r.vertex_count, 0..1);
+        // Smoothed plate-boundary ribbons over the fill (same pass, no
+        // depth buffer; the FS discards the back hemisphere).
+        if let Some((vb, ib, n)) = &r.bnd_globe {
+            render_pass.set_pipeline(&r.bnd_globe_pipeline);
+            render_pass.set_bind_group(0, bind, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..*n, 0, 0..1);
+        }
     }
 }
 
@@ -523,6 +1131,7 @@ pub fn globe_radius_px(w: f32, h: f32, zoom: f32) -> f32 {
 pub struct FlatCallback {
     pub world: Arc<WorldBundle>,
     pub view: FlatView,
+    pub shade: ShadeParams,
     /// Canvas rect in points: (center x, center y, width, height).
     pub rect_points: [f32; 4],
 }
@@ -554,6 +1163,11 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
         let ppp = screen.pixels_per_point;
         let [cx, cy, w, h] = self.rect_points;
         let base = flat_base_half_extents(self.view.projection, w, h);
+        let proj_code = match self.view.projection {
+            worldmaker_core::Projection::Equirectangular => 0u32,
+            worldmaker_core::Projection::Robinson => 1,
+            worldmaker_core::Projection::EckertIv => 2,
+        };
         let uniforms = FlatUniforms {
             center_px: [(cx + self.view.pan[0]) * ppp, (cy + self.view.pan[1]) * ppp],
             half_px: [
@@ -561,17 +1175,29 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
                 (base[1] * self.view.zoom * ppp).max(1.0),
             ],
             misc: [
-                match self.view.projection {
-                    worldmaker_core::Projection::Equirectangular => 0.0,
-                    worldmaker_core::Projection::Robinson => 1.0,
-                },
+                proj_code as f32,
                 0.0,
                 if self.view.graticule { 1.0 } else { 0.0 },
                 0.0,
             ],
-            tex: [CELL_ID_TEX_W as f32, CELL_ID_TEX_H as f32, 0.0, 0.0],
+            tex: [
+                CELL_ID_TEX_W as f32,
+                CELL_ID_TEX_H as f32,
+                (cx - w / 2.0) * ppp,
+                (cy - h / 2.0) * ppp,
+            ],
+            bnd: [BND_HALF_WIDTH_PT * ppp, w * ppp, h * ppp, 0.0],
+            shade: self.shade,
         };
         queue.write_buffer(&r.flat_uniform, 0, bytemuck::bytes_of(&uniforms));
+
+        // Boundary ribbons: chains are projected CPU-side, so the geometry
+        // depends on (boundary set, projection); cached on that key.
+        if r.bnd_flat_key != (self.world.values_gen, proj_code) {
+            r.bnd_flat_key = (self.world.values_gen, proj_code);
+            let (vs, is) = build_flat_ribbons(&self.world.boundaries, self.view.projection);
+            r.bnd_flat = create_ribbon_buffers(device, "boundary-flat", &vs, &is);
+        }
         Vec::new()
     }
 
@@ -586,6 +1212,14 @@ impl egui_wgpu::CallbackTrait for FlatCallback {
         render_pass.set_pipeline(&r.flat_pipeline);
         render_pass.set_bind_group(0, bind, &[]);
         render_pass.draw(0..3, 0..1);
+        // Smoothed plate-boundary ribbons over the map fill.
+        if let Some((vb, ib, n)) = &r.bnd_flat {
+            render_pass.set_pipeline(&r.bnd_flat_pipeline);
+            render_pass.set_bind_group(0, bind, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..*n, 0, 0..1);
+        }
     }
 }
 
@@ -634,5 +1268,376 @@ mod tests {
             pitch.sin(),
         ];
         assert!(close(rotate(&m, ground), [0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn shade_params_pack_seed_as_u32_lanes_and_uniform_sizes_match_wgsl() {
+        let sp = pack_shade_params(0xdead_beef_1234_5678, 1, 5, -120.0, 220.0, 163_842);
+        assert_eq!(sp.seed_lo, 0x1234_5678);
+        assert_eq!(sp.seed_hi, 0xdead_beef);
+        // WGSL struct sizes the Rust mirrors must match (d3a §6; the bnd
+        // vec4 for boundary ribbons grew both blocks in leg 3).
+        assert_eq!(std::mem::size_of::<ShadeParams>(), 32);
+        assert_eq!(std::mem::size_of::<GlobeUniforms>(), 128);
+        assert_eq!(std::mem::size_of::<FlatUniforms>(), 96);
+    }
+
+    // ----- flat exact-walk CPU mirror (d3a §4.5 as amended by A3) -----
+    //
+    // `walk_from_hint` / `wedge_and_weights` transliterate fs_flat's WGSL in
+    // f32: the hint walk with the R1 tie rule, the shared-g wedge scan with
+    // B1's corrected sign, and the R2 differenced barycentric solve. The
+    // reference is a deliberately INDEPENDENT f64 formulation — brute-force
+    // three-half-space containment over the winner's fan plus a raw Cramer
+    // solve of [P_c P_a P_b]·β = p — so a sign or wedge error in the mirror
+    // cannot reproduce on both sides and cancel out of the comparison (the
+    // circularity A3 flagged in the original test spec).
+    mod flat_walk {
+        use super::super::{CELL_ID_TEX_H, CELL_ID_TEX_W};
+        use worldmaker_core::grid::{unit_to_latlon, Grid};
+        use worldmaker_core::hash::splitmix64;
+
+        /// Must match WALK_CAP in shaders.wgsl.
+        const WALK_CAP: u32 = 4;
+
+        fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+            a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+        }
+        fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        }
+        fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+            [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+        }
+        fn tod(a: [f32; 3]) -> [f64; 3] {
+            [a[0] as f64, a[1] as f64, a[2] as f64]
+        }
+        fn cross3d(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        }
+        /// Scalar triple product a · (b × c) in f64.
+        fn trip(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
+            let x = cross3d(b, c);
+            a[0] * x[0] + a[1] * x[1] + a[2] * x[2]
+        }
+
+        /// What the hint raster stores in `p`'s texel: the nearest cell to
+        /// the texel CENTER. nearest_cell's greedy ascent maximizes a linear
+        /// function over the vertex graph of a convex polytope, so its result
+        /// is hint-independent — this equals the committed raster value
+        /// without building 8.4M-texel rasters per level in a test.
+        fn raster_hint(grid: &Grid, p: [f32; 3]) -> u32 {
+            let (lat, lon) = unit_to_latlon(p);
+            let w = CELL_ID_TEX_W as f32;
+            let h = CELL_ID_TEX_H as f32;
+            // Texel pick exactly as fs_flat computes tx/ty (truncation).
+            let pi = std::f32::consts::PI;
+            let x = ((lon + pi) / (2.0 * pi) * w).clamp(0.0, w - 1.0) as i32 as f32;
+            let y = ((0.5 - lat / pi) * h).clamp(0.0, h - 1.0) as i32 as f32;
+            // Texel center exactly as rasterize_cell_ids computes it.
+            let tlat = std::f32::consts::FRAC_PI_2 * (1.0 - 2.0 * (y + 0.5) / h);
+            let tlon = pi * (2.0 * (x + 0.5) / w - 1.0);
+            let (cl, sl) = (tlat.cos(), tlat.sin());
+            grid.nearest_cell([cl * tlon.cos(), cl * tlon.sin(), sl], None)
+        }
+
+        /// f32 mirror of fs_flat's hint→winner walk (R1 tie rule, cap 4).
+        fn walk_from_hint(grid: &Grid, hint: u32, p: [f32; 3]) -> u32 {
+            let mut c = hint;
+            let mut best_d = dot3(p, grid.positions[c as usize]);
+            for _ in 0..WALK_CAP {
+                let mut best = c;
+                let mut bd = best_d;
+                for &nb in grid.neighbors_of(c) {
+                    let d = dot3(p, grid.positions[nb as usize]);
+                    if d > bd || (d == bd && nb < best) {
+                        best = nb;
+                        bd = d;
+                    }
+                }
+                if best == c {
+                    break;
+                }
+                c = best;
+                best_d = bd;
+            }
+            c
+        }
+
+        /// f32 mirror of fs_flat's wedge scan + differenced barycentrics.
+        /// Returns (wedge index, weights ordered (c, n_i, n_{i+1})).
+        fn wedge_and_weights(grid: &Grid, c: u32, p: [f32; 3]) -> (usize, [f32; 3]) {
+            let ring = grid.neighbors_of(c);
+            let k = ring.len();
+            let pc = grid.positions[c as usize];
+            let mut g = [0f32; 6];
+            for (j, &nj) in ring.iter().enumerate() {
+                g[j] = dot3(p, cross3(pc, grid.positions[nj as usize]));
+            }
+            let mut wedge = usize::MAX;
+            let mut fb = 0usize;
+            let mut fb_score = f32::NEG_INFINITY;
+            for i in 0..k {
+                let i1 = (i + 1) % k;
+                if wedge == usize::MAX && g[i] >= 0.0 && g[i1] <= 0.0 {
+                    wedge = i;
+                }
+                let score = g[i].min(-g[i1]);
+                if score > fb_score {
+                    fb_score = score;
+                    fb = i;
+                }
+            }
+            if wedge == usize::MAX {
+                wedge = fb;
+            }
+            let pa = grid.positions[ring[wedge] as usize];
+            let pb = grid.positions[ring[(wedge + 1) % k] as usize];
+            let e1 = sub3(pa, pc);
+            let e2 = sub3(pb, pc);
+            let n = cross3(e1, e2);
+            let t = dot3(pc, n) / dot3(p, n);
+            let dq = sub3([t * p[0], t * p[1], t * p[2]], pc);
+            let inv_nn = 1.0 / dot3(n, n);
+            let wa = dot3(cross3(dq, e2), n) * inv_nn;
+            let wb = dot3(cross3(e1, dq), n) * inv_nn;
+            (wedge, [1.0 - wa - wb, wa, wb])
+        }
+
+        /// Independent f64 wedge reference (A3): standard three-half-space
+        /// containment over the winner's fan, first match in ring order.
+        fn reference_wedge(grid: &Grid, c: u32, p: [f32; 3]) -> usize {
+            let ring = grid.neighbors_of(c);
+            let k = ring.len();
+            let pd = tod(p);
+            let pc = tod(grid.positions[c as usize]);
+            let mut wedge = usize::MAX;
+            let mut fb = 0usize;
+            let mut fb_score = f64::NEG_INFINITY;
+            for i in 0..k {
+                let pa = tod(grid.positions[ring[i] as usize]);
+                let pb = tod(grid.positions[ring[(i + 1) % k] as usize]);
+                let h1 = trip(pd, pc, pa);
+                let h2 = trip(pd, pa, pb);
+                let h3 = trip(pd, pb, pc);
+                if wedge == usize::MAX && h1 >= 0.0 && h2 >= 0.0 && h3 >= 0.0 {
+                    wedge = i;
+                }
+                let score = h1.min(h2).min(h3);
+                if score > fb_score {
+                    fb_score = score;
+                    fb = i;
+                }
+            }
+            if wedge == usize::MAX {
+                wedge = fb;
+            }
+            wedge
+        }
+
+        /// Independent f64 weight reference (A3): raw Cramer solve of
+        /// [P_c P_a P_b]·β = p for a GIVEN wedge, normalized so the
+        /// ray-plane scale folds out — a different formulation from the
+        /// mirror's differenced solve, in f64 where the raw form is exact
+        /// to ~1e-10 even at L9.
+        fn reference_weights(grid: &Grid, c: u32, wedge: usize, p: [f32; 3]) -> [f64; 3] {
+            let ring = grid.neighbors_of(c);
+            let k = ring.len();
+            let pd = tod(p);
+            let pc = tod(grid.positions[c as usize]);
+            let pa = tod(grid.positions[ring[wedge] as usize]);
+            let pb = tod(grid.positions[ring[(wedge + 1) % k] as usize]);
+            let det = trip(pc, pa, pb);
+            let bc = trip(pd, pa, pb) / det;
+            let ba = trip(pc, pd, pb) / det;
+            let bb = trip(pc, pa, pd) / det;
+            let s = bc + ba + bb;
+            [bc / s, ba / s, bb / s]
+        }
+
+        /// Deterministic unit vectors from a fixed splitmix64 stream.
+        fn sample_unit(stream: u64, i: u64) -> [f32; 3] {
+            let a = splitmix64(stream.wrapping_add(2 * i + 1));
+            let b = splitmix64(stream.wrapping_add(2 * i + 2));
+            let z = (a >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0;
+            let lon = ((b >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0) * std::f64::consts::PI;
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            [(r * lon.cos()) as f32, (r * lon.sin()) as f32, z as f32]
+        }
+
+        /// Full per-point property: winner bit-equality vs nearest_cell,
+        /// convergence within the cap, wedge equality vs the independent
+        /// f64 containment reference (except inside the f64-measured
+        /// boundary band, where two adjacent wedges are equally valid), and
+        /// weights within 1e-4 of the independent f64 Cramer solve for the
+        /// mirror's own triple (the R2 conditioning claim).
+        fn check_point(grid: &Grid, p: [f32; 3], on_bisector: bool) {
+            let truth = grid.nearest_cell(p, None);
+            let hint = raster_hint(grid, p);
+            let win = walk_from_hint(grid, hint, p);
+            assert_eq!(win, truth, "walk winner != nearest_cell at p = {p:?}");
+            // The cap did not truncate: no ring neighbor beats the winner
+            // under the R1 step rule.
+            let wd = dot3(p, grid.positions[win as usize]);
+            for &nb in grid.neighbors_of(win) {
+                let d = dot3(p, grid.positions[nb as usize]);
+                assert!(
+                    d < wd || (d == wd && nb > win),
+                    "walk terminated on a non-optimal cell at p = {p:?}"
+                );
+            }
+            let (wedge, w32) = wedge_and_weights(grid, win, p);
+            let rwedge = reference_wedge(grid, win, p);
+            // Wedge selection: strict equality, except where the f64
+            // reference itself measures the point inside the f32 noise band
+            // of the SHARED boundary plane between the two (adjacent) picks
+            // — there both wedges are equally valid and the interpolant is
+            // continuous across the plane. The f64 gate means a real sign
+            // error (whose wrong wedge shows up at LARGE |g|) can never
+            // hide in this exception. Cell-pair midpoints sit exactly on
+            // such a plane by construction.
+            if wedge != rwedge && !on_bisector {
+                let ring = grid.neighbors_of(win);
+                let k = ring.len();
+                let shared = if (rwedge + 1) % k == wedge {
+                    Some(wedge)
+                } else if (wedge + 1) % k == rwedge {
+                    Some(rwedge)
+                } else {
+                    None
+                };
+                let in_band = shared.is_some_and(|s| {
+                    let pn = tod(grid.positions[ring[s] as usize]);
+                    trip(tod(p), tod(grid.positions[win as usize]), pn).abs() <= 1e-6
+                });
+                assert!(
+                    in_band,
+                    "wedge mismatch outside the boundary band at p = {p:?}: \
+                     mirror {wedge}, reference {rwedge}"
+                );
+            }
+            // Weight accuracy (R2): the mirror's f32 differenced solve vs
+            // the independent f64 raw-Cramer solve of the SAME triple.
+            let wref = reference_weights(grid, win, wedge, p);
+            for (j, (&wv, &rv)) in w32.iter().zip(wref.iter()).enumerate() {
+                let err = (wv as f64 - rv).abs();
+                assert!(
+                    err <= 1e-4,
+                    "weight {j} off by {err} at p = {p:?} (wedge {wedge})"
+                );
+            }
+            // Barycentric sanity: the point is inside (or within noise of)
+            // its wedge, so no weight may be strongly negative — a wrong
+            // wedge scan (the B1 sign error) extrapolates hard and fails
+            // this immediately.
+            for (j, &wv) in w32.iter().enumerate() {
+                assert!(
+                    (-0.05..=1.05).contains(&wv),
+                    "weight {j} = {wv} out of range at p = {p:?}"
+                );
+            }
+        }
+
+        /// Adjacent-pair midpoints sit exactly on Voronoi bisectors; in f32
+        /// many produce EXACT dot ties, exercising the R1 tie rule for real.
+        /// Returns how many exact ties were seen.
+        fn check_midpoints(grid: &Grid, pairs: u64, stream: u64) -> u64 {
+            let n = grid.cell_count() as u64;
+            let mut ties = 0;
+            for i in 0..pairs {
+                let a = (splitmix64(stream.wrapping_add(3 * i)) % n) as u32;
+                let ring = grid.neighbors_of(a);
+                let pick = splitmix64(stream.wrapping_add(3 * i + 1)) % ring.len() as u64;
+                let b = ring[pick as usize];
+                let pa = grid.positions[a as usize];
+                let pb = grid.positions[b as usize];
+                let m = [pa[0] + pb[0], pa[1] + pb[1], pa[2] + pb[2]];
+                let len = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt();
+                let p = [m[0] / len, m[1] / len, m[2] / len];
+                if dot3(p, pa) == dot3(p, pb) {
+                    ties += 1;
+                }
+                check_point(grid, p, true);
+            }
+            ties
+        }
+
+        #[test]
+        fn flat_walk_matches_nearest_cell_and_f64_reference() {
+            let mut ties = 0;
+            for (level, samples, pairs) in [(6u32, 3000u64, 800u64), (7, 2000, 400), (8, 1200, 200)]
+            {
+                let grid = Grid::build(level);
+                for i in 0..samples {
+                    check_point(&grid, sample_unit(0x5eed_0000 + level as u64, i), false);
+                }
+                ties += check_midpoints(&grid, pairs, 0x0bad_cafe + level as u64);
+            }
+            assert!(ties > 0, "no exact f32 dot tie was exercised (R1 untested)");
+        }
+
+        #[test]
+        fn flat_walk_l9_spot_samples() {
+            let grid = Grid::build(9);
+            for i in 0..200 {
+                check_point(&grid, sample_unit(0x5eed_1009, i), false);
+            }
+            check_midpoints(&grid, 100, 0x0bad_f00d);
+        }
+    }
+
+    /// The WGSL Eckert IV inverse arm (shaders.wgsl `map_invert`, proj > 1.5)
+    /// transliterated in f32, asserted against core `Projection::invert` to
+    /// the strict-gate standard: identical accept/reject decisions on a dense
+    /// grid over and beyond the outline, values within f32 trig tolerance.
+    #[test]
+    fn wgsl_eckert_inverse_arm_matches_cpu_invert() {
+        use std::f32::consts::PI;
+        let wgsl_arm = |mx: f32, my: f32| -> Option<(f32, f32)> {
+            if my.abs() > 1.0 {
+                return None;
+            }
+            let theta = my.clamp(-1.0, 1.0).asin();
+            let s = theta.sin();
+            let c = theta.cos();
+            let lat = ((theta + s * c + 2.0 * s) / (2.0 + PI * 0.5))
+                .clamp(-1.0, 1.0)
+                .asin();
+            let lon = 2.0 * PI * mx / (1.0 + c);
+            if lon.abs() > PI * 1.0001 {
+                return None;
+            }
+            Some((lat, lon.clamp(-PI, PI)))
+        };
+        let proj = worldmaker_core::Projection::EckertIv;
+        for iy in -110..=110 {
+            for ix in -110..=110 {
+                let mx = ix as f32 * 0.01;
+                let my = iy as f32 * 0.01;
+                let cpu = proj.invert(mx, my);
+                let gpu = wgsl_arm(mx, my);
+                match (cpu, gpu) {
+                    (None, None) => {}
+                    (Some((la, lo)), Some((lb, lob))) => {
+                        assert!(
+                            (la - lb).abs() < 1e-6 && (lo - lob).abs() < 1e-6,
+                            "value drift at ({mx}, {my}): cpu ({la}, {lo}) wgsl ({lb}, {lob})"
+                        );
+                    }
+                    _ => panic!(
+                        "accept/reject mismatch at ({mx}, {my}): cpu {:?} wgsl {:?}",
+                        cpu, gpu
+                    ),
+                }
+            }
+        }
     }
 }

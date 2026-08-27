@@ -1,0 +1,29 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-26",
+  "app_version": "0.1.0",
+  "metrics": {
+    "detail": 1.0,
+    "detail_amp_m": 220.0,
+    "detail_octaves": 5,
+    "flat_fps_L7": 77.91,
+    "flat_fps_L8": 65.83,
+    "flat_fps_L9": 59.7,
+    "fps_gpu_synced": true,
+    "fps_vsync_off": true,
+    "globe_fps_L7": 130.27,
+    "globe_fps_L8": 76.4,
+    "globe_fps_L9": 44.96,
+    "grid_build_ms_L6": 8.1,
+    "grid_build_ms_L7": 31.8,
+    "grid_build_ms_L8": 89.0,
+    "grid_build_ms_L9": 341.5,
+    "layer": "elevation",
+    "sim_wall_s_L7_500my": 2.13,
+    "sim_wall_s_L8_500my": 8.3,
+    "sim_wall_s_L9_500my": 87.68,
+    "split_fps_L7": 95.47,
+    "split_fps_L8": 61.89,
+    "split_fps_L9": 40.05
+  }
+}
