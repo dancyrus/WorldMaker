@@ -3,10 +3,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod boundaries;
 mod harness;
 mod layers;
 mod pending_edits;
 mod render;
+mod worldgen;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,6 +27,11 @@ struct Args {
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
     tectonics_out: Option<PathBuf>,
+    seed: Option<String>,
+    preset: Option<app::Preset>,
+    detail: Option<f32>,
+    detail_octaves: Option<u32>,
+    detail_amp_m: Option<f32>,
 }
 
 fn parse_args() -> Args {
@@ -33,6 +40,11 @@ fn parse_args() -> Args {
         perf_out: None,
         determinism_out: None,
         tectonics_out: None,
+        seed: None,
+        preset: None,
+        detail: None,
+        detail_octaves: None,
+        detail_amp_m: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -41,10 +53,40 @@ fn parse_args() -> Args {
             "--perf-out" => out.perf_out = args.next().map(PathBuf::from),
             "--determinism-out" => out.determinism_out = args.next().map(PathBuf::from),
             "--tectonics-results" => out.tectonics_out = args.next().map(PathBuf::from),
+            // World flags (d3a §10.2). --seed is hashed later by the exact
+            // seed-box path (seed_from_text), keeping script/UI parity.
+            "--seed" => out.seed = args.next(),
+            "--preset" => match args.next() {
+                Some(v) => match app::Preset::from_cli(&v) {
+                    Some(p) => out.preset = Some(p),
+                    None => log::warn!(
+                        "ignoring invalid value for --preset: {v} \
+                         (expected draft6|standard7|high8|ultra9)"
+                    ),
+                },
+                None => log::warn!("ignoring --preset with no value"),
+            },
+            "--detail" => parse_value(&mut out.detail, "--detail", args.next()),
+            "--detail-octaves" => {
+                parse_value(&mut out.detail_octaves, "--detail-octaves", args.next())
+            }
+            "--detail-amp-m" => parse_value(&mut out.detail_amp_m, "--detail-amp-m", args.next()),
             other => log::warn!("ignoring unknown argument: {other}"),
         }
     }
     out
+}
+
+/// Parse one flag value; unknown-arg policy is warn-and-ignore, and wrapper
+/// scripts fail loudly on any "ignoring ..." warning (D4).
+fn parse_value<T: std::str::FromStr>(slot: &mut Option<T>, flag: &str, value: Option<String>) {
+    match value {
+        Some(v) => match v.parse::<T>() {
+            Ok(parsed) => *slot = Some(parsed),
+            Err(_) => log::warn!("ignoring invalid value for {flag}: {v}"),
+        },
+        None => log::warn!("ignoring {flag} with no value"),
+    }
 }
 
 fn init_logging() {
@@ -62,6 +104,9 @@ fn init_logging() {
                 flexi_logger::Naming::Numbers,
                 flexi_logger::Cleanup::KeepLogFiles(5),
             )
+            // Warnings mirror to stderr so wrapper scripts can fail loudly on
+            // "ignoring unknown argument" (old-binary flag swallowing, D4).
+            .duplicate_to_stderr(flexi_logger::Duplicate::Warn)
             .start()
     }) {
         Ok(_) => log::info!("WorldMaker {} starting", env!("CARGO_PKG_VERSION")),
@@ -215,6 +260,11 @@ fn main() {
         screenshots_dir: args.screenshots_dir,
         perf_out: args.perf_out,
         grid_build_ms,
+        seed: args.seed,
+        preset: args.preset,
+        detail: args.detail,
+        detail_octaves: args.detail_octaves,
+        detail_amp_m: args.detail_amp_m,
     };
 
     let options = eframe::NativeOptions {

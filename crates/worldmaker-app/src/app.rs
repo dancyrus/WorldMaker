@@ -8,18 +8,22 @@ use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use eframe::egui;
+use eframe::egui_wgpu::wgpu;
 
 use worldmaker_core::grid::{latlon_to_unit, Grid};
 use worldmaker_core::hash::seed_from_text;
 use worldmaker_core::Projection;
 use worldmaker_io::pending::{self, ActiveBrush, PendingEdits, StrokeEvent};
-use worldmaker_sim::tectonics::{TectonicsHistory, TectonicsParams, TectonicsStage};
-use worldmaker_sim::{Cancelled, Pipeline, Progress, StageContext, WorldState};
+use worldmaker_sim::tectonics::{TectonicsHistory, TectonicsParams};
+use worldmaker_sim::{Cancelled, Progress, WorldState};
 
-use crate::layers::{self, BakeOverlay, Layer};
+use crate::boundaries::BoundarySet;
+use crate::layers::{self, Layer};
+use crate::pending_edits;
 use crate::render::{
-    flat_base_half_extents, globe_radius_px, globe_rotation, rotate_inv, FlatCallback, FlatView,
-    GlobeCallback, GlobeView, SceneResources, WorldBundle,
+    flat_base_half_extents, globe_radius_px, globe_rotation, layer_flags, pack_shade_params,
+    rotate_inv, FlatCallback, FlatView, GlobeCallback, GlobeView, SceneResources, ShadeParams,
+    WorldBundle,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -30,18 +34,26 @@ enum ViewMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Preset {
+pub enum Preset {
     Draft6,
     Standard7,
     High8,
+    Ultra9,
 }
 
 impl Preset {
+    const ALL: [Preset; 4] = [
+        Preset::Draft6,
+        Preset::Standard7,
+        Preset::High8,
+        Preset::Ultra9,
+    ];
     fn level(self) -> u32 {
         match self {
             Preset::Draft6 => 6,
             Preset::Standard7 => 7,
             Preset::High8 => 8,
+            Preset::Ultra9 => 9,
         }
     }
     fn label(self) -> &'static str {
@@ -49,6 +61,17 @@ impl Preset {
             Preset::Draft6 => "Draft (L6, 41k cells)",
             Preset::Standard7 => "Standard (L7, 164k cells)",
             Preset::High8 => "High (L8, 655k cells)",
+            Preset::Ultra9 => "Ultra (L9, 2.6M cells)",
+        }
+    }
+    /// Parse a `--preset` value (case-insensitive), d3a §10.2.
+    pub fn from_cli(text: &str) -> Option<Preset> {
+        match text.to_ascii_lowercase().as_str() {
+            "draft6" => Some(Preset::Draft6),
+            "standard7" => Some(Preset::Standard7),
+            "high8" => Some(Preset::High8),
+            "ultra9" => Some(Preset::Ultra9),
+            _ => None,
         }
     }
 }
@@ -63,17 +86,59 @@ enum Tool {
 
 /// Timeline playback speed while "Play" is on, in My per real second.
 const PLAY_MY_PER_SECOND: f32 = 100.0;
+/// Render-detail fBm defaults, fixed by the WO-0003 leg-4 24-config sweep
+/// (decision-log 2026-08-27). The Detail slider scales amplitude only:
+/// 0 = exactly the no-noise image, 1 = the tuned default.
+const DETAIL_DEFAULT_OCTAVES: u32 = 5;
+const DETAIL_DEFAULT_AMP_M: f32 = 350.0;
+/// Flat zoom for the deterministic coast crop (graft 8): ~30 degrees of
+/// longitude across the 1600 pt scripted window — an L8 cell spans ~13 pt,
+/// wide enough to judge coastline embellishment against facet size.
+const COAST_CROP_ZOOM: f32 = 12.0;
 /// Undo for pending strokes: ⌘Z on macOS, Ctrl+Z elsewhere (egui's COMMAND
 /// virtual modifier maps to the platform's primary modifier).
 const UNDO_STROKE: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
 
-/// Scripted modes, driven from the command line.
+/// Scripted modes and world flags, driven from the command line (d3a §10.2).
 pub struct Script {
     pub screenshots_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
+    /// `--seed`: hashed exactly like the seed box (`seed_from_text`).
+    pub seed: Option<String>,
+    /// `--preset`: draft6 | standard7 | high8 | ultra9.
+    pub preset: Option<Preset>,
+    /// `--detail`: Detail slider value 0..=1.
+    pub detail: Option<f32>,
+    /// Dev sweep override: `--detail-octaves`.
+    pub detail_octaves: Option<u32>,
+    /// Dev sweep override: `--detail-amp-m`.
+    pub detail_amp_m: Option<f32>,
+}
+
+impl Script {
+    /// Graft 7 (screenshot parity): screenshot mode with NO explicit world
+    /// flags forces seed "cyrus" + Standard7 + Detail 1.0 so the AFTER set
+    /// matches the committed BEFORE set by default, not by checklist
+    /// discipline.
+    fn forces_parity(&self) -> bool {
+        self.screenshots_dir.is_some()
+            && self.seed.is_none()
+            && self.preset.is_none()
+            && self.detail.is_none()
+            && self.detail_octaves.is_none()
+            && self.detail_amp_m.is_none()
+    }
+    /// Sweep capture mode (d3a §12): a screenshot run carrying the dev detail
+    /// overrides captures only the two judged crops — the deterministic coast
+    /// close-up (graft 8) and the mountains stage — keeping the 24-run sweep
+    /// fast.
+    fn sweep_shots(&self) -> bool {
+        self.screenshots_dir.is_some()
+            && (self.detail_octaves.is_some() || self.detail_amp_m.is_some())
+    }
 }
 
 enum ScriptState {
@@ -83,11 +148,16 @@ enum ScriptState {
         frames: u32,
         requested: bool,
     },
+    /// Perf loop (d3a §10.3): presets Standard7 -> High8 -> Ultra9, and per
+    /// preset the three views, 40 warmup + 240 sampled frames each.
     Perf {
+        preset_idx: usize,
+        /// Sim wall time for the current preset's world build was recorded.
+        sim_recorded: bool,
         stage: usize,
         frames: u32,
         started: Option<Instant>,
-        fps: Vec<(String, f64)>,
+        metrics: Vec<(String, f64)>,
     },
     Closing,
 }
@@ -108,8 +178,18 @@ pub struct WorldApp {
     job: Option<SimJob>,
     bundle: Arc<WorldBundle>,
     grid_gen: u64,
-    field_gen: u64,
+    values_gen: u64,
+    overlay_gen: u64,
     needs_bake: bool,
+
+    /// Pending edit strokes (Fix 1): drawing only accumulates here — the
+    /// world regenerates when Regenerate folds them into the applied
+    /// overlays below.
+    pending: PendingEdits,
+    /// The hotspot set the last completed run actually used — the base for
+    /// classifying, folding and displaying pending hotspot strokes. None
+    /// only before the first run ever completes.
+    hotspot_baseline: Option<Vec<[f32; 3]>>,
 
     // Tectonics parameters (UI copies; Generate builds TectonicsParams).
     plate_count: u32,
@@ -130,26 +210,35 @@ pub struct WorldApp {
     seed_text: String,
     master_seed: u64,
     sea_level_m: f32,
+    /// Render-detail slider, 0..=1 (off -> tuned default amplitude). A pure
+    /// live view control, like sea level: uniform-only, never a rebake.
+    detail: f32,
+    /// Render-detail fBm octave count; `DETAIL_DEFAULT_OCTAVES` unless the
+    /// dev sweep flag `--detail-octaves` overrode it.
+    detail_octaves: u32,
+    /// Render-detail base amplitude in meters at Detail 1.0;
+    /// `DETAIL_DEFAULT_AMP_M` unless `--detail-amp-m` overrode it.
+    detail_amp_m: f32,
     view_mode: ViewMode,
     preset: Preset,
     projection: Projection,
     graticule: bool,
     layer: Layer,
+    /// Debug toggle: true cell boundaries via the bisector-margin machinery.
+    debug_cell_bounds: bool,
+    /// Debug toggle: legacy one-cell boundary bands on the plates layer.
+    debug_legacy_bands: bool,
     tool: Tool,
     brush_radius_km: f32,
-    /// Pending edit strokes (Fix 1): drawing only accumulates here — the
-    /// world regenerates when Regenerate folds them into the applied
-    /// overlays above.
-    pending: PendingEdits,
-    /// The hotspot set the last completed run actually used — the base for
-    /// classifying, folding and displaying pending hotspot strokes. None
-    /// only before the first run ever completes.
-    hotspot_baseline: Option<Vec<[f32; 3]>>,
 
     // Canvas view state.
     globe: GlobeView,
     flat_pan: [f32; 2],
     flat_zoom: f32,
+    /// Deferred flat-canvas centering: (lat, lon) radians + zoom, resolved
+    /// against the real canvas rect on the next flat frame (the coast-crop
+    /// stage sets it; pan depends on rect size, unknown at stage setup).
+    flat_center_target: Option<(f32, f32, f32)>,
 
     // Cursor readout: (canvas name, cell id, lat deg, lon deg).
     hover: Option<(&'static str, u32, f32, f32)>,
@@ -158,6 +247,11 @@ pub struct WorldApp {
     // FPS.
     frame_times: Vec<f32>,
     last_frame: Instant,
+    /// Wall time of the most recent finished tectonics run, seconds (perf
+    /// loop records it per preset).
+    last_sim_wall_s: Option<f64>,
+    /// Device handle for the perf loop's per-frame GPU sync.
+    gpu_device: wgpu::Device,
 
     // Scripted modes.
     script: Script,
@@ -180,36 +274,63 @@ impl WorldApp {
             .callback_resources
             .insert(SceneResources::new(
                 &render_state.device,
+                &render_state.queue,
                 render_state.target_format,
             ));
 
-        let seed_text = "cyrus".to_string();
+        // ----- CLI world flags (d3a §10.2) + graft-7 screenshot parity -----
+        let forces_parity = script.forces_parity();
+        if forces_parity {
+            log::info!("screenshot parity: no explicit flags — forcing seed cyrus + Standard7 + detail 1.0");
+        }
+        let seed_text = script.seed.clone().unwrap_or_else(|| "cyrus".to_string());
         let master_seed = seed_from_text(&seed_text);
+        // Perf mode loops the pinned Standard7 -> High8 -> Ultra9 presets and
+        // starts at the first; --preset is advisory there and ignored.
+        let preset = if script.perf_out.is_some() {
+            if script.preset.is_some() {
+                log::warn!("perf mode loops Standard7->High8->Ultra9; ignoring --preset");
+            }
+            Preset::Standard7
+        } else if forces_parity {
+            Preset::Standard7
+        } else {
+            script.preset.unwrap_or(Preset::High8)
+        };
+        let detail = script.detail.map(|d| d.clamp(0.0, 1.0)).unwrap_or(1.0);
+        let detail_octaves = script
+            .detail_octaves
+            .unwrap_or(DETAIL_DEFAULT_OCTAVES)
+            .clamp(1, 8);
+        let detail_amp_m = script
+            .detail_amp_m
+            .unwrap_or(DETAIL_DEFAULT_AMP_M)
+            .clamp(0.0, 2000.0);
         let placeholder_grid = Arc::new(Grid::build(0));
+        let placeholder_ids: Arc<Vec<u32>> = Arc::new(vec![
+            0;
+            (crate::render::CELL_ID_TEX_W * crate::render::CELL_ID_TEX_H)
+                as usize
+        ]);
         let mut app = WorldApp {
             grid: placeholder_grid.clone(),
-            cell_ids: Arc::new(vec![
-                0;
-                (crate::render::CELL_ID_TEX_W * crate::render::CELL_ID_TEX_H)
-                    as usize
-            ]),
+            cell_ids: placeholder_ids.clone(),
             history: None,
             world_state: None,
             job: None,
-            bundle: Arc::new(WorldBundle {
-                grid: placeholder_grid,
-                colors: vec![0xff40_4040; 12],
-                cell_ids: Arc::new(vec![
-                    0;
-                    (crate::render::CELL_ID_TEX_W * crate::render::CELL_ID_TEX_H)
-                        as usize
-                ]),
-                grid_gen: 0,
-                field_gen: 0,
-            }),
+            bundle: Arc::new(placeholder_bundle(
+                &placeholder_grid,
+                &placeholder_ids,
+                0,
+                0,
+                0,
+            )),
             grid_gen: 0,
-            field_gen: 0,
+            values_gen: 0,
+            overlay_gen: 0,
             needs_bake: false,
+            pending: PendingEdits::new(),
+            hotspot_baseline: None,
             plate_count: 12,
             land_fraction: 0.29,
             tectonic_vigor: 1.0,
@@ -224,15 +345,18 @@ impl WorldApp {
             seed_text,
             master_seed,
             sea_level_m: 0.0,
+            detail,
+            detail_octaves,
+            detail_amp_m,
             view_mode: ViewMode::Split,
-            preset: Preset::Standard7,
+            preset,
             projection: Projection::Equirectangular,
             graticule: true,
             layer: Layer::Elevation,
+            debug_cell_bounds: false,
+            debug_legacy_bands: false,
             tool: Tool::None,
             brush_radius_km: 600.0,
-            pending: PendingEdits::new(),
-            hotspot_baseline: None,
             globe: GlobeView {
                 yaw: 0.0,
                 pitch: 0.35,
@@ -240,18 +364,23 @@ impl WorldApp {
             },
             flat_pan: [0.0, 0.0],
             flat_zoom: 1.0,
+            flat_center_target: None,
             hover: None,
             pick_hint: None,
             frame_times: Vec::with_capacity(240),
             last_frame: Instant::now(),
+            last_sim_wall_s: None,
+            gpu_device: render_state.device.clone(),
             // Perf runs first when both flags are given; its completion chains
             // into the screenshot script so neither output is silently lost.
             script_state: if script.perf_out.is_some() {
                 ScriptState::Perf {
+                    preset_idx: 0,
+                    sim_recorded: false,
                     stage: 0,
                     frames: 0,
                     started: None,
-                    fps: Vec::new(),
+                    metrics: Vec::new(),
                 }
             } else if script.screenshots_dir.is_some() {
                 ScriptState::Shot {
@@ -291,6 +420,11 @@ impl WorldApp {
 
     /// Build (or rebuild) the grid at `level`, then launch a fresh history.
     fn rebuild_grid(&mut self, level: u32) {
+        // Pending craton strokes are per-level cell ids: discard them (and
+        // any live stroke) before anything can observe the new grid. Pending
+        // hotspot strokes are unit vectors: they stay (D2). First statement
+        // by design, so every grid rebuild is covered.
+        self.pending.discard_cratons();
         let t0 = Instant::now();
         let grid = Arc::new(Grid::build(level));
         log::info!(
@@ -309,18 +443,23 @@ impl WorldApp {
         self.grid = grid.clone();
         self.cell_ids = cell_ids.clone();
         self.grid_gen += 1;
-        self.field_gen += 1;
+        // values_gen and overlay_gen ALWAYS bump with grid_gen (renderer
+        // invariant), and a fresh right-sized placeholder bundle is published
+        // immediately: the old bundle's Arcs are sized to the old grid, and
+        // rebake's mid-run values reuse must never see them (judgement A4).
+        self.values_gen += 1;
+        self.overlay_gen += 1;
         self.pick_hint = None;
         // Craton paint is per-grid (cell ids change with level); hotspot
         // positions are unit vectors and survive a preset switch.
         self.craton_paint.clear();
-        self.bundle = Arc::new(WorldBundle {
-            grid,
-            colors: vec![0xff40_4040; self.grid.cell_count() as usize],
-            cell_ids,
-            grid_gen: self.grid_gen,
-            field_gen: self.field_gen,
-        });
+        self.bundle = Arc::new(placeholder_bundle(
+            &grid,
+            &cell_ids,
+            self.grid_gen,
+            self.values_gen,
+            self.overlay_gen,
+        ));
         self.start_job();
     }
 
@@ -341,15 +480,9 @@ impl WorldApp {
         let seed = self.master_seed;
         let params = self.current_params();
         std::thread::spawn(move || {
-            let mut world = WorldState::new(grid);
-            let mut pipeline = Pipeline::new();
-            pipeline.push(Box::new(TectonicsStage::new(params)));
-            let mut ctx = StageContext::new(seed);
-            ctx.progress = Some(worker_progress);
             let t0 = Instant::now();
-            let result = pipeline
-                .run(&ctx, &mut world)
-                .map(|_| (world, t0.elapsed().as_secs_f64()));
+            let result = crate::worldgen::build_world(grid, seed, params, Some(worker_progress))
+                .map(|(world, _params_hash)| (world, t0.elapsed().as_secs_f64()));
             let _ = tx.send(result);
         });
         self.job = Some(SimJob {
@@ -368,6 +501,7 @@ impl WorldApp {
                     "tectonics run finished in {seconds:.2} s (seed {:#018x})",
                     self.master_seed
                 );
+                self.last_sim_wall_s = Some(seconds);
                 self.history = world.history.take();
                 // Capture the hotspot set this run actually used (generated
                 // or overlay): the fold base survives the next job start
@@ -418,50 +552,79 @@ impl WorldApp {
         }
     }
 
-    /// Re-bake the layer colors for the viewed keyframe and publish a bundle.
+    /// Re-bake the per-cell shading values for the viewed keyframe, run the
+    /// pending-edit overlay pass, and publish a bundle (d3a §2.4).
+    ///
+    /// Sea level and Detail are NOT inputs here — they are live uniforms
+    /// (ShadeParams); a slider drag never rebakes.
     fn rebake(&mut self) {
         self.needs_bake = false;
-        let Some(history) = &self.history else {
-            return;
-        };
-        let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
 
-        let paint: Vec<(u32, i8)>;
-        let hotspot_cells: Vec<u32>;
-        let overlay = match self.tool {
-            Tool::CratonPaint | Tool::CratonErase => {
-                paint = self.craton_paint.iter().map(|(&c, &v)| (c, v)).collect();
-                BakeOverlay {
-                    craton: Some(&paint),
-                    hotspot_cells: None,
-                }
-            }
-            Tool::Hotspot => {
-                let mut cells = Vec::new();
-                let spots = self.hotspot_overlay.as_deref().unwrap_or(&history.hotspots);
-                for h in spots {
-                    let c = self.grid.nearest_cell(*h, None);
-                    cells.push(c);
-                    cells.extend_from_slice(self.grid.neighbors_of(c));
-                }
-                hotspot_cells = cells;
-                BakeOverlay {
-                    craton: None,
-                    hotspot_cells: Some(&hotspot_cells),
-                }
-            }
-            Tool::None => BakeOverlay::NONE,
+        // Values pass — only when a history exists. Mid-run (start_job drops
+        // history) the previous bundle's values/boundaries Arcs are reused so
+        // pending strokes can still display over the current world; that is
+        // safe across a grid switch because rebuild_grid publishes a fresh
+        // right-sized placeholder bundle first (judgement A4).
+        let (values, boundaries) = if let Some(history) = &self.history {
+            let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
+            self.values_gen += 1;
+            // Smoothed boundary polylines are Plates-layer styling (d3a §8):
+            // extracted from this keyframe's plate assignment only there,
+            // empty everywhere else.
+            let boundaries = if self.layer == Layer::Plates {
+                Arc::new(crate::boundaries::extract(
+                    &self.grid,
+                    &kf.plate_id,
+                    &kf.flags,
+                ))
+            } else {
+                Arc::new(BoundarySet::empty())
+            };
+            (Arc::new(layers::bake_values(self.layer, kf)), boundaries)
+        } else {
+            (self.bundle.values.clone(), self.bundle.boundaries.clone())
         };
 
-        let colors = layers::bake(self.layer, kf, self.sea_level_m, &overlay);
-        self.field_gen += 1;
+        // Overlay pass — on EVERY rebake, including history == None, so
+        // pending edits render mid-run (feel-pass-design.md § D1). The live
+        // stroke displays too (display_strokes appends it last, so it wins
+        // per cell), and the hotspot base is the same fold base that click
+        // classification and Regenerate use, keeping display and fold
+        // coherent (D2).
+        let mut overlay = vec![0u32; self.grid.cell_count() as usize];
+        let display = self.pending.display_strokes();
+        pending_edits::apply_overlay(
+            &pending_edits::OverlayInput {
+                grid: &self.grid,
+                pending: &display,
+                generated_hotspots: self.hotspot_fold_base(),
+            },
+            &mut overlay,
+        );
+        self.overlay_gen += 1;
+
         self.bundle = Arc::new(WorldBundle {
             grid: self.grid.clone(),
-            colors,
+            values,
+            overlay,
             cell_ids: self.cell_ids.clone(),
+            boundaries,
             grid_gen: self.grid_gen,
-            field_gen: self.field_gen,
+            values_gen: self.values_gen,
+            overlay_gen: self.overlay_gen,
         });
+    }
+
+    /// The live shading uniforms for both canvases this frame.
+    fn shade_params(&self) -> ShadeParams {
+        pack_shade_params(
+            self.master_seed,
+            layer_flags(self.layer, self.debug_cell_bounds, self.debug_legacy_bands),
+            self.detail_octaves,
+            self.sea_level_m,
+            self.detail * self.detail_amp_m,
+            self.grid.cell_count(),
+        )
     }
 
     fn fps(&self) -> f64 {
@@ -471,8 +634,6 @@ impl WorldApp {
         let sum: f32 = self.frame_times.iter().sum();
         self.frame_times.len() as f64 / sum.max(1e-6) as f64
     }
-
-    // ----- painting -----
 
     // ----- canvases -----
 
@@ -515,15 +676,8 @@ impl WorldApp {
             .hotspot_overlay
             .as_deref()
             .or(self.hotspot_baseline.as_deref());
-        let count_before = self.pending.stroke_count();
         if pending::handle_stroke_event(&mut self.pending, &self.grid, &brush, &ev, base) {
             self.needs_bake = true;
-        }
-        let count_after = self.pending.stroke_count();
-        if count_after != count_before {
-            log::info!(
-                "pending edits: {count_after} stroke(s); Regenerate folds them into the world"
-            );
         }
     }
 
@@ -574,6 +728,7 @@ impl WorldApp {
                 GlobeCallback {
                     world: self.bundle.clone(),
                     view: self.globe,
+                    shade: self.shade_params(),
                     rect_points: [
                         rect.center().x,
                         rect.center().y,
@@ -585,6 +740,15 @@ impl WorldApp {
     }
 
     fn flat_canvas(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        // Resolve a deferred centering request now that the rect is known:
+        // put the projected target point at the rect center at the given
+        // zoom (mx at center = -pan_x/B_x, my at center = pan_y/B_y).
+        if let Some((lat, lon, zoom)) = self.flat_center_target.take() {
+            let base = flat_base_half_extents(self.projection, rect.width(), rect.height());
+            let (fx, fy) = self.projection.project(lat, lon);
+            self.flat_zoom = zoom;
+            self.flat_pan = [-fx * base[0] * zoom, fy * base[1] * zoom];
+        }
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         let painting = self.tool != Tool::None;
         if response.dragged() && !painting {
@@ -635,6 +799,7 @@ impl WorldApp {
                         zoom: self.flat_zoom,
                         graticule: self.graticule,
                     },
+                    shade: self.shade_params(),
                     rect_points: [
                         rect.center().x,
                         rect.center().y,
@@ -695,32 +860,36 @@ impl WorldApp {
                 egui::ComboBox::from_label("Preset")
                     .selected_text(preset.label())
                     .show_ui(ui, |ui| {
-                        for p in [Preset::Draft6, Preset::Standard7, Preset::High8] {
+                        for p in Preset::ALL {
                             ui.selectable_value(&mut preset, p, p.label());
                         }
                     });
                 if preset != self.preset {
                     self.preset = preset;
-                    // pending craton discard must precede grid rebuild (D2):
-                    // pending craton strokes are per-level cell ids and go;
-                    // pending hotspot strokes are unit vectors and stay.
-                    self.pending.discard_cratons();
                     self.rebuild_grid(preset.level());
                 }
                 ui.separator();
 
                 ui.label("Sea level:");
-                if ui
-                    .add(
-                        egui::Slider::new(&mut self.sea_level_m, -4000.0..=4000.0)
-                            .suffix(" m")
-                            .fixed_decimals(0),
-                    )
-                    .changed()
-                {
-                    // Offset around the solved sea level; recolor only.
-                    self.needs_bake = true;
-                }
+                // Offset around the solved sea level. A pure LIVE view
+                // control since Fix 3: it rides the shading uniforms every
+                // frame — dragging it never rebakes.
+                ui.add(
+                    egui::Slider::new(&mut self.sea_level_m, -4000.0..=4000.0)
+                        .suffix(" m")
+                        .fixed_decimals(0),
+                );
+                ui.separator();
+
+                ui.label("Detail:");
+                // Render-detail amplitude, off -> tuned default. Live uniform
+                // like sea level (minimal slider; placement finalized leg 4).
+                ui.add(egui::Slider::new(&mut self.detail, 0.0..=1.0).fixed_decimals(2));
+                ui.separator();
+
+                // Debug toggles (uniform bits; final top-bar layout in leg 4).
+                ui.checkbox(&mut self.debug_cell_bounds, "Cell bounds");
+                ui.checkbox(&mut self.debug_legacy_bands, "Legacy bands");
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("{:.0} FPS", self.fps()));
@@ -839,8 +1008,7 @@ impl WorldApp {
                             .text("Radius")
                             .suffix(" km"),
                     );
-                    let clearable =
-                        !self.craton_paint.is_empty() || self.pending.has_craton();
+                    let clearable = !self.craton_paint.is_empty() || self.pending.has_craton();
                     if ui
                         .add_enabled(clearable, egui::Button::new("Clear craton paint"))
                         .clicked()
@@ -861,8 +1029,7 @@ impl WorldApp {
                     } else {
                         ui.label("Click to add a hotspot; click an existing one to remove it.");
                     }
-                    let resettable =
-                        self.hotspot_overlay.is_some() || self.pending.has_hotspot();
+                    let resettable = self.hotspot_overlay.is_some() || self.pending.has_hotspot();
                     if ui
                         .add_enabled(resettable, egui::Button::new("Reset to generated"))
                         .clicked()
@@ -1029,11 +1196,27 @@ impl WorldApp {
                 }
                 "mountains"
             }
-            _ => {
+            5 => {
                 self.view_mode = ViewMode::Flat;
                 self.layer = Layer::Elevation;
                 self.viewing_kf = (kf_count * 3) / 5;
                 "timeline"
+            }
+            _ => {
+                // The deterministic coast crop (graft 8 / A9): flat close-up
+                // centered on the max-slope near-coast cell of the final era.
+                self.view_mode = ViewMode::Flat;
+                self.layer = Layer::Elevation;
+                self.viewing_kf = last;
+                if let Some(h) = &self.history {
+                    let kf = &h.keyframes[last];
+                    if let Some(c) = coast_crop_cell(&self.grid, &kf.elev_m) {
+                        let c = c as usize;
+                        self.flat_center_target =
+                            Some((self.grid.lat[c], self.grid.lon[c], COAST_CROP_ZOOM));
+                    }
+                }
+                "coast"
             }
         }
     }
@@ -1056,7 +1239,24 @@ impl WorldApp {
     }
 
     fn drive_shot(&mut self, ctx: &egui::Context) {
-        const NAMES: [&str; 6] = ["globe", "flat", "split", "plates", "mountains", "timeline"];
+        const NAMES: [&str; 7] = [
+            "globe",
+            "flat",
+            "split",
+            "plates",
+            "mountains",
+            "timeline",
+            "coast",
+        ];
+        /// The normal documentation set.
+        const NORMAL_SEQ: [usize; 6] = [0, 1, 2, 3, 4, 5];
+        /// Sweep mode (d3a §12): only the two judged crops.
+        const SWEEP_SEQ: [usize; 2] = [6, 4];
+        let seq: &[usize] = if self.script.sweep_shots() {
+            &SWEEP_SEQ
+        } else {
+            &NORMAL_SEQ
+        };
         let (stage, frames, requested) = match &self.script_state {
             ScriptState::Shot {
                 stage,
@@ -1065,12 +1265,13 @@ impl WorldApp {
             } => (*stage, *frames, *requested),
             _ => return,
         };
+        let shot = seq[stage];
         let frames = frames + 1;
         let mut requested = requested;
         if frames == 1 {
-            self.setup_shot_stage(stage);
+            self.setup_shot_stage(shot);
             self.needs_bake = true;
-            log::info!("screenshot stage {stage}: {}", NAMES[stage]);
+            log::info!("screenshot stage {stage}: {}", NAMES[shot]);
         }
         if frames == 30 && !requested {
             requested = true;
@@ -1085,13 +1286,13 @@ impl WorldApp {
         });
         if let Some(image) = image {
             let dir = self.script.screenshots_dir.clone().unwrap();
-            let name = NAMES[stage];
+            let name = NAMES[shot];
             if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
                 log::error!("failed to save screenshot {name}: {e:#}");
             } else {
                 log::info!("saved screenshot {name}.png");
             }
-            self.script_state = if stage + 1 < NAMES.len() {
+            self.script_state = if stage + 1 < seq.len() {
                 ScriptState::Shot {
                     stage: stage + 1,
                     frames: 0,
@@ -1110,15 +1311,12 @@ impl WorldApp {
     }
 
     fn drive_perf(&mut self) {
-        let ScriptState::Perf {
-            stage,
-            frames,
-            started,
-            fps,
-        } = &mut self.script_state
-        else {
-            return;
-        };
+        /// The pinned preset loop (d3a §10.3): Standard7 -> High8 -> Ultra9.
+        const PRESETS: [(Preset, &str); 3] = [
+            (Preset::Standard7, "L7"),
+            (Preset::High8, "L8"),
+            (Preset::Ultra9, "L9"),
+        ];
         const VIEWS: [(ViewMode, &str); 3] = [
             (ViewMode::Globe, "globe_fps"),
             (ViewMode::Flat, "flat_fps"),
@@ -1126,31 +1324,101 @@ impl WorldApp {
         ];
         const WARMUP: u32 = 40;
         const SAMPLE: u32 = 240;
-        let (mode, name) = VIEWS[*stage];
-        *frames += 1;
-        let frames_now = *frames;
-        if frames_now == WARMUP {
-            *started = Some(Instant::now());
+
+        // GPU-sync the sampling loop: with vsync off (and macOS recycling
+        // drawables instantly when the window is occluded) the CPU can spin
+        // far ahead of the GPU, counting frames whose draws never finished.
+        // Waiting for all submitted GPU work once per frame makes the
+        // sampled fps the real per-frame cost.
+        let _ = self.gpu_device.poll(wgpu::PollType::wait_indefinitely());
+
+        // Copy the state out (drive_shot's pattern) so preset switches may
+        // borrow all of self.
+        let (mut preset_idx, mut sim_recorded, mut stage, mut frames, mut started, mut metrics) =
+            match &mut self.script_state {
+                ScriptState::Perf {
+                    preset_idx,
+                    sim_recorded,
+                    stage,
+                    frames,
+                    started,
+                    metrics,
+                } => (
+                    *preset_idx,
+                    *sim_recorded,
+                    *stage,
+                    *frames,
+                    *started,
+                    std::mem::take(metrics),
+                ),
+                _ => return,
+            };
+
+        let (target_preset, tag) = PRESETS[preset_idx];
+        // Preset switch: run the full world build at that level, exactly as
+        // the UI combo would; drive_script's wait gate holds the loop until
+        // the history lands. Elevation layer + Detail default = the pinned
+        // "smooth shading + render detail on, smoothed boundaries off".
+        if self.preset != target_preset {
+            self.preset = target_preset;
+            self.layer = Layer::Elevation;
+            self.needs_bake = true;
+            log::info!("perf: switching to preset {tag}");
+            self.script_state = ScriptState::Perf {
+                preset_idx,
+                sim_recorded,
+                stage,
+                frames,
+                started,
+                metrics,
+            };
+            self.rebuild_grid(target_preset.level());
+            return;
         }
-        let mut finished_fps: Option<Vec<(String, f64)>> = None;
-        if frames_now == WARMUP + SAMPLE {
+        if !sim_recorded {
+            // The wait gate guarantees the history for this preset is in.
+            if let Some(w) = self.last_sim_wall_s {
+                metrics.push((format!("sim_wall_s_{tag}_500my"), w));
+            }
+            sim_recorded = true;
+        }
+
+        let (mode, name) = VIEWS[stage];
+        frames += 1;
+        if frames == WARMUP {
+            started = Some(Instant::now());
+        }
+        let mut finished: Option<Vec<(String, f64)>> = None;
+        if frames == WARMUP + SAMPLE {
             let elapsed = started
                 .take()
                 .map(|t| t.elapsed().as_secs_f64())
                 .unwrap_or(1.0);
-            fps.push((name.to_string(), SAMPLE as f64 / elapsed));
-            if *stage + 1 < VIEWS.len() {
-                *stage += 1;
-                *frames = 0;
+            metrics.push((format!("{name}_{tag}"), SAMPLE as f64 / elapsed));
+            frames = 0;
+            if stage + 1 < VIEWS.len() {
+                stage += 1;
+            } else if preset_idx + 1 < PRESETS.len() {
+                preset_idx += 1;
+                sim_recorded = false;
+                stage = 0;
             } else {
-                finished_fps = Some(std::mem::take(fps));
+                finished = Some(std::mem::take(&mut metrics));
             }
         }
         self.view_mode = mode;
-        if let Some(fps_taken) = finished_fps {
-            self.write_perf_results(&fps_taken);
+        if let Some(metrics_taken) = finished {
+            self.write_perf_results(&metrics_taken);
             // Chain into screenshots if both flags were given.
             self.script_state = if self.script.screenshots_dir.is_some() {
+                if self.script.forces_parity() {
+                    // Graft-7 parity survives the chained run: the perf loop
+                    // left the app at Ultra9, so restore the forced trio and
+                    // rebuild before the Shot stages start.
+                    self.preset = Preset::Standard7;
+                    self.detail = 1.0;
+                    self.rebuild_grid(Preset::Standard7.level());
+                }
                 ScriptState::Shot {
                     stage: 0,
                     frames: 0,
@@ -1159,10 +1427,19 @@ impl WorldApp {
             } else {
                 ScriptState::Closing
             };
+        } else {
+            self.script_state = ScriptState::Perf {
+                preset_idx,
+                sim_recorded,
+                stage,
+                frames,
+                started,
+                metrics,
+            };
         }
     }
 
-    fn write_perf_results(&self, fps: &[(String, f64)]) {
+    fn write_perf_results(&self, collected: &[(String, f64)]) {
         let Some(out) = &self.script.perf_out else {
             return;
         };
@@ -1170,17 +1447,25 @@ impl WorldApp {
         for (level, ms) in &self.script.grid_build_ms {
             metrics.insert(format!("grid_build_ms_L{level}"), serde_json::json!(ms));
         }
-        for (name, value) in fps {
+        for (name, value) in collected {
             metrics.insert(
                 name.clone(),
-                serde_json::json!((value * 10.0).round() / 10.0),
+                serde_json::json!((value * 100.0).round() / 100.0),
             );
         }
+        // fps_grid_level is retired: the per-preset loop suffixes every fps
+        // and sim-wall key with its level (d3a §10.3).
+        metrics.insert("detail".into(), serde_json::json!(self.detail));
         metrics.insert(
-            "fps_grid_level".into(),
-            serde_json::json!(self.preset.level()),
+            "detail_octaves".into(),
+            serde_json::json!(self.detail_octaves),
         );
+        metrics.insert("detail_amp_m".into(), serde_json::json!(self.detail_amp_m));
         metrics.insert("fps_vsync_off".into(), serde_json::json!(true));
+        // The loop waits for submitted GPU work every frame: fps counts only
+        // frames the GPU actually finished (an occluded macOS window never
+        // blocks on present, so unsynced counts measure CPU encode speed).
+        metrics.insert("fps_gpu_synced".into(), serde_json::json!(true));
         metrics.insert("layer".into(), serde_json::json!("elevation"));
         let file = worldmaker_io::ResultsFile::new(
             &worldmaker_io::results::today_utc_iso(),
@@ -1190,6 +1475,55 @@ impl WorldApp {
             Ok(()) => log::info!("perf results written to {}", out.display()),
             Err(e) => log::error!("failed to write perf results: {e:#}"),
         }
+    }
+}
+
+/// The deterministic coast-crop target (graft 8 as amended by A9): among
+/// cells with |elev| < 200 m, the one maximizing
+/// slope(c) = max over CSR neighbors |elev[n] - elev[c]|, found by a serial
+/// id-ordered scan with strict `>` so ties go to the lowest cell id.
+fn coast_crop_cell(grid: &Grid, elev_m: &[i16]) -> Option<u32> {
+    let mut best: Option<(u32, i32)> = None;
+    for c in 0..grid.cell_count() {
+        let e = i32::from(elev_m[c as usize]);
+        if e.abs() >= 200 {
+            continue;
+        }
+        let mut slope = 0i32;
+        for &nb in grid.neighbors_of(c) {
+            let d = (i32::from(elev_m[nb as usize]) - e).abs();
+            if d > slope {
+                slope = d;
+            }
+        }
+        if best.map(|(_, bs)| slope > bs).unwrap_or(true) {
+            best = Some((c, slope));
+        }
+    }
+    best.map(|(c, _)| c)
+}
+
+/// A neutral bundle for a freshly built grid: zero-elevation values, zeroed
+/// overlay, empty boundary set, published with the caller's (just bumped)
+/// generations. Keeps every buffer right-sized for the new grid before the
+/// first real bake lands (judgement A4).
+fn placeholder_bundle(
+    grid: &Arc<Grid>,
+    cell_ids: &Arc<Vec<u32>>,
+    grid_gen: u64,
+    values_gen: u64,
+    overlay_gen: u64,
+) -> WorldBundle {
+    let n = grid.cell_count() as usize;
+    WorldBundle {
+        grid: grid.clone(),
+        values: Arc::new(vec![[0f32.to_bits(), 0u32]; n]),
+        overlay: vec![0u32; n],
+        cell_ids: cell_ids.clone(),
+        boundaries: Arc::new(BoundarySet::empty()),
+        grid_gen,
+        values_gen,
+        overlay_gen,
     }
 }
 
@@ -1226,8 +1560,7 @@ impl eframe::App for WorldApp {
 
         // Cmd/Ctrl+Z: cancel the live stroke first, else pop the newest
         // pending stroke (no redo). Gated so the seed field's own text undo
-        // wins while it has keyboard focus (egui 0.36 renamed the check to
-        // egui_wants_keyboard_input).
+        // wins while it has keyboard focus.
         if !ctx.egui_wants_keyboard_input()
             && ctx.input_mut(|i| i.consume_shortcut(&UNDO_STROKE))
             && self.pending.undo()

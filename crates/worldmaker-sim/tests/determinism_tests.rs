@@ -48,16 +48,25 @@ fn fixed_seed_reproduces_committed_hash() {
 }
 
 /// Phase 1 goldens: the tectonic world at L6, seed 42, default parameters
-/// (500 My). Produced by the acceptance harness on Dan's PC (2026-08-19,
-/// docs/results/tectonics-phase1-DESKTOP-VKD81C6.json); Linux CI must
-/// reproduce them bit-for-bit — the sim path uses only IEEE-exact operations
-/// (see worldmaker_core::dmath), and this test is what enforces it.
+/// (500 My). Produced by the acceptance harness (config identical to this
+/// test); every CI platform must reproduce them bit-for-bit — the sim path
+/// uses only IEEE-exact operations (see worldmaker_core::dmath), and this
+/// test is what enforces it.
 ///
 /// History: elevation regenerated 2026-08-19 when sea level switched from a
-/// per-keyframe re-solve to a fixed t=0 datum (decision log, Dan). The plate
-/// golden was untouched — proof the change was display-datum only.
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xf751_0e72_14ed_5b62;
-const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0x70df_6db8_ec5f_653d;
+/// per-keyframe re-solve to a fixed t=0 datum (decision log, Dan; the plate
+/// golden was untouched — proof the change was display-datum only). BOTH
+/// regenerated 2026-08-26 for WO-0003 Fix 2 — the one sanctioned M3 move:
+/// the t=0 plate generator was replaced by the retuned hybrid growth+warp
+/// (judge panel 3–0, re-judging panel 3–0; decision log), and the craton
+/// stream's draw alignment is geometry-entangled with the plate map, so
+/// continents and elevation move with it — a whole-world regeneration, not
+/// a red flag. Old values 0xf751_0e72_14ed_5b62 / 0x70df_6db8_ec5f_653d;
+/// new values from the M3 harness run on Daniels-MacBook-Air
+/// (docs/results/tectonics-feelpass-Daniels-MacBook-Air.json, whose
+/// determinism hashes equal these constants by construction).
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x7b43_ec03_a6ef_ca2a;
+const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0x1690_72d7_7080_3f71;
 
 #[test]
 fn tectonics_reproduces_committed_goldens() {

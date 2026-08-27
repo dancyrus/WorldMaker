@@ -65,6 +65,8 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
 - App renders the icosphere triangle mesh (globe) and a cell-id lookup texture
   (flat) — the flat texture depends only on grid level, so seed/sea-level changes
   are just buffer updates.
+- Keyframes: 16 B/cell; cadence 10 My (L6/L7), 20 My (L8), 100 My (L9); a
+  history stores its own interval. The 1 GB / 2 Gy budget is defined at L7.
 - App builds: `cargo run --release -p worldmaker-app`. Perf harness:
   `cargo run --release -p worldmaker-app -- --perf-out <file>`. Screenshots:
   `-- --screenshots <dir>`.
@@ -84,7 +86,8 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
   `Button::selectable` replaces SelectableLabel;
   `Context::egui_wants_keyboard_input` replaces `wants_keyboard_input`.
   wgpu 30: bind-group layouts
-  are `&[Option<&BindGroupLayout>]`, pipeline layouts use `immediate_size`,
+  are `&[Option<&BindGroupLayout>]`, vertex buffers
+  `&[Option<VertexBufferLayout>]`, pipeline layouts use `immediate_size`,
   `RenderPipelineDescriptor` uses `multiview_mask`.
 - Changing anything in the noise/elevation path changes the committed golden
   hash — regenerate it deliberately and log the change; never "fix" the test.
@@ -105,3 +108,12 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
 - A .command Finder launcher runs in a fresh Terminal that may lack cargo on
   PATH: export ~/.cargo/bin explicitly, and detach the app with `&` + disown
   so closing the Terminal window doesn't kill it.
+- Scripted screenshot/perf runs hang at their first stage if the Mac's
+  display is asleep (the window never gets redraw events): wrap them in
+  `caffeinate -dimsu <command>`.
+- zsh: `status` is a read-only special variable (`$?` alias) — assigning it
+  aborts the script; use `rc=$?` in .command/script files.
+- fps with vsync off is only real if something blocks on the GPU: an
+  occluded macOS window recycles drawables instantly, so an unsynced frame
+  counter measures CPU encode speed (6000+ "fps"). Perf loops must wait for
+  submitted GPU work each frame (fps_gpu_synced in results JSON).

@@ -3379,10 +3379,13 @@ name = "worldmaker-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "image",
  "log",
  "rand",
  "rayon",
+ "serde_json",
  "worldmaker-core",
+ "worldmaker-io",
 ]
 
 [[package]]
