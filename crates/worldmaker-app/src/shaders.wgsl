@@ -629,7 +629,8 @@ fn fs_flat(in: FlatVsOut) -> @location(0) vec4<f32> {
 // segment. Globe vertices are unit vectors; flat vertices are projected
 // normalized map coordinates (CPU-projected, antimeridian pre-split).
 // Colors come from palette LUT row 5 (texel 0 trench, 1 ridge,
-// 2 transform); alpha-blended over the fill with fwidth-AA edges.
+// 2 transform; velocity arrows arrive as btype 9 -> texel 8, white);
+// alpha-blended over the fill with fwidth-AA edges.
 
 struct BndVsOut {
     @builtin(position) pos: vec4<f32>,

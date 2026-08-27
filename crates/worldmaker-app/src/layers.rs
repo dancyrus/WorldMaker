@@ -23,14 +23,18 @@ pub enum Layer {
     Plates,
     CrustAge,
     Thickness,
+    PlateVelocity,
+    VelocityField,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 4] = [
+    pub const ALL: [Layer; 6] = [
         Layer::Elevation,
         Layer::Plates,
         Layer::CrustAge,
         Layer::Thickness,
+        Layer::PlateVelocity,
+        Layer::VelocityField,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -38,7 +42,17 @@ impl Layer {
             Layer::Plates => "Plates",
             Layer::CrustAge => "Crust age",
             Layer::Thickness => "Thickness",
+            Layer::PlateVelocity => "Plate velocity",
+            Layer::VelocityField => "Velocity field",
         }
+    }
+    /// The two velocity layers draw the Plates layer underneath their
+    /// arrows (WO-0004): they bake and shade exactly as Plates.
+    pub fn shades_as_plates(self) -> bool {
+        matches!(
+            self,
+            Layer::Plates | Layer::PlateVelocity | Layer::VelocityField
+        )
     }
 }
 
@@ -170,6 +184,9 @@ const PAINT_OCEAN: [f32; 3] = rgb(40, 120, 255);
 const HOTSPOT_MARK: [f32; 3] = rgb(255, 0, 255);
 /// Background outside the flat map's projection outline (LUT row 5 code 7).
 const OUTSIDE_MAP: [f32; 3] = [0.10, 0.11, 0.13];
+/// Velocity arrows on the two velocity layers (WO-0004): white, drawn
+/// through the boundary-ribbon path as btype `boundaries::BTYPE_ARROW`.
+const ARROW_WHITE: [f32; 3] = rgb(255, 255, 255);
 
 /// Continent flag in the category word (bit 16, frozen in d3a §2.2).
 pub const CAT_CONTINENT: u32 = 1 << 16;
@@ -192,7 +209,7 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
     // Plate ids grow monotonically across breakups, so raw id % 24 lets two
     // alive plates share a color. Rank the ids actually present in this
     // keyframe instead: at most 24 plates are alive, so ranks never collide.
-    let plate_rank: Vec<u16> = if layer == Layer::Plates {
+    let plate_rank: Vec<u16> = if layer.shades_as_plates() {
         let mut ids: Vec<u16> = kf
             .plates
             .iter()
@@ -216,7 +233,9 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
             let flags = kf.flags[c] as u32;
             let continent = flags & (1 << 15) != 0;
             let scalar = match layer {
-                Layer::Elevation | Layer::Plates => kf.elev_m[c] as f32,
+                Layer::Elevation | Layer::Plates | Layer::PlateVelocity | Layer::VelocityField => {
+                    kf.elev_m[c] as f32
+                }
                 Layer::CrustAge => {
                     if continent {
                         0.0
@@ -230,7 +249,7 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
                 }
             };
             let mut cat = 0u32;
-            if layer == Layer::Plates {
+            if layer.shades_as_plates() {
                 let rank = plate_rank
                     .get(kf.plate_id[c] as usize)
                     .copied()
@@ -272,7 +291,8 @@ pub const LUT_ROWS: u32 = 8;
 ///   2  viridis (age t)     3  batlow (thickness t)
 ///   4  24 plate colors in texels 0..24; oceanic-darkened ×0.55 in 32..56
 ///   5  fixed colors: 0 trench, 1 ridge, 2 transform, 3 age-continent,
-///      4 paint-continent, 5 paint-ocean, 6 hotspot, 7 outside-map background
+///      4 paint-continent, 5 paint-ocean, 6 hotspot, 7 outside-map
+///      background, 8 velocity-arrow white
 ///   6–7 reserved (zero)
 pub fn bake_palette_lut() -> Vec<u8> {
     let w = LUT_W as usize;
@@ -301,6 +321,7 @@ pub fn bake_palette_lut() -> Vec<u8> {
         PAINT_OCEAN,
         HOTSPOT_MARK,
         OUTSIDE_MAP,
+        ARROW_WHITE,
     ]
     .iter()
     .enumerate()
@@ -375,6 +396,7 @@ mod tests {
             PAINT_OCEAN,
             HOTSPOT_MARK,
             OUTSIDE_MAP,
+            ARROW_WHITE,
         ];
         for (i, c) in fixed.iter().enumerate() {
             assert_eq!(texel(5, i), pack3(*c));
@@ -386,12 +408,36 @@ mod tests {
         for i in 56..256 {
             assert_eq!(texel(4, i), 0);
         }
-        for i in 8..256 {
+        for i in 9..256 {
             assert_eq!(texel(5, i), 0);
         }
         for row in 6..8 {
             for i in 0..256 {
                 assert_eq!(texel(row, i), 0);
+            }
+        }
+    }
+
+    /// WO-0004 step 9: `Layer::ALL` must list every enum variant exactly
+    /// once. The exhaustive match (no wildcard) fails to compile when a
+    /// variant is added, forcing this test — and ALL — to be updated.
+    #[test]
+    fn layer_all_lists_every_variant_once() {
+        const VARIANT_COUNT: usize = 6;
+        assert_eq!(Layer::ALL.len(), VARIANT_COUNT);
+        for l in Layer::ALL {
+            match l {
+                Layer::Elevation
+                | Layer::Plates
+                | Layer::CrustAge
+                | Layer::Thickness
+                | Layer::PlateVelocity
+                | Layer::VelocityField => {}
+            }
+        }
+        for (i, a) in Layer::ALL.iter().enumerate() {
+            for b in Layer::ALL.iter().skip(i + 1) {
+                assert!(a != b, "Layer::ALL contains a duplicate");
             }
         }
     }
