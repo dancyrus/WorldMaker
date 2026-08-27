@@ -359,14 +359,13 @@ pub const LIVELINESS_OVERLAP_MAX: f64 = 0.985;
 /// See [`LIVELINESS_OVERLAP_WINDOW_MY`].
 pub const LIVELINESS_MIN_PLATE_CELLS: u32 = 50;
 /// Free-mover exemption for gate 7.1: a plate whose mean speed over the
-/// window's keyframes stays at or above this (the unjammed SPEED_MIN), and
-/// whose continent-continent contact at the window's end (if any) is
-/// younger than the suture timer, is rotating about a near-internal Euler
-/// pole or drifting uninvaded — with at most brief jam dips that the suture
-/// rule resolved — not frozen: its crust visibly moves even though its
-/// ownership footprint holds (Easter-microplate style spinners; giant
-/// plates whose random Euler pole landed inside them). A frozen or
-/// floor-creep-welded plate means 0.00–0.05 and stays caught.
+/// window's keyframes stays at or above this is rotating about a
+/// near-internal Euler pole or drifting uninvaded — not frozen: its crust
+/// visibly moves even though its ownership footprint holds
+/// (Easter-microplate style spinners; giant plates whose Euler pole sits
+/// inside them). Since WO-0006 there is no speed floor and no jam creep, so
+/// sustained speed cannot be faked by a clamp; a frozen plate reads ~0.0
+/// and stays caught.
 pub const LIVELINESS_FREE_MIN_SPEED: f32 = 0.1;
 /// Gate 7.2: no alive plate holds speed < `LIVELINESS_SPEED_FLOOR` deg/My
 /// for more than `LIVELINESS_SLOW_MAX_MY` contiguous.
@@ -453,9 +452,14 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
             if age > 0.0 && age <= super::step::SUTURE_AFTER_MY {
                 continue; // fresh collision: the suture rule owns this
             }
-            // Free mover: window-mean speed at or above the unjammed
-            // SPEED_MIN and no stale contact at its end — the plate spins
-            // or drifts in plain sight; only its uninvaded footprint holds.
+            // Free mover: window-mean speed at or above
+            // LIVELINESS_FREE_MIN_SPEED — the plate spins or drifts in
+            // plain sight; only its uninvaded footprint holds. Under the
+            // WO-0006 force balance there is no speed floor or jam creep,
+            // so sustained speed IS motion; the old extra requirement of a
+            // fresh contact guarded against floor-creep welds reading as
+            // movers, a mode that no longer exists (S3 replaces these
+            // gates with the §9 acceptance metrics).
             let (mut speed_sum, mut speed_n) = (0.0f64, 0u32);
             for kf in &hist.keyframes[k..=k + per_window] {
                 if let Some(q) = kf.plates.iter().find(|q| q.id == p.id) {
@@ -463,8 +467,8 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
                     speed_n += 1;
                 }
             }
-            let free_mover = age <= super::step::SUTURE_AFTER_MY
-                && speed_sum / speed_n.max(1) as f64 >= LIVELINESS_FREE_MIN_SPEED as f64;
+            let free_mover =
+                speed_sum / speed_n.max(1) as f64 >= LIVELINESS_FREE_MIN_SPEED as f64;
             if free_mover {
                 continue;
             }

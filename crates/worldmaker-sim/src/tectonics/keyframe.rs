@@ -3,8 +3,9 @@
 //! A keyframe every 10 My holds the full simulation state — per-cell fields
 //! packed to 16 bits each plus the per-plate and per-pair bookkeeping — so a
 //! run can restart from any keyframe (plate drag now, branching later) and the
-//! era picker can decode any moment for display. 16 B/cell keeps a 2 Gy run at
-//! L7 (201 keyframes × 163,842 cells) near 0.5 GB, inside the 1 GB budget.
+//! era picker can decode any moment for display. 20 B/cell (WO-0006: slab
+//! ledger fields, ruled acceptable) keeps a 2 Gy run at L7 (201 keyframes ×
+//! 163,842 cells) near 0.66 GB, inside the 1 GB budget.
 
 use worldmaker_core::FieldStore;
 
@@ -28,8 +29,6 @@ pub struct PlateState {
     pub pole: [f32; 3],
     /// Current angular speed, deg/My (always ≥ 0; the pole encodes direction).
     pub speed_deg_my: f32,
-    /// Setup-time preferred speed the slab-pull update relaxes toward.
-    pub base_speed_deg_my: f32,
     /// Simulation time (My) of this plate's most recent suture, or
     /// [`NEVER_SUTURED`] if it has none.
     pub youngest_suture_my: f32,
@@ -39,10 +38,38 @@ pub struct PlateState {
     pub pending_rot: [[f32; 3]; 3],
     /// Total banked rotation angle, degrees.
     pub pending_deg: f32,
-    /// Previous step's boundary composition (slab-pull inputs).
+    /// Slab ledger: what this plate has subducted, one merged segment per
+    /// consuming step, in chronological (fixed) order. Attached segments are
+    /// the slab-pull drivers of the force balance; a dead plate's remaining
+    /// segments transfer to the plate that consumed it (Dan's ruling:
+    /// slabs keep pulling after the subducting plate dies).
+    pub slab: Vec<SlabSegment>,
+    /// Previous step's boundary composition (force-balance inputs).
     pub boundary_cells: u32,
     pub subducting_cells: u32,
     pub colliding_cells: u32,
+    /// Cells on a divergent boundary (ridge-push driver).
+    pub ridge_cells: u32,
+    /// Transform-only boundary cells (transform-friction resistance).
+    pub transform_cells: u32,
+    /// Summed boundary torque directions from the previous step (unnormalized;
+    /// the pole relaxes toward its direction).
+    pub drive_torque: [f32; 3],
+}
+
+/// One entry of a plate's slab ledger: crust consumed at its trenches in one
+/// step, merged per plate per step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlabSegment {
+    /// Cells consumed.
+    pub area_cells: u32,
+    /// Mean crust age when it went under (older = denser = stronger pull).
+    pub age_at_subduction_my: f32,
+    /// Simulation time of consumption.
+    pub subducted_at_my: f32,
+    /// Still mechanically coupled to the surface plate; detaches after
+    /// `SLAB_DETACH_MY` and stops pulling.
+    pub attached: bool,
 }
 
 /// Sentinel for "no suture yet" — old enough that the breakup rule treats a
@@ -79,6 +106,10 @@ pub struct Keyframe {
     pub buildup_ckm: Vec<u16>,
     /// Feature bits 0..=7, crust_type at bit 15.
     pub flags: Vec<u16>,
+    /// Plate whose slab lies beneath this cell (`u16::MAX` = none).
+    pub slab_plate: Vec<u16>,
+    /// When that slab went under (My; 0 where `slab_plate` is none).
+    pub slab_since_my: Vec<u16>,
     pub plates: Vec<PlateState>,
     pub collisions: Vec<PairTimer>,
 }
@@ -101,8 +132,13 @@ fn enc_i16(v: f32) -> i16 {
 impl Keyframe {
     /// Approximate heap size in bytes (per-cell arrays dominate).
     pub fn approx_bytes(&self) -> usize {
-        self.elev_m.len() * 16
+        self.elev_m.len() * 20
             + self.plates.len() * std::mem::size_of::<PlateState>()
+            + self
+                .plates
+                .iter()
+                .map(|p| p.slab.len() * std::mem::size_of::<SlabSegment>())
+                .sum::<usize>()
             + self.collisions.len() * std::mem::size_of::<PairTimer>()
     }
 
@@ -122,6 +158,8 @@ impl Keyframe {
         buildup: &[f32],
         crust_type: &[u32],
         features: &[u32],
+        slab_plate: &[u16],
+        slab_since_my: &[f32],
         plates: Vec<PlateState>,
         collisions: Vec<PairTimer>,
     ) -> Keyframe {
@@ -137,6 +175,8 @@ impl Keyframe {
             rift_age_my: Vec::with_capacity(n),
             buildup_ckm: Vec::with_capacity(n),
             flags: Vec::with_capacity(n),
+            slab_plate: slab_plate.to_vec(),
+            slab_since_my: Vec::with_capacity(n),
             plates,
             collisions,
         };
@@ -148,6 +188,7 @@ impl Keyframe {
             kf.orogeny_age_my.push(enc_u16(orogeny_age[i]));
             kf.rift_age_my.push(enc_u16(rift_age[i]));
             kf.buildup_ckm.push(enc_u16(buildup[i] * 100.0));
+            kf.slab_since_my.push(enc_u16(slab_since_my[i]));
             let mut f = (features[i] & 0xff) as u16;
             if crust_type[i] != 0 {
                 f |= KF_CONTINENT_BIT;
@@ -274,6 +315,8 @@ mod tests {
         let build = vec![0.0f32, 0.0, 3.25, 0.0, 0.0, 0.0];
         let ctype = vec![0u32, 1, 1, 0, 0, 1];
         let feats = vec![0u32, 0b1_0000, 0b100, 0b10, 0, 0b1];
+        let slab_plate = vec![u16::MAX, 3, u16::MAX, u16::MAX, 0, u16::MAX];
+        let slab_since = vec![0.0f32, 140.0, 0.0, 0.0, 12.0, 0.0];
         let kf = Keyframe::encode(
             120.0,
             -230.0,
@@ -286,6 +329,8 @@ mod tests {
             &build,
             &ctype,
             &feats,
+            &slab_plate,
+            &slab_since,
             vec![],
             vec![],
         );
@@ -294,6 +339,9 @@ mod tests {
         assert_eq!(kf.elev_m[4], 32_767);
         assert_eq!(kf.crust_age_my[2], 65_535);
         assert_eq!(kf.thickness_ckm[3], 65_535);
+        // Slab ledger cells round-trip exactly (WO-0006 S1).
+        assert_eq!(kf.slab_plate, slab_plate);
+        assert_eq!(kf.slab_since_my, &[0u16, 140, 0, 0, 12, 0]);
 
         let mut fields = FieldStore::new(n);
         kf.write_fields(&mut fields);
@@ -329,6 +377,8 @@ mod tests {
                     rift_age_my: vec![],
                     buildup_ckm: vec![],
                     flags: vec![],
+                    slab_plate: vec![],
+                    slab_since_my: vec![],
                     plates: vec![],
                     collisions: vec![],
                 })

@@ -239,6 +239,12 @@ fn resume_from_keyframe_is_bit_exact() {
         assert_eq!(kf.orogeny_age_my, orig.orogeny_age_my, "orogeny at t={t}");
         assert_eq!(kf.rift_age_my, orig.rift_age_my, "rift age at t={t}");
         assert_eq!(kf.buildup_ckm, orig.buildup_ckm, "buildup at t={t}");
+        // Slab-ledger cells (WO-0006 S1): the round trip must preserve them.
+        assert_eq!(kf.slab_plate, orig.slab_plate, "slab plate at t={t}");
+        assert_eq!(
+            kf.slab_since_my, orig.slab_since_my,
+            "slab since at t={t}"
+        );
         // Plate-level state, field by field (PlateState is raw f32s).
         assert_eq!(kf.plates.len(), orig.plates.len(), "plate count at t={t}");
         for (pk, po) in kf.plates.iter().zip(&orig.plates) {
@@ -248,11 +254,6 @@ fn resume_from_keyframe_is_bit_exact() {
             assert_eq!(
                 pk.speed_deg_my, po.speed_deg_my,
                 "plate {} speed at t={t}",
-                pk.id
-            );
-            assert_eq!(
-                pk.base_speed_deg_my, po.base_speed_deg_my,
-                "plate {} base speed at t={t}",
                 pk.id
             );
             assert_eq!(
@@ -285,6 +286,22 @@ fn resume_from_keyframe_is_bit_exact() {
                 "plate {} colliding at t={t}",
                 pk.id
             );
+            assert_eq!(
+                pk.ridge_cells, po.ridge_cells,
+                "plate {} ridge cells at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.transform_cells, po.transform_cells,
+                "plate {} transform cells at t={t}",
+                pk.id
+            );
+            assert_eq!(
+                pk.drive_torque, po.drive_torque,
+                "plate {} torque at t={t}",
+                pk.id
+            );
+            assert_eq!(pk.slab, po.slab, "plate {} slab ledger at t={t}", pk.id);
         }
         // Pair-collision timers.
         assert_eq!(

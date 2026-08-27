@@ -42,6 +42,7 @@ fn quantize(s: &mut SimState) {
         s.orogeny_age[i] = q_u16(s.orogeny_age[i]);
         s.rift_age[i] = q_u16(s.rift_age[i]);
         s.buildup[i] = q_u16(s.buildup[i] * 100.0) * 0.01;
+        s.slab_since_my[i] = q_u16(s.slab_since_my[i]);
     }
 }
 
