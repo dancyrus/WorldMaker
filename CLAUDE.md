@@ -39,7 +39,9 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
 - The macOS CI job stays informational.
 - Proven 2026-08-25: full test suite + all goldens pass on Apple Silicon
   bit-for-bit; sim wall times ~15% faster than the PC; rendering 7–25x slower
-  in raw fps but ≥55 fps in every view. Dan opens the app by double-clicking
+  in raw fps but ≥55 fps in every pre-WO-0003 view. GPU-synced feel-pass
+  records (2026-08-27): ≥59 fps everywhere at the L8 default; Ultra9 dips to
+  ~39–42 fps in globe/split. Dan opens the app by double-clicking
   WorldMaker.command.
 
 ## Layout
