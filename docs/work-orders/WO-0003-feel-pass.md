@@ -98,16 +98,8 @@ unchecked box.
 
 ### Fix 4 — plates must never freeze for good (sim; after C, before A)
 
-Measured on v0.2.0 headless at Dan's recorded settings (seed "dan", 8 plates,
-land 0.40, vigor 1.73, 2 Gy, L6): one to three large plates near-motionless
-at any moment; in the defaults control one plate stayed frozen from 400 to
-2,000 My; final speeds show plates at exactly 0.00 deg/My while others peg
-the 1.2 clamp. Mechanism (step.rs constants): COLLISION_DAMP = 1.0 lets
-braking reach exact zero, and zero is absorbing — boundaries fall below
-CLASSIFY_CMYR, classify as transform, run no collision timers, so no suture,
-no slab pull, no revival, ever. Real India slowed from ~15 to ~5 cm/yr at
-the Asia collision and still moves; braking is right, a permanent stop is
-the defect. All changes in worldmaker-sim.
+Session 2 owns the instructions, the measurement record, and the diagnosis:
+[WO-0003-S2.md](WO-0003-S2.md). All changes in worldmaker-sim.
 
 - [ ] Cap collision braking below a full stop; a jammed plate keeps a small
       residual convergence
@@ -137,6 +129,8 @@ the defect. All changes in worldmaker-sim.
 - [ ] Fix 4 merged green
 
 ### Track A — pending edits (merges last, rebases on C)
+
+Session 3 owns the instructions: [WO-0003-S3.md](WO-0003-S3.md).
 - [ ] pending-edits module: ordered stroke list (CratonPaint cells ±1 /
       HotspotAdd / HotspotRemove unit vectors)
 - [ ] Structural guard: stroke path has no route to Pipeline::run, enforced by test
@@ -152,6 +146,8 @@ the defect. All changes in worldmaker-sim.
 - [ ] Track A merged green
 
 ## Stage V — verify + close
+
+Session 4 owns the instructions: [WO-0003-S4.md](WO-0003-S4.md).
 
 - [ ] Bounded verification pass: at most ten short agents, one per acceptance
       area (correctness, determinism, performance, UX-contract, repo hygiene
