@@ -13,6 +13,7 @@ use eframe::egui_wgpu::wgpu;
 use worldmaker_core::grid::{latlon_to_unit, Grid};
 use worldmaker_core::hash::seed_from_text;
 use worldmaker_core::Projection;
+use worldmaker_io::pending::{self, ActiveBrush, PendingEdits, StrokeEvent};
 use worldmaker_sim::tectonics::{TectonicsHistory, TectonicsParams};
 use worldmaker_sim::{Cancelled, Progress, WorldState};
 
@@ -94,9 +95,10 @@ const DETAIL_DEFAULT_AMP_M: f32 = 350.0;
 /// longitude across the 1600 pt scripted window — an L8 cell spans ~13 pt,
 /// wide enough to judge coastline embellishment against facet size.
 const COAST_CROP_ZOOM: f32 = 12.0;
-/// Hotspot tool: clicking within this range of an existing hotspot removes it.
-const HOTSPOT_REMOVE_KM: f32 = 300.0;
-const EARTH_RADIUS_KM: f32 = 6371.0;
+/// Undo for pending strokes: ⌘Z on macOS, Ctrl+Z elsewhere (egui's COMMAND
+/// virtual modifier maps to the platform's primary modifier).
+const UNDO_STROKE: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
 
 /// Scripted modes and world flags, driven from the command line (d3a §10.2).
 pub struct Script {
@@ -191,9 +193,14 @@ pub struct WorldApp {
     overlay_gen: u64,
     needs_bake: bool,
 
-    /// Pending edit strokes (Track A's machinery fills this at rebase; until
-    /// then it stays empty and the no-op apply_overlay renders nothing).
-    pending_strokes: Vec<worldmaker_io::Stroke>,
+    /// Pending edit strokes (Fix 1): drawing only accumulates here — the
+    /// world regenerates when Regenerate folds them into the applied
+    /// overlays below.
+    pending: PendingEdits,
+    /// The hotspot set the last completed run actually used — the base for
+    /// classifying, folding and displaying pending hotspot strokes. None
+    /// only before the first run ever completes.
+    hotspot_baseline: Option<Vec<[f32; 3]>>,
 
     // Tectonics parameters (UI copies; Generate builds TectonicsParams).
     plate_count: u32,
@@ -234,8 +241,6 @@ pub struct WorldApp {
     debug_legacy_bands: bool,
     tool: Tool,
     brush_radius_km: f32,
-    /// The current craton stroke changed the overlay; re-run on stroke end.
-    craton_stroke_dirty: bool,
 
     // Canvas view state.
     globe: GlobeView,
@@ -343,7 +348,8 @@ impl WorldApp {
             values_gen: 0,
             overlay_gen: 0,
             needs_bake: false,
-            pending_strokes: Vec::new(),
+            pending: PendingEdits::new(),
+            hotspot_baseline: None,
             plate_count: 12,
             land_fraction: 0.29,
             tectonic_vigor: 1.0,
@@ -370,7 +376,6 @@ impl WorldApp {
             debug_legacy_bands: false,
             tool: Tool::None,
             brush_radius_km: 600.0,
-            craton_stroke_dirty: false,
             globe: GlobeView {
                 yaw: 0.0,
                 pitch: 0.35,
@@ -412,6 +417,15 @@ impl WorldApp {
         app
     }
 
+    /// Base set for classifying, folding and displaying pending hotspot
+    /// strokes: the applied overlay wins when present, else the last
+    /// completed run's set (D2 fold rules).
+    fn hotspot_fold_base(&self) -> Option<&[[f32; 3]]> {
+        self.hotspot_overlay
+            .as_deref()
+            .or(self.hotspot_baseline.as_deref())
+    }
+
     fn current_params(&self) -> TectonicsParams {
         TectonicsParams {
             plate_count: self.plate_count,
@@ -426,6 +440,11 @@ impl WorldApp {
 
     /// Build (or rebuild) the grid at `level`, then launch a fresh history.
     fn rebuild_grid(&mut self, level: u32) {
+        // Pending craton strokes are per-level cell ids: discard them (and
+        // any live stroke) before anything can observe the new grid. Pending
+        // hotspot strokes are unit vectors: they stay (D2). First statement
+        // by design, so every grid rebuild is covered.
+        self.pending.discard_cratons();
         let t0 = Instant::now();
         let grid = Arc::new(Grid::build(level));
         log::info!(
@@ -504,6 +523,13 @@ impl WorldApp {
                 );
                 self.last_sim_wall_s = Some(seconds);
                 self.history = world.history.take();
+                // Capture the hotspot set this run actually used (generated
+                // or overlay): the fold base survives the next job start
+                // dropping the history. Only overwrite when a history
+                // actually arrived (d1-F3).
+                if let Some(h) = &self.history {
+                    self.hotspot_baseline = Some(h.hotspots.clone());
+                }
                 self.world_state = Some(world);
                 self.job = None;
                 let last = self
@@ -580,14 +606,18 @@ impl WorldApp {
         };
 
         // Overlay pass — on EVERY rebake, including history == None, so
-        // pending edits render mid-run (feel-pass-design.md § D1). `pending`
-        // stays empty and apply_overlay is a no-op until Track A's rebase.
+        // pending edits render mid-run (feel-pass-design.md § D1). The live
+        // stroke displays too (display_strokes appends it last, so it wins
+        // per cell), and the hotspot base is the same fold base that click
+        // classification and Regenerate use, keeping display and fold
+        // coherent (D2).
         let mut overlay = vec![0u32; self.grid.cell_count() as usize];
+        let display = self.pending.display_strokes();
         pending_edits::apply_overlay(
             &pending_edits::OverlayInput {
                 grid: &self.grid,
-                pending: &self.pending_strokes,
-                generated_hotspots: self.history.as_ref().map(|h| h.hotspots.as_slice()),
+                pending: &display,
+                generated_hotspots: self.hotspot_fold_base(),
             },
             &mut overlay,
         );
@@ -625,82 +655,6 @@ impl WorldApp {
         self.frame_times.len() as f64 / sum.max(1e-6) as f64
     }
 
-    // ----- painting -----
-
-    /// All cells within the brush radius of a hit cell (neighbor flood).
-    fn cells_within_radius(&self, center: u32, radius_km: f32) -> Vec<u32> {
-        let cos_thresh = (radius_km / EARTH_RADIUS_KM).cos();
-        let cpos = self.grid.positions[center as usize];
-        let dot = |c: u32| -> f32 {
-            let p = self.grid.positions[c as usize];
-            p[0] * cpos[0] + p[1] * cpos[1] + p[2] * cpos[2]
-        };
-        let mut visited = std::collections::HashSet::from([center]);
-        let mut out = vec![center];
-        let mut queue = std::collections::VecDeque::from([center]);
-        while let Some(c) = queue.pop_front() {
-            for &nb in self.grid.neighbors_of(c) {
-                if dot(nb) >= cos_thresh && visited.insert(nb) {
-                    out.push(nb);
-                    queue.push_back(nb);
-                }
-            }
-        }
-        out
-    }
-
-    /// Apply the active tool at a hit cell. Returns true if state changed.
-    fn apply_tool(&mut self, cell: u32, clicked: bool) -> bool {
-        match self.tool {
-            Tool::None => false,
-            Tool::CratonPaint | Tool::CratonErase => {
-                let v: i8 = if self.tool == Tool::CratonPaint {
-                    1
-                } else {
-                    -1
-                };
-                let cells = self.cells_within_radius(cell, self.brush_radius_km);
-                let mut changed = false;
-                for c in cells {
-                    if self.craton_paint.insert(c, v) != Some(v) {
-                        changed = true;
-                    }
-                }
-                changed
-            }
-            Tool::Hotspot => {
-                if !clicked {
-                    return false;
-                }
-                // Never edit blind: with no overlay AND no finished history
-                // (a run is in flight), there is no hotspot set to add to —
-                // falling through to an empty set would silently replace the
-                // generated hotspots with just this click (review finding).
-                let Some(mut spots) = self
-                    .hotspot_overlay
-                    .clone()
-                    .or_else(|| self.history.as_ref().map(|h| h.hotspots.clone()))
-                else {
-                    return false;
-                };
-                let pos = self.grid.positions[cell as usize];
-                let cos_remove = (HOTSPOT_REMOVE_KM / EARTH_RADIUS_KM).cos();
-                let near = spots
-                    .iter()
-                    .position(|h| h[0] * pos[0] + h[1] * pos[1] + h[2] * pos[2] >= cos_remove);
-                match near {
-                    Some(i) => {
-                        spots.remove(i);
-                    }
-                    None => spots.push(pos),
-                }
-                self.hotspot_overlay = Some(spots);
-                self.start_job();
-                true
-            }
-        }
-    }
-
     // ----- canvases -----
 
     fn canvas_common(
@@ -712,27 +666,38 @@ impl WorldApp {
         if let Some((cell, lat, lon)) = hit {
             self.pick_hint = Some(cell);
             self.hover = Some((canvas, cell, lat.to_degrees(), lon.to_degrees()));
-            if self.tool != Tool::None {
-                let clicked = response.clicked();
-                if (response.dragged() || clicked) && self.apply_tool(cell, clicked) {
-                    self.needs_bake = true;
-                    if matches!(self.tool, Tool::CratonPaint | Tool::CratonErase) {
-                        self.craton_stroke_dirty = true;
-                    }
-                }
-            }
         }
-        // Stroke end must fire even when the release lands off the map (past
-        // the globe's limb or the projection outline): drag_stopped() is
-        // hover-independent, so check it outside the hit gate (review
-        // finding). Only re-run when the stroke actually changed the overlay.
-        if matches!(self.tool, Tool::CratonPaint | Tool::CratonErase)
-            && (response.drag_stopped() || response.clicked())
-            && self.craton_stroke_dirty
-        {
-            self.craton_stroke_dirty = false;
-            // Stroke finished: re-run history from t=0, same seed.
-            self.start_job();
+        // Fix 1: every tool frame funnels into the pending-edit machinery in
+        // worldmaker-io — drawing accumulates strokes and can never launch a
+        // run. Stroke end (release past the globe limb / projection outline
+        // included) is handled inside handle_stroke_event, outside its hit
+        // gate, so it stays hover-independent (review finding preserved).
+        let brush = match self.tool {
+            Tool::None => return,
+            Tool::CratonPaint => ActiveBrush::Craton {
+                sign: 1,
+                radius_km: self.brush_radius_km,
+            },
+            Tool::CratonErase => ActiveBrush::Craton {
+                sign: -1,
+                radius_km: self.brush_radius_km,
+            },
+            Tool::Hotspot => ActiveBrush::Hotspot,
+        };
+        let ev = StrokeEvent {
+            hit_cell: hit.map(|(cell, _, _)| cell),
+            dragged: response.dragged(),
+            clicked: response.clicked(),
+            drag_stopped: response.drag_stopped(),
+        };
+        // Same base rule as hotspot_fold_base(), inlined so the borrows
+        // split per field.
+        let base = self
+            .hotspot_overlay
+            .as_deref()
+            .or(self.hotspot_baseline.as_deref());
+        if pending::handle_stroke_event(&mut self.pending, &self.grid, &brush, &ev, base) {
+            self.needs_bake = true;
         }
     }
 
@@ -899,6 +864,9 @@ impl WorldApp {
                 let enter = seed_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if ui.button("Generate").clicked() || enter {
                     self.master_seed = seed_from_text(&self.seed_text);
+                    // Seed change keeps everything pending (D2); just close
+                    // any half-drawn stroke defensively.
+                    self.pending.end_stroke();
                     self.start_job();
                 }
                 ui.separator();
@@ -1000,9 +968,23 @@ impl WorldApp {
                     egui::Slider::new(&mut self.hotspot_count, 0..=12).text("Hotspots"),
                 );
                 if ui
-                    .add_enabled(self.job.is_none(), egui::Button::new("Generate history"))
+                    .add_enabled(self.job.is_none(), egui::Button::new("Regenerate"))
                     .clicked()
                 {
+                    // The fold point (D2): commit the live stroke, drain the
+                    // pending list, fold it into the applied overlays, then
+                    // run history off-thread with existing progress + cancel.
+                    self.pending.end_stroke();
+                    let strokes = self.pending.take_all();
+                    let outcome = pending::fold(&strokes, self.hotspot_fold_base());
+                    for (c, v) in outcome.craton_updates {
+                        self.craton_paint.insert(c, v);
+                    }
+                    if let Some(hs) = outcome.hotspot_overlay {
+                        self.hotspot_overlay = Some(hs);
+                    }
+                    // Clear the stale pending tint immediately (d1-F4).
+                    self.needs_bake = true;
                     self.start_job();
                 }
 
@@ -1020,13 +1002,42 @@ impl WorldApp {
                 }
 
                 ui.separator();
-                ui.heading("Paint");
-                ui.selectable_value(&mut self.tool, Tool::None, "Navigate");
+                // Badge: committed pending strokes, shown under every tool
+                // (Navigate included) whenever any exist.
+                ui.horizontal(|ui| {
+                    ui.heading("Paint");
+                    let n = self.pending.stroke_count();
+                    if n > 0 {
+                        ui.label(format!("{n} pending edit(s)"));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    // Mirrors Cmd/Ctrl+Z: cancel the live stroke first, else
+                    // pop the newest pending stroke. No redo.
+                    if ui
+                        .add_enabled(!self.pending.is_empty(), egui::Button::new("Undo"))
+                        .clicked()
+                        && self.pending.undo()
+                    {
+                        self.needs_bake = true;
+                    }
+                    // Discards pending strokes only; applied overlays stay.
+                    if ui
+                        .add_enabled(!self.pending.is_empty(), egui::Button::new("Discard edits"))
+                        .clicked()
+                    {
+                        self.pending.discard_all();
+                        self.needs_bake = true;
+                    }
+                });
                 let before = self.tool;
+                ui.selectable_value(&mut self.tool, Tool::None, "Navigate");
                 ui.selectable_value(&mut self.tool, Tool::CratonPaint, "Craton brush");
                 ui.selectable_value(&mut self.tool, Tool::CratonErase, "Craton eraser");
                 ui.selectable_value(&mut self.tool, Tool::Hotspot, "Hotspots");
                 if self.tool != before {
+                    // A tool switch commits any half-drawn stroke (D2).
+                    self.pending.end_stroke();
                     self.needs_bake = true;
                     if matches!(self.tool, Tool::CratonPaint | Tool::CratonErase) {
                         // Cratons are painted on the initial state.
@@ -1040,18 +1051,41 @@ impl WorldApp {
                             .text("Radius")
                             .suffix(" km"),
                     );
-                    if !self.craton_paint.is_empty() && ui.button("Clear craton paint").clicked() {
+                    let clearable = !self.craton_paint.is_empty() || self.pending.has_craton();
+                    if ui
+                        .add_enabled(clearable, egui::Button::new("Clear craton paint"))
+                        .clicked()
+                    {
+                        // Staged-param edit (D2): discards pending craton
+                        // strokes (incl. live) AND clears the applied craton
+                        // paint. No run; the world effect lands at the next
+                        // Regenerate. Not undoable.
+                        self.pending.discard_cratons();
                         self.craton_paint.clear();
                         self.needs_bake = true;
-                        self.start_job();
                     }
-                    ui.label("Paint on the t = 0 map; history re-runs from the start with the same seed.");
+                    ui.label("Paint accumulates as pending strokes; Regenerate re-runs history with them.");
                 }
                 if self.tool == Tool::Hotspot {
-                    ui.label("Click to add a hotspot; click an existing one to remove it.");
-                    if self.hotspot_overlay.is_some() && ui.button("Reset to generated").clicked() {
+                    if self.hotspot_fold_base().is_none() {
+                        ui.label("Hotspots available after the first world finishes generating.");
+                    } else {
+                        ui.label("Click to add a hotspot; click an existing one to remove it.");
+                    }
+                    let resettable = self.hotspot_overlay.is_some() || self.pending.has_hotspot();
+                    if ui
+                        .add_enabled(resettable, egui::Button::new("Reset to generated"))
+                        .clicked()
+                    {
+                        // Staged-param edit (D2): discards pending hotspot
+                        // strokes AND drops the applied overlay; the next
+                        // Regenerate (with no new strokes) re-generates
+                        // hotspots from seed. A hotspot stroke drawn after
+                        // this re-anchors to the still-displayed last-run
+                        // set (d1-F2). Not undoable.
+                        self.pending.discard_hotspots();
                         self.hotspot_overlay = None;
-                        self.start_job();
+                        self.needs_bake = true;
                     }
                 }
             });
@@ -1590,6 +1624,16 @@ impl eframe::App for WorldApp {
         self.poll_job();
         self.drive_script(ctx);
 
+        // Cmd/Ctrl+Z: cancel the live stroke first, else pop the newest
+        // pending stroke (no redo). Gated so the seed field's own text undo
+        // wins while it has keyboard focus.
+        if !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_shortcut(&UNDO_STROKE))
+            && self.pending.undo()
+        {
+            self.needs_bake = true;
+        }
+
         self.top_bar(root);
         self.side_panel(root);
         // The readout consumes the hover the canvases wrote LAST frame (the
@@ -1628,5 +1672,22 @@ impl eframe::App for WorldApp {
 
         // Continuous repaint: keeps progress, playback and drags live.
         ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Fix 1's sanctioned-trigger tripwire (D2 guard c): the grid rebuild
+    /// (preset switch / startup), the seed Generate/Enter branch, and
+    /// Regenerate are the only places a simulation launches. Adding a call
+    /// site is a design change — update this count deliberately, with a
+    /// decision-log row, never to make a red test green.
+    #[test]
+    fn app_has_exactly_the_sanctioned_sim_triggers() {
+        let src = include_str!("app.rs");
+        // Needle assembled at runtime so this test's own source never
+        // matches (and no comment in this file may quote it).
+        let needle = ["self.start", "_job()"].concat();
+        assert_eq!(src.matches(&needle).count(), 3);
     }
 }
