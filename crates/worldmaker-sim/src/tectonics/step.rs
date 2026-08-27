@@ -62,9 +62,22 @@ const COLLISION_SATURATION_MIN_CELLS: f32 = 4.0;
 /// few steps instead of grinding tens of My of margin away.
 const SPEED_RELAX_UP: f32 = 0.15;
 const SPEED_RELAX_DOWN: f32 = 0.5;
-/// Speed clamp, deg/My (spec).
-const SPEED_MIN: f32 = 0.1;
-const SPEED_MAX: f32 = 1.2;
+/// Speed clamp, deg/My (spec; shared with setup's base-speed draw).
+pub(super) const SPEED_MIN: f32 = 0.1;
+/// Raised 1.2 → 2.0 (WO-0003 Fix 4): at tectonic_vigor 1.73 the old cap
+/// pegged most base speeds and every slab-pull target at 1.2, so vigor
+/// stopped spreading speeds. 2.0 sits above the fastest draw at the maximum
+/// vigor 2.0 (|N(0.5, 0.15)| × 2), so the clamp is a safety rail again, not
+/// the operating point.
+pub(super) const SPEED_MAX: f32 = 2.0;
+/// Speed floor of a fully jammed plate (f_coll = 1), deg/My. The old floor
+/// `SPEED_MIN * (1 - f_coll)` collapsed to exactly zero, and with the
+/// slab-pull target also zeroed by COLLISION_DAMP the clamp held jammed
+/// plates at 0.00 deg/My forever (WO-0003 Fix 4 diagnosis). A jammed plate
+/// now keeps this residual creep — ~0.55 cm/yr at the rotation equator, at
+/// the suture threshold scale, so welded pairs still read slow and suture —
+/// and can never freeze to the grid permanently.
+pub(super) const SPEED_FLOOR_JAMMED: f32 = 0.05;
 /// Euler-pole random walk, degrees (1 sigma) per step.
 const POLE_WALK_DEG: f32 = 0.6;
 /// Banked sub-cell rotation commits once it reaches this fraction of a cell.
@@ -96,7 +109,14 @@ const RIFT_OCEANIZE_KM: f32 = 25.0;
 /// classification noise on quasi-transform boundaries cannot mature a rift).
 const RIFT_DECAY_MULT: f32 = 2.0;
 /// Slow-collision threshold for suturing (cm/yr) and required duration (My).
-const SUTURE_SLOW_CMYR: f32 = 0.5;
+/// Raised 0.5 → 1.2 (WO-0003 Fix 4): two fully jammed plates now creep at
+/// the SPEED_FLOOR_JAMMED residual instead of stopping dead, which closes
+/// their contact at up to ~1.1 cm/yr (2 × 0.05 deg/My at the rotation
+/// equator). At 0.5 that creep read as *active* convergence, reset the pair
+/// timer every step, and welded pairs ground against each other forever —
+/// the threshold must sit above the jam-creep ceiling so a stalled
+/// collision always matures toward suture.
+const SUTURE_SLOW_CMYR: f32 = 1.2;
 const SUTURE_AFTER_MY: f32 = 30.0;
 /// Plate-count floor (suturing stops) and ceiling (breakup stops).
 const PLATE_FLOOR: usize = 6;
@@ -386,7 +406,7 @@ impl SimState {
             let target = p.base_speed_deg_my
                 * (1.0 + SLAB_PULL_GAIN * f_sub)
                 * (1.0 - COLLISION_DAMP * f_coll);
-            let floor = SPEED_MIN * (1.0 - f_coll);
+            let floor = SPEED_MIN - (SPEED_MIN - SPEED_FLOOR_JAMMED) * f_coll;
             let relax = if target < p.speed_deg_my {
                 SPEED_RELAX_DOWN
             } else {
