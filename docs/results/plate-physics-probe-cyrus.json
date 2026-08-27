@@ -1,0 +1,2180 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-27",
+  "app_version": "0.1.0",
+  "metrics": {
+    "breakup_events": [
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4960,
+        "new_plate": 12,
+        "plate_cells": 4148,
+        "plate_cont_cells": 834,
+        "pre_alive_count": 6,
+        "split_plate": 4,
+        "suture_age_my": 1000000192.0,
+        "t_my": 162.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4946,
+        "new_plate": 13,
+        "plate_cells": 779,
+        "plate_cont_cells": 131,
+        "pre_alive_count": 6,
+        "split_plate": 10,
+        "suture_age_my": 1000000192.0,
+        "t_my": 174.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4826,
+        "new_plate": 14,
+        "plate_cells": 3241,
+        "plate_cont_cells": 413,
+        "pre_alive_count": 6,
+        "split_plate": 12,
+        "suture_age_my": 102.0,
+        "t_my": 264.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4741,
+        "new_plate": 15,
+        "plate_cells": 807,
+        "plate_cont_cells": 330,
+        "pre_alive_count": 6,
+        "split_plate": 4,
+        "suture_age_my": 142.0,
+        "t_my": 304.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4668,
+        "new_plate": 16,
+        "plate_cells": 35007,
+        "plate_cont_cells": 12995,
+        "pre_alive_count": 6,
+        "split_plate": 1,
+        "suture_age_my": 102.0,
+        "t_my": 368.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4659,
+        "new_plate": 17,
+        "plate_cells": 1929,
+        "plate_cont_cells": 230,
+        "pre_alive_count": 6,
+        "split_plate": 12,
+        "suture_age_my": 180.0,
+        "t_my": 444.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4500,
+        "new_plate": 18,
+        "plate_cells": 1735,
+        "plate_cont_cells": 154,
+        "pre_alive_count": 6,
+        "split_plate": 14,
+        "suture_age_my": 260.0,
+        "t_my": 524.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4421,
+        "new_plate": 19,
+        "plate_cells": 1380,
+        "plate_cont_cells": 111,
+        "pre_alive_count": 6,
+        "split_plate": 12,
+        "suture_age_my": 128.0,
+        "t_my": 572.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4424,
+        "new_plate": 20,
+        "plate_cells": 622,
+        "plate_cont_cells": 103,
+        "pre_alive_count": 6,
+        "split_plate": 4,
+        "suture_age_my": 338.0,
+        "t_my": 642.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4546,
+        "new_plate": 21,
+        "plate_cells": 39122,
+        "plate_cont_cells": 13398,
+        "pre_alive_count": 6,
+        "split_plate": 1,
+        "suture_age_my": 102.0,
+        "t_my": 746.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4541,
+        "new_plate": 22,
+        "plate_cells": 785,
+        "plate_cont_cells": 58,
+        "pre_alive_count": 6,
+        "split_plate": 4,
+        "suture_age_my": 134.0,
+        "t_my": 776.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4541,
+        "new_plate": 23,
+        "plate_cells": 19019,
+        "plate_cont_cells": 6578,
+        "pre_alive_count": 7,
+        "split_plate": 1,
+        "suture_age_my": 20.0,
+        "t_my": 778.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4467,
+        "new_plate": 24,
+        "plate_cells": 1186,
+        "plate_cont_cells": 53,
+        "pre_alive_count": 6,
+        "split_plate": 22,
+        "suture_age_my": 102.0,
+        "t_my": 878.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4406,
+        "new_plate": 25,
+        "plate_cells": 39072,
+        "plate_cont_cells": 13171,
+        "pre_alive_count": 6,
+        "split_plate": 21,
+        "suture_age_my": 102.0,
+        "t_my": 982.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4366,
+        "new_plate": 26,
+        "plate_cells": 39667,
+        "plate_cont_cells": 13082,
+        "pre_alive_count": 6,
+        "split_plate": 25,
+        "suture_age_my": 102.0,
+        "t_my": 1114.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4411,
+        "new_plate": 27,
+        "plate_cells": 40077,
+        "plate_cont_cells": 13224,
+        "pre_alive_count": 6,
+        "split_plate": 26,
+        "suture_age_my": 102.0,
+        "t_my": 1246.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4434,
+        "new_plate": 28,
+        "plate_cells": 19592,
+        "plate_cont_cells": 6707,
+        "pre_alive_count": 6,
+        "split_plate": 27,
+        "suture_age_my": 102.0,
+        "t_my": 1348.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4285,
+        "new_plate": 29,
+        "plate_cells": 12263,
+        "plate_cont_cells": 3474,
+        "pre_alive_count": 6,
+        "split_plate": 28,
+        "suture_age_my": 102.0,
+        "t_my": 1450.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4276,
+        "new_plate": 30,
+        "plate_cells": 28633,
+        "plate_cont_cells": 9357,
+        "pre_alive_count": 6,
+        "split_plate": 26,
+        "suture_age_my": 102.0,
+        "t_my": 1452.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4133,
+        "new_plate": 31,
+        "plate_cells": 4652,
+        "plate_cont_cells": 1906,
+        "pre_alive_count": 6,
+        "split_plate": 29,
+        "suture_age_my": 102.0,
+        "t_my": 1552.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4133,
+        "new_plate": 32,
+        "plate_cells": 15625,
+        "plate_cont_cells": 4194,
+        "pre_alive_count": 7,
+        "split_plate": 26,
+        "suture_age_my": 102.0,
+        "t_my": 1554.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4110,
+        "new_plate": 33,
+        "plate_cells": 6862,
+        "plate_cont_cells": 1316,
+        "pre_alive_count": 6,
+        "split_plate": 28,
+        "suture_age_my": 134.0,
+        "t_my": 1584.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4100,
+        "new_plate": 34,
+        "plate_cells": 2190,
+        "plate_cont_cells": 960,
+        "pre_alive_count": 6,
+        "split_plate": 31,
+        "suture_age_my": 102.0,
+        "t_my": 1654.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4100,
+        "new_plate": 35,
+        "plate_cells": 27689,
+        "plate_cont_cells": 8194,
+        "pre_alive_count": 7,
+        "split_plate": 26,
+        "suture_age_my": 70.0,
+        "t_my": 1656.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4046,
+        "new_plate": 36,
+        "plate_cells": 3487,
+        "plate_cont_cells": 771,
+        "pre_alive_count": 6,
+        "split_plate": 33,
+        "suture_age_my": 106.0,
+        "t_my": 1690.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4076,
+        "new_plate": 37,
+        "plate_cells": 4640,
+        "plate_cont_cells": 1038,
+        "pre_alive_count": 6,
+        "split_plate": 32,
+        "suture_age_my": 102.0,
+        "t_my": 1758.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4076,
+        "new_plate": 38,
+        "plate_cells": 1800,
+        "plate_cont_cells": 420,
+        "pre_alive_count": 6,
+        "split_plate": 33,
+        "suture_age_my": 102.0,
+        "t_my": 1792.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4102,
+        "new_plate": 39,
+        "plate_cells": 1908,
+        "plate_cont_cells": 582,
+        "pre_alive_count": 6,
+        "split_plate": 37,
+        "suture_age_my": 102.0,
+        "t_my": 1860.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4090,
+        "new_plate": 40,
+        "plate_cells": 1662,
+        "plate_cont_cells": 246,
+        "pre_alive_count": 6,
+        "split_plate": 38,
+        "suture_age_my": 102.0,
+        "t_my": 1894.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4090,
+        "new_plate": 41,
+        "plate_cells": 36769,
+        "plate_cont_cells": 11467,
+        "pre_alive_count": 7,
+        "split_plate": 26,
+        "suture_age_my": 34.0,
+        "t_my": 1896.0,
+        "trigger": "area_over_third_of_sphere"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4104,
+        "new_plate": 42,
+        "plate_cells": 645,
+        "plate_cont_cells": 176,
+        "pre_alive_count": 6,
+        "split_plate": 40,
+        "suture_age_my": 102.0,
+        "t_my": 1996.0,
+        "trigger": "gridlock_breaker_at_plate_floor"
+      }
+    ],
+    "config": {
+      "dt_my": 2.0,
+      "grid_level": 6,
+      "land_fraction": 0.29,
+      "plate_count_param": 12,
+      "sample_interval_my": 100.0,
+      "seed_text": "cyrus",
+      "seed_u64": 14176781840892274037,
+      "span_my": 2000.0,
+      "tectonic_vigor": 1.0
+    },
+    "headline": {
+      "breakup_count_total": 31,
+      "breakups_by_area_count": 11,
+      "breakups_by_cont_share_count": 0,
+      "breakups_by_gridlock_breaker_count": 20,
+      "breakups_unattributed_count": 0,
+      "final_alive_plate_count": 6,
+      "max_multi_component_plates_in_sample": 7,
+      "min_sampled_alive_plate_count": 6,
+      "sample_count": 21,
+      "samples_with_exclaves_count": 20,
+      "suture_count_total": 34
+    },
+    "samples": [
+      {
+        "alive_plate_count": 12,
+        "breakup_count_cum": 0,
+        "breakups_in_window_count": 0,
+        "largest_plate_cell_share": 0.2556759923831844,
+        "mean_plate_speed_deg_my": 0.5414600496490797,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 0,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 0.0
+      },
+      {
+        "alive_plate_count": 7,
+        "breakup_count_cum": 0,
+        "breakups_in_window_count": 0,
+        "largest_plate_cell_share": 0.3694887944924564,
+        "mean_plate_speed_deg_my": 0.37019718810915947,
+        "multi_component_plate_count": 7,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              15125,
+              10
+            ],
+            "plate_id": 0
+          },
+          {
+            "fragment_cells": [
+              11373,
+              27,
+              11,
+              8,
+              8,
+              3
+            ],
+            "plate_id": 1
+          },
+          {
+            "fragment_cells": [
+              7992,
+              20,
+              20,
+              6,
+              6,
+              4,
+              4,
+              2,
+              2
+            ],
+            "plate_id": 2
+          },
+          {
+            "fragment_cells": [
+              4066,
+              16
+            ],
+            "plate_id": 4
+          },
+          {
+            "fragment_cells": [
+              1077,
+              3,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 9
+          },
+          {
+            "fragment_cells": [
+              577,
+              5
+            ],
+            "plate_id": 10
+          },
+          {
+            "fragment_cells": [
+              580,
+              13
+            ],
+            "plate_id": 11
+          }
+        ],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 5,
+        "sutures_in_window_count": 5,
+        "t_my": 100.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 2,
+        "breakups_in_window_count": 2,
+        "largest_plate_cell_share": 0.8687564083784971,
+        "mean_plate_speed_deg_my": 0.26994196387628716,
+        "multi_component_plate_count": 3,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              1138,
+              4,
+              4,
+              3,
+              3,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 4
+          },
+          {
+            "fragment_cells": [
+              678,
+              7
+            ],
+            "plate_id": 10
+          },
+          {
+            "fragment_cells": [
+              153,
+              11
+            ],
+            "plate_id": 13
+          }
+        ],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 8,
+        "sutures_in_window_count": 3,
+        "t_my": 200.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 3,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.8713197597773547,
+        "mean_plate_speed_deg_my": 0.24495728003482023,
+        "multi_component_plate_count": 4,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              35659,
+              22,
+              10
+            ],
+            "plate_id": 1
+          },
+          {
+            "fragment_cells": [
+              731,
+              81,
+              3,
+              1,
+              1
+            ],
+            "plate_id": 4
+          },
+          {
+            "fragment_cells": [
+              967,
+              37
+            ],
+            "plate_id": 13
+          },
+          {
+            "fragment_cells": [
+              2733,
+              1
+            ],
+            "plate_id": 14
+          }
+        ],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 9,
+        "sutures_in_window_count": 1,
+        "t_my": 300.0
+      },
+      {
+        "alive_plate_count": 7,
+        "breakup_count_cum": 5,
+        "breakups_in_window_count": 2,
+        "largest_plate_cell_share": 0.4382842634636981,
+        "mean_plate_speed_deg_my": 0.21868349984288216,
+        "multi_component_plate_count": 5,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              17906,
+              17,
+              9,
+              4,
+              3,
+              2,
+              2,
+              2,
+              2,
+              2,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 1
+          },
+          {
+            "fragment_cells": [
+              1287,
+              38
+            ],
+            "plate_id": 13
+          },
+          {
+            "fragment_cells": [
+              2316,
+              6,
+              4,
+              3,
+              1
+            ],
+            "plate_id": 14
+          },
+          {
+            "fragment_cells": [
+              408,
+              112,
+              19,
+              1
+            ],
+            "plate_id": 15
+          },
+          {
+            "fragment_cells": [
+              16591,
+              83,
+              68,
+              4,
+              3,
+              1
+            ],
+            "plate_id": 16
+          }
+        ],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 9,
+        "sutures_in_window_count": 0,
+        "t_my": 400.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 6,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.8540354474879156,
+        "mean_plate_speed_deg_my": 0.18234720701972643,
+        "multi_component_plate_count": 5,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              34811,
+              71,
+              41,
+              19,
+              7,
+              6,
+              6,
+              5,
+              3,
+              3,
+              3,
+              2,
+              2,
+              2,
+              1,
+              1
+            ],
+            "plate_id": 1
+          },
+          {
+            "fragment_cells": [
+              441,
+              1
+            ],
+            "plate_id": 4
+          },
+          {
+            "fragment_cells": [
+              913,
+              489,
+              2
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              1117,
+              721,
+              43,
+              3,
+              1
+            ],
+            "plate_id": 14
+          },
+          {
+            "fragment_cells": [
+              322,
+              64,
+              38,
+              12,
+              9,
+              9,
+              2
+            ],
+            "plate_id": 15
+          }
+        ],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 11,
+        "sutures_in_window_count": 2,
+        "t_my": 500.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 8,
+        "breakups_in_window_count": 2,
+        "largest_plate_cell_share": 0.9276890776817538,
+        "mean_plate_speed_deg_my": 0.1733096782118082,
+        "multi_component_plate_count": 5,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              37936,
+              16,
+              9,
+              6,
+              5,
+              5,
+              5,
+              3,
+              3,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 1
+          },
+          {
+            "fragment_cells": [
+              266,
+              129,
+              79,
+              22,
+              7,
+              2
+            ],
+            "plate_id": 4
+          },
+          {
+            "fragment_cells": [
+              690,
+              321,
+              25,
+              12,
+              3,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              377,
+              10,
+              3,
+              3
+            ],
+            "plate_id": 15
+          },
+          {
+            "fragment_cells": [
+              586,
+              132,
+              44,
+              7,
+              5,
+              4,
+              3,
+              3,
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 18
+          }
+        ],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 13,
+        "sutures_in_window_count": 2,
+        "t_my": 600.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 9,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.9504906986963527,
+        "mean_plate_speed_deg_my": 0.17676510972281298,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              38919,
+              6,
+              4,
+              4,
+              1
+            ],
+            "plate_id": 1
+          },
+          {
+            "fragment_cells": [
+              332,
+              141,
+              127
+            ],
+            "plate_id": 4
+          },
+          {
+            "fragment_cells": [
+              87,
+              52,
+              30,
+              15,
+              13,
+              9,
+              8,
+              6,
+              5,
+              5,
+              5,
+              4,
+              2,
+              1
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              184,
+              161
+            ],
+            "plate_id": 15
+          },
+          {
+            "fragment_cells": [
+              492,
+              60,
+              20,
+              8,
+              5,
+              4,
+              4,
+              4,
+              3,
+              2,
+              1,
+              1
+            ],
+            "plate_id": 18
+          },
+          {
+            "fragment_cells": [
+              70,
+              66,
+              54,
+              41,
+              2,
+              2,
+              2
+            ],
+            "plate_id": 20
+          }
+        ],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 14,
+        "sutures_in_window_count": 1,
+        "t_my": 700.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 12,
+        "breakups_in_window_count": 3,
+        "largest_plate_cell_share": 0.9683120941360285,
+        "mean_plate_speed_deg_my": 0.11599964648485184,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              88,
+              84,
+              22
+            ],
+            "plate_id": 4
+          },
+          {
+            "fragment_cells": [
+              28,
+              17,
+              13,
+              13,
+              12,
+              7,
+              6,
+              4,
+              4,
+              4
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              19,
+              9,
+              1
+            ],
+            "plate_id": 20
+          },
+          {
+            "fragment_cells": [
+              39660,
+              3,
+              1
+            ],
+            "plate_id": 21
+          },
+          {
+            "fragment_cells": [
+              723,
+              1,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              98,
+              81,
+              44,
+              19
+            ],
+            "plate_id": 23
+          }
+        ],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 2,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 17,
+        "sutures_in_window_count": 3,
+        "t_my": 800.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 13,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.9546652995459206,
+        "mean_plate_speed_deg_my": 0.13802792814870676,
+        "multi_component_plate_count": 5,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              13,
+              13,
+              10,
+              9,
+              6,
+              5,
+              4,
+              4,
+              1
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              33,
+              11
+            ],
+            "plate_id": 20
+          },
+          {
+            "fragment_cells": [
+              39072,
+              13,
+              8,
+              7,
+              3,
+              2
+            ],
+            "plate_id": 21
+          },
+          {
+            "fragment_cells": [
+              239,
+              199,
+              70,
+              10,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              616,
+              235,
+              23,
+              21
+            ],
+            "plate_id": 24
+          }
+        ],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 18,
+        "sutures_in_window_count": 1,
+        "t_my": 900.0
+      },
+      {
+        "alive_plate_count": 7,
+        "breakup_count_cum": 14,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.47866315121331965,
+        "mean_plate_speed_deg_my": 0.1315120474568435,
+        "multi_component_plate_count": 7,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              13,
+              10,
+              9,
+              7,
+              6,
+              2,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              50,
+              8
+            ],
+            "plate_id": 20
+          },
+          {
+            "fragment_cells": [
+              19419,
+              2,
+              1,
+              1
+            ],
+            "plate_id": 21
+          },
+          {
+            "fragment_cells": [
+              301,
+              116,
+              41,
+              36,
+              4,
+              3,
+              2,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              250,
+              27
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              659,
+              138,
+              83,
+              44,
+              29,
+              27,
+              21,
+              17,
+              13,
+              5,
+              4,
+              3
+            ],
+            "plate_id": 24
+          },
+          {
+            "fragment_cells": [
+              19602,
+              2,
+              2,
+              1
+            ],
+            "plate_id": 25
+          }
+        ],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 3,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 18,
+        "sutures_in_window_count": 0,
+        "t_my": 1000.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 14,
+        "breakups_in_window_count": 0,
+        "largest_plate_cell_share": 0.9645036863434403,
+        "mean_plate_speed_deg_my": 0.182129613434275,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              13,
+              11,
+              10,
+              5,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              50,
+              20
+            ],
+            "plate_id": 20
+          },
+          {
+            "fragment_cells": [
+              256,
+              78,
+              52,
+              12,
+              11,
+              11,
+              7,
+              2,
+              2,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              281,
+              30,
+              3
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              305,
+              141,
+              87,
+              23,
+              22,
+              6,
+              4,
+              2
+            ],
+            "plate_id": 24
+          },
+          {
+            "fragment_cells": [
+              39499,
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 25
+          }
+        ],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 19,
+        "sutures_in_window_count": 1,
+        "t_my": 1100.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 15,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.9730481910062985,
+        "mean_plate_speed_deg_my": 0.19700411148369312,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              16,
+              15,
+              10,
+              6,
+              5,
+              3,
+              2
+            ],
+            "plate_id": 12
+          },
+          {
+            "fragment_cells": [
+              67,
+              23
+            ],
+            "plate_id": 20
+          },
+          {
+            "fragment_cells": [
+              234,
+              58,
+              48,
+              47,
+              21,
+              12,
+              7,
+              4,
+              4
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              215,
+              14,
+              2,
+              2,
+              1
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              62,
+              38,
+              38,
+              27,
+              24,
+              15,
+              13,
+              13,
+              11,
+              8,
+              8,
+              6,
+              6,
+              6,
+              5,
+              3,
+              3,
+              1,
+              1
+            ],
+            "plate_id": 24
+          },
+          {
+            "fragment_cells": [
+              39856,
+              2
+            ],
+            "plate_id": 26
+          }
+        ],
+        "pair_timer_count": 1,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 20,
+        "sutures_in_window_count": 1,
+        "t_my": 1200.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 16,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.4977051901762609,
+        "mean_plate_speed_deg_my": 0.201228649665912,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              50,
+              26,
+              16,
+              9,
+              5,
+              5,
+              5,
+              1,
+              1
+            ],
+            "plate_id": 20
+          },
+          {
+            "fragment_cells": [
+              122,
+              46,
+              20,
+              14,
+              13,
+              12,
+              12,
+              10,
+              8,
+              6,
+              4,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              1,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              85,
+              20,
+              7,
+              6,
+              4,
+              4,
+              3,
+              2,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              35,
+              31,
+              25,
+              4,
+              1
+            ],
+            "plate_id": 24
+          },
+          {
+            "fragment_cells": [
+              20365,
+              7,
+              7,
+              5,
+              3
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              19930,
+              11,
+              2,
+              1,
+              1
+            ],
+            "plate_id": 27
+          }
+        ],
+        "pair_timer_count": 1,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 21,
+        "sutures_in_window_count": 1,
+        "t_my": 1300.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 17,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.6775548068941947,
+        "mean_plate_speed_deg_my": 0.21646982928117117,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              50,
+              5,
+              4,
+              3
+            ],
+            "plate_id": 20
+          },
+          {
+            "fragment_cells": [
+              31,
+              25,
+              20,
+              13,
+              8,
+              7,
+              4,
+              4,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              37,
+              19,
+              7,
+              4,
+              3,
+              3,
+              3,
+              2,
+              2,
+              1,
+              1
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              36,
+              9
+            ],
+            "plate_id": 24
+          },
+          {
+            "fragment_cells": [
+              27725,
+              22,
+              3,
+              2,
+              2
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              12716,
+              92,
+              20,
+              16,
+              14,
+              14,
+              6,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 28
+          }
+        ],
+        "pair_timer_count": 1,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 22,
+        "sutures_in_window_count": 1,
+        "t_my": 1400.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 19,
+        "breakups_in_window_count": 2,
+        "largest_plate_cell_share": 0.3760802695180899,
+        "mean_plate_speed_deg_my": 0.12201646529138088,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              78,
+              60,
+              15,
+              8
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              30,
+              5,
+              3,
+              2,
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              15359,
+              42,
+              3,
+              1
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              6788,
+              47,
+              39,
+              19,
+              15,
+              7,
+              6,
+              6,
+              3,
+              2,
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 28
+          },
+          {
+            "fragment_cells": [
+              4617,
+              6
+            ],
+            "plate_id": 29
+          },
+          {
+            "fragment_cells": [
+              13689,
+              52,
+              12,
+              9,
+              5,
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 30
+          }
+        ],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 22,
+        "sutures_in_window_count": 0,
+        "t_my": 1500.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 22,
+        "breakups_in_window_count": 3,
+        "largest_plate_cell_share": 0.6818270592256237,
+        "mean_plate_speed_deg_my": 0.10512129900356133,
+        "multi_component_plate_count": 5,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              60,
+              48,
+              34,
+              21,
+              20,
+              18,
+              11,
+              6,
+              5,
+              2,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              45,
+              23,
+              13,
+              4,
+              4,
+              3,
+              3,
+              1
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              27862,
+              37,
+              7,
+              4,
+              4,
+              3,
+              2,
+              2,
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              2223,
+              14,
+              2,
+              1
+            ],
+            "plate_id": 31
+          },
+          {
+            "fragment_cells": [
+              7036,
+              9,
+              4,
+              2,
+              2,
+              2,
+              2,
+              1,
+              1,
+              1
+            ],
+            "plate_id": 32
+          }
+        ],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 25,
+        "sutures_in_window_count": 3,
+        "t_my": 1600.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 25,
+        "breakups_in_window_count": 3,
+        "largest_plate_cell_share": 0.7880230457497193,
+        "mean_plate_speed_deg_my": 0.17629928762714067,
+        "multi_component_plate_count": 4,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              110,
+              101,
+              54,
+              21,
+              10,
+              7,
+              4,
+              4,
+              2
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              109,
+              32,
+              10,
+              5,
+              2
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              32227,
+              11,
+              10,
+              9,
+              8,
+              6,
+              4,
+              3,
+              1
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              4533,
+              81,
+              7,
+              1
+            ],
+            "plate_id": 32
+          }
+        ],
+        "pair_timer_count": 1,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 28,
+        "sutures_in_window_count": 3,
+        "t_my": 1700.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 27,
+        "breakups_in_window_count": 2,
+        "largest_plate_cell_share": 0.8859674820565402,
+        "mean_plate_speed_deg_my": 0.15974420805772147,
+        "multi_component_plate_count": 4,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              334,
+              39,
+              21,
+              10,
+              4,
+              2,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              146,
+              35,
+              8,
+              7,
+              2,
+              1
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              36281,
+              7,
+              3
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              1257,
+              4
+            ],
+            "plate_id": 33
+          }
+        ],
+        "pair_timer_count": 1,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 30,
+        "sutures_in_window_count": 2,
+        "t_my": 1800.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 30,
+        "breakups_in_window_count": 3,
+        "largest_plate_cell_share": 0.9447048483960744,
+        "mean_plate_speed_deg_my": 0.1389851700514555,
+        "multi_component_plate_count": 4,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              327,
+              53,
+              36,
+              21,
+              12,
+              10,
+              3,
+              2,
+              2,
+              1
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              230,
+              25,
+              13,
+              11,
+              10,
+              10,
+              7,
+              5,
+              1
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              38686,
+              6,
+              3,
+              2
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              684,
+              7
+            ],
+            "plate_id": 41
+          }
+        ],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 1,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 33,
+        "sutures_in_window_count": 3,
+        "t_my": 1900.0
+      },
+      {
+        "alive_plate_count": 6,
+        "breakup_count_cum": 31,
+        "breakups_in_window_count": 1,
+        "largest_plate_cell_share": 0.9466578780332991,
+        "mean_plate_speed_deg_my": 0.13620898127555847,
+        "multi_component_plate_count": 6,
+        "multi_component_plates": [
+          {
+            "fragment_cells": [
+              371,
+              44,
+              42,
+              41,
+              21,
+              10,
+              3,
+              2,
+              2
+            ],
+            "plate_id": 22
+          },
+          {
+            "fragment_cells": [
+              327,
+              24,
+              9,
+              8,
+              8,
+              7,
+              2
+            ],
+            "plate_id": 23
+          },
+          {
+            "fragment_cells": [
+              38766,
+              6,
+              3,
+              2
+            ],
+            "plate_id": 26
+          },
+          {
+            "fragment_cells": [
+              623,
+              4,
+              2
+            ],
+            "plate_id": 33
+          },
+          {
+            "fragment_cells": [
+              413,
+              18
+            ],
+            "plate_id": 40
+          },
+          {
+            "fragment_cells": [
+              200,
+              4
+            ],
+            "plate_id": 42
+          }
+        ],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 34,
+        "sutures_in_window_count": 1,
+        "t_my": 2000.0
+      }
+    ],
+    "suture_events": [
+      {
+        "loser_cells": 986,
+        "loser_plate": 9,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 164.0,
+        "winner_cells": 20723,
+        "winner_plate": 1
+      },
+      {
+        "loser_cells": 13889,
+        "loser_plate": 0,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 176.0,
+        "winner_cells": 21726,
+        "winner_plate": 1
+      },
+      {
+        "loser_cells": 628,
+        "loser_plate": 10,
+        "pair_timer_my": 32.0,
+        "pre_alive_count": 7,
+        "t_my": 266.0,
+        "winner_cells": 35469,
+        "winner_plate": 1
+      },
+      {
+        "loser_cells": 16347,
+        "loser_plate": 16,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 446.0,
+        "winner_cells": 19517,
+        "winner_plate": 1
+      },
+      {
+        "loser_cells": 2417,
+        "loser_plate": 17,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 574.0,
+        "winner_cells": 35169,
+        "winner_plate": 1
+      },
+      {
+        "loser_cells": 278,
+        "loser_plate": 19,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 644.0,
+        "winner_cells": 38402,
+        "winner_plate": 1
+      },
+      {
+        "loser_cells": 19019,
+        "loser_plate": 1,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 778.0,
+        "winner_cells": 20282,
+        "winner_plate": 21
+      },
+      {
+        "loser_cells": 19531,
+        "loser_plate": 1,
+        "pair_timer_my": 32.0,
+        "pre_alive_count": 7,
+        "t_my": 780.0,
+        "winner_cells": 20272,
+        "winner_plate": 21
+      },
+      {
+        "loser_cells": 213,
+        "loser_plate": 4,
+        "pair_timer_my": 84.0,
+        "pre_alive_count": 7,
+        "t_my": 880.0,
+        "winner_cells": 39138,
+        "winner_plate": 21
+      },
+      {
+        "loser_cells": 53,
+        "loser_plate": 12,
+        "pair_timer_my": 72.0,
+        "pre_alive_count": 7,
+        "t_my": 1248.0,
+        "winner_cells": 19644,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 6213,
+        "loser_plate": 27,
+        "pair_timer_my": 102.0,
+        "pre_alive_count": 7,
+        "t_my": 1350.0,
+        "winner_cells": 20926,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 2415,
+        "loser_plate": 29,
+        "pair_timer_my": 72.0,
+        "pre_alive_count": 7,
+        "t_my": 1554.0,
+        "winner_cells": 15625,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 6553,
+        "loser_plate": 30,
+        "pair_timer_my": 38.0,
+        "pre_alive_count": 7,
+        "t_my": 1556.0,
+        "winner_cells": 18040,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 2206,
+        "loser_plate": 31,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 1586.0,
+        "winner_cells": 24640,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 920,
+        "loser_plate": 31,
+        "pair_timer_my": 100.0,
+        "pre_alive_count": 7,
+        "t_my": 1656.0,
+        "winner_cells": 27689,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 3019,
+        "loser_plate": 35,
+        "pair_timer_my": 30.0,
+        "pre_alive_count": 7,
+        "t_my": 1692.0,
+        "winner_cells": 29436,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 2736,
+        "loser_plate": 32,
+        "pair_timer_my": 50.0,
+        "pre_alive_count": 7,
+        "t_my": 1760.0,
+        "winner_cells": 32019,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 2138,
+        "loser_plate": 36,
+        "pair_timer_my": 62.0,
+        "pre_alive_count": 7,
+        "t_my": 1794.0,
+        "winner_cells": 34270,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 1337,
+        "loser_plate": 37,
+        "pair_timer_my": 50.0,
+        "pre_alive_count": 7,
+        "t_my": 1862.0,
+        "winner_cells": 35743,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 565,
+        "loser_plate": 39,
+        "pair_timer_my": 34.0,
+        "pre_alive_count": 7,
+        "t_my": 1896.0,
+        "winner_cells": 36769,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 565,
+        "loser_plate": 39,
+        "pair_timer_my": 36.0,
+        "pre_alive_count": 7,
+        "t_my": 1898.0,
+        "winner_cells": 38147,
+        "winner_plate": 26
+      },
+      {
+        "loser_cells": 754,
+        "loser_plate": 41,
+        "pair_timer_my": 74.0,
+        "pre_alive_count": 7,
+        "t_my": 1998.0,
+        "winner_cells": 37977,
+        "winner_plate": 26
+      }
+    ]
+  }
+}
