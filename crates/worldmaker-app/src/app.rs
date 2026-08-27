@@ -85,11 +85,11 @@ enum Tool {
 
 /// Timeline playback speed while "Play" is on, in My per real second.
 const PLAY_MY_PER_SECOND: f32 = 100.0;
-/// Render-detail fBm defaults (provisional; WO-0003 leg 4's octave/amplitude
-/// sweep finalizes both). The Detail slider scales amplitude only:
+/// Render-detail fBm defaults, fixed by the WO-0003 leg-4 24-config sweep
+/// (decision-log 2026-08-27). The Detail slider scales amplitude only:
 /// 0 = exactly the no-noise image, 1 = the tuned default.
 const DETAIL_DEFAULT_OCTAVES: u32 = 5;
-const DETAIL_DEFAULT_AMP_M: f32 = 220.0;
+const DETAIL_DEFAULT_AMP_M: f32 = 350.0;
 /// Flat zoom for the deterministic coast crop (graft 8): ~30 degrees of
 /// longitude across the 1600 pt scripted window — an L8 cell spans ~13 pt,
 /// wide enough to judge coastline embellishment against facet size.
