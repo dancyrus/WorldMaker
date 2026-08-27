@@ -52,22 +52,22 @@ const CLASSIFY_CMYR: f32 = 0.4;
 // S1 values below are placeholders calibrated only to §9 metric 7's coarse
 // shape (mean speed and slab ranking) — final calibration is WO-0006 S3.
 /// Slab pull per attached-slab cell (age-weighted): the dominant driver.
-const K_SLAB: f32 = 0.70;
+const K_SLAB: f32 = 0.66;
 /// Ridge push per divergent boundary cell (~an order below slab pull).
-const K_RIDGE: f32 = 1.0;
+const K_RIDGE: f32 = 0.25;
 /// Residual mantle traction per plate cell; K_MANTLE / C_DRAG is the
 /// residual drift of a slab-free, ridge-free plate (~0.8 cm/yr).
-const K_MANTLE: f32 = 0.06;
+const K_MANTLE: f32 = 0.09;
 /// Basal drag per plate cell (the normalization of the balance).
-const C_DRAG: f32 = 1.0;
+const C_DRAG: f32 = 1.25;
 /// Continent-continent contact resistance per contact cell (strength = 1.0
 /// until WO-0006 S2 lands the strength field).
-const C_CONTACT: f32 = 60.0;
+const C_CONTACT: f32 = 450.0;
 /// Transform friction per transform-only boundary cell.
-const C_TRANSFORM: f32 = 2.0;
+const C_TRANSFORM: f32 = 0.5;
 /// Speed/pole relaxation time, My (mantle re-equilibration; India's
 /// slowdown played out over ~10–20 My).
-const TAU_MY: f32 = 30.0;
+const TAU_MY: f32 = 20.0;
 /// Slab-pull age weight saturates at this subduction age (half-space
 /// cooling: older = colder = denser).
 const SLAB_AGE_REF_MY: f32 = 80.0;
@@ -81,7 +81,7 @@ pub(super) const SPEED_MAX: f32 = 2.0;
 /// 1995). Segments detach individually (Dan's amendment C): continuous
 /// subduction keeps a rolling attached slab; pull fades only after
 /// subduction stops. Detached segments are dropped after 2× this age.
-pub(super) const SLAB_DETACH_MY: f32 = 60.0;
+pub(super) const SLAB_DETACH_MY: f32 = 100.0;
 /// Banked sub-cell rotation commits once it reaches this fraction of a cell.
 const COMMIT_FRACTION: f32 = 0.75;
 /// Oceanic crust created at ridges: thickness (km).
@@ -118,7 +118,7 @@ pub(super) const SUTURE_AFTER_MY: f32 = 30.0;
 /// Condition 1: continent-continent contact must span this fraction of the
 /// smaller plate's perimeter (Dan's ruling, WO-0005) — a pinprick contact
 /// must never weld two plates.
-const SUTURE_CONTACT_FRACTION: f32 = 0.3;
+pub(super) const SUTURE_CONTACT_FRACTION: f32 = 0.3;
 /// Condition 2: mean relative speed across the contact (cm/yr) below the
 /// classification dead band — the contact is kinematically indistinguishable
 /// from plate interior (Gordon 1998).
@@ -133,22 +133,22 @@ const SUTURE_OCEAN_RINGS: u16 = 2;
 // Exact coefficients are S3 calibration targets; the load-bearing property
 // is the ordering craton > old ocean > young continent > fresh suture/rift.
 const STRENGTH_OCEAN_TYPE: f32 = 1.0;
-const STRENGTH_CONT_TYPE: f32 = 0.6;
+const STRENGTH_CONT_TYPE: f32 = 0.78;
 /// g_age = clamp(age_ref / 500 My, 0.2, 2.0); age_ref is crust_age on ocean
 /// and min(crust_age, orogeny_age) on continent.
-const STRENGTH_AGE_REF_MY: f32 = 500.0;
-const STRENGTH_AGE_MIN: f32 = 0.2;
+const STRENGTH_AGE_REF_MY: f32 = 350.0;
+const STRENGTH_AGE_MIN: f32 = 0.9;
 const STRENGTH_AGE_MAX: f32 = 2.0;
 /// A fresh suture scores g_suture = 0.3, healing to 1.0 over 300 My
 /// (sutures localize deformation for hundreds of My — Vauchez et al. 1997).
-const SUTURE_WEAK_FLOOR: f32 = 0.3;
-const SUTURE_HEAL_MY: f32 = 300.0;
+const SUTURE_WEAK_FLOOR: f32 = 0.5;
+const SUTURE_HEAL_MY: f32 = 150.0;
 /// Continental thickness penalty reference; over-thickened hot orogens are
 /// additionally weak while young (hot crust flows).
-const STRENGTH_THICK_REF_KM: f32 = 35.0;
+const STRENGTH_THICK_REF_KM: f32 = 20.0;
 const HOT_OROGEN_THICK_KM: f32 = 50.0;
 const HOT_OROGEN_AGE_MY: f32 = 50.0;
-const HOT_OROGEN_FACTOR: f32 = 0.7;
+const HOT_OROGEN_FACTOR: f32 = 1.0;
 // Amendment B (Dan): supercontinent breakup comes from mantle-insulation
 // weakening of the strength field. For continental cells of a plate holding
 // over 1/3 of the world's continental crust, strength falls toward 0.5×,
@@ -157,7 +157,7 @@ const HOT_OROGEN_FACTOR: f32 = 0.7;
 const INSULATION_CONT_FRACTION: f32 = 1.0 / 3.0;
 const INSULATION_START_MY: f32 = 100.0;
 const INSULATION_FULL_MY: f32 = 300.0;
-const INSULATION_FLOOR: f32 = 0.5;
+const INSULATION_FLOOR: f32 = 0.18;
 
 // ----- rifting (WO-0006 S2, model §5 + amendment A) -----
 /// A plume qualifies as a rift driver once it has sat under continental
@@ -391,6 +391,13 @@ pub struct SimState {
     pub cont_gained_by_advection: u64,
     pub cont_gained_by_arc: u64,
     pub suture_count: u64,
+    /// Suture-condition diagnostics (WO-0006 S3 calibration): pair-steps
+    /// where a continent-continent contact existed but §3 condition 1
+    /// (extent), 2 (lock), or 3 (ocean closed; only evaluated when 1 and 2
+    /// hold) failed. Diagnostics only — never feeds the dynamics.
+    pub suture_fail_extent: u64,
+    pub suture_fail_lock: u64,
+    pub suture_fail_ocean: u64,
     /// Rift-to-oceanization splits (the only breakup path since S2).
     pub breakup_count: u64,
     pub rift_start_count: u64,
@@ -451,6 +458,9 @@ impl SimState {
             cont_gained_by_advection: 0,
             cont_gained_by_arc: 0,
             suture_count: 0,
+            suture_fail_extent: 0,
+            suture_fail_lock: 0,
+            suture_fail_ocean: 0,
             breakup_count: 0,
             rift_start_count: 0,
             rift_failed_count: 0,
@@ -467,8 +477,10 @@ impl SimState {
     /// the state a keyframe stores IS the state the run continues from —
     /// this is what makes resume-from-keyframe bit-exact. Called right
     /// before each keyframe's elevation derive. The formulas must mirror
-    /// [`Keyframe::encode`]/decode exactly.
-    pub(super) fn quantize_state(&mut self) {
+    /// [`Keyframe::encode`]/decode exactly. Public since WO-0006 S3 so the
+    /// probe, calibration harness, and gate tests can drive `step()` with
+    /// the exact keyframe cadence `run_history` uses (idempotent, safe).
+    pub fn quantize_state(&mut self) {
         // Must mirror Keyframe::encode's round-then-clamp exactly.
         let q_u16 = |v: f32| -> f32 { (v.round().clamp(0.0, 65_535.0) as u16) as f32 };
         // Suture cells mirror enc_suture/dec_suture: never-sutured stays the
@@ -1672,6 +1684,17 @@ impl SimState {
             let locked = (e.rel_sum / e.rel_n.max(1) as f32) < SUTURE_LOCK_CMYR;
             // Condition 3 (checked last — it walks rings): ocean closed.
             let holds = extent_ok && locked && self.ocean_closed(&e.contact_cells, e.a, e.b);
+            // Which condition binds (calibration diagnostics; ocean is only
+            // known when 1 and 2 hold, matching the short-circuit).
+            if !extent_ok {
+                self.suture_fail_extent += 1;
+            }
+            if !locked {
+                self.suture_fail_lock += 1;
+            }
+            if extent_ok && locked && !holds {
+                self.suture_fail_ocean += 1;
+            }
             let old = self
                 .collisions
                 .iter()
