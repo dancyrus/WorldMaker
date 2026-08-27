@@ -66,12 +66,14 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
             pole: random_unit_vec(&mut prng),
             speed_deg_my: speed,
             youngest_suture_my: NEVER_SUTURED,
+            youngest_rift_my: NEVER_SUTURED,
             pending_rot: IDENTITY3,
             pending_deg: 0.0,
             slab: Vec::new(),
             boundary_cells: 0,
             subducting_cells: 0,
             colliding_cells: 0,
+            colliding_strength: 0.0,
             ridge_cells: 0,
             transform_cells: 0,
             drive_torque: [0.0; 3],
@@ -236,6 +238,7 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         }
     };
     s.hotspot_hints = vec![0; s.hotspots.len()];
+    s.hotspot_cont_my = vec![0.0; s.hotspots.len()];
 
     // --- 8. detail-noise seed ---
     s.noise_seed = sub_rng(master_seed, STAGE_ID, "detail-noise").next_u64();
