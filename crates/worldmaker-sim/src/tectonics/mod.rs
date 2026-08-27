@@ -25,7 +25,7 @@ mod setup;
 mod step;
 
 pub use keyframe::{
-    Keyframe, PairTimer, PlateState, RunDiagnostics, TectonicsHistory, NEVER_SUTURED,
+    Keyframe, PairTimer, PlateState, RunDiagnostics, SlabSegment, TectonicsHistory, NEVER_SUTURED,
 };
 pub use step::SimState;
 

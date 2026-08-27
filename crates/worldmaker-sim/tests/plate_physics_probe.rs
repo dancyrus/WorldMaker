@@ -1,6 +1,8 @@
-//! WO-0005 dev probe: per-100-My plate-physics statistics for the model
-//! audit. Runs the tectonic sim at seed "cyrus" and seed 42 (L6, 2 Gy,
-//! default params) and writes docs/results/plate-physics-probe-<seed>.json.
+//! WO-0005 dev probe (extended in WO-0006 S1 with the connectivity counter
+//! and per-plate attached slab area): per-100-My plate-physics statistics
+//! for the model audit. Runs the tectonic sim at seed "cyrus" and seed 42
+//! (L6, 2 Gy, default params) and writes
+//! docs/results/plate-physics-probe-s1-<seed>.json.
 //!
 //! The probe drives `SimState::step` directly with the same stepping and
 //! keyframe-quantization cadence as `run_history` (the quantize round-trip
@@ -42,6 +44,7 @@ fn quantize(s: &mut SimState) {
         s.orogeny_age[i] = q_u16(s.orogeny_age[i]);
         s.rift_age[i] = q_u16(s.rift_age[i]);
         s.buildup[i] = q_u16(s.buildup[i] * 100.0) * 0.01;
+        s.slab_since_my[i] = q_u16(s.slab_since_my[i]);
     }
 }
 
@@ -139,6 +142,23 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
             .iter()
             .filter(|p| p.speed_deg_my <= SLOW_SPEED_DEG_MY + 1e-6)
             .count();
+        // WO-0006 S1: per-plate attached slab area (the slab-pull driver).
+        let attached_slab: Vec<serde_json::Value> = alive
+            .iter()
+            .map(|p| {
+                let area: u32 = p
+                    .slab
+                    .iter()
+                    .filter(|s| s.attached)
+                    .map(|s| s.area_cells)
+                    .sum();
+                json!({
+                    "plate_id": p.id,
+                    "attached_slab_cells": area,
+                    "speed_deg_my": p.speed_deg_my,
+                })
+            })
+            .collect();
         let (cells, _) = counts_per_plate(&sim.plate_id, &sim.crust_type, sim.plates.len());
         let largest_share =
             cells.iter().copied().max().unwrap_or(0) as f64 / sim.plate_id.len() as f64;
@@ -156,6 +176,8 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
             "largest_plate_cell_share": largest_share,
             "plates_below_0p05_deg_my_count": slow,
             "plates_at_or_below_0p05_deg_my_count": slow_at_floor,
+            "connectivity_reassigned_cum": sim.connectivity_reassigned,
+            "attached_slab_per_plate": attached_slab,
         }));
     };
 
@@ -314,6 +336,7 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
             "breakups_unattributed_count": trig_unattributed,
             "max_multi_component_plates_in_sample": max_multi,
             "samples_with_exclaves_count": samples_with_exclaves,
+            "connectivity_reassigned_total": sim.connectivity_reassigned,
             "sample_count": samples.len(),
         },
         "samples": samples,
@@ -324,7 +347,7 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
 
 /// WO-0005 step 4. Ignored: dev probe, ~2×2 Gy L6 runs (minutes).
 #[test]
-#[ignore = "dev probe: writes docs/results/plate-physics-probe-<seed>.json"]
+#[ignore = "dev probe: writes docs/results/plate-physics-probe-s1-<seed>.json"]
 fn plate_physics_probe() {
     let grid = Arc::new(Grid::build(6));
     let date = today_utc_iso();
@@ -336,7 +359,7 @@ fn plate_physics_probe() {
             serde_json::to_string_pretty(&metrics["headline"]).unwrap()
         );
         let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/results"))
-            .join(format!("plate-physics-probe-{label}.json"));
+            .join(format!("plate-physics-probe-s1-{label}.json"));
         ResultsFile::new(&date, metrics).write(&path).unwrap();
         eprintln!("wrote {}", path.display());
     }

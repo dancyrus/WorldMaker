@@ -21,13 +21,13 @@ use rand::RngCore;
 use rayon::prelude::*;
 
 use worldmaker_core::dmath::{
-    add3, cross3, dot3, gaussian_f32, mat3_mul, mat3_mul3, mat3_transpose, normalize3,
-    random_tangent, rotation3, scale3, sub3,
+    add3, cross3, dot3, mat3_mul, mat3_mul3, mat3_transpose, normalize3, random_tangent, rotation3,
+    scale3, sub3,
 };
 use worldmaker_core::rng::sub_rng;
 use worldmaker_core::Grid;
 
-use super::keyframe::{Keyframe, PairTimer, PlateState, IDENTITY3};
+use super::keyframe::{Keyframe, PairTimer, PlateState, SlabSegment, IDENTITY3};
 use super::{
     TectonicsParams, DT_MY, F_ARC, F_BND_CONVERGENT, F_BND_DIVERGENT, F_BND_TRANSFORM, F_HOTSPOT,
     F_RIDGE, F_RIFT, F_TRENCH, STAGE_ID,
@@ -42,44 +42,44 @@ const RADMY_TO_CMYR: f32 = R_EARTH_KM * 0.1;
 const DEG2RAD: f32 = std::f32::consts::PI / 180.0;
 /// Boundary classification threshold, cm/yr of normal separation (spec).
 const CLASSIFY_CMYR: f32 = 0.4;
-/// Slab pull: speed gain per unit subducting-boundary fraction.
-const SLAB_PULL_GAIN: f32 = 1.0;
-/// Collision damping: speed loss per unit *saturated* colliding fraction.
-/// Full damping (1.0) lets a jammed plate actually stall — otherwise its
-/// trailing edge keeps opening ocean while its front cannot advance, and the
-/// continent conveyor-belts into the collision and is destroyed.
-const COLLISION_DAMP: f32 = 1.0;
-/// Collision damping saturates once the colliding contact reaches this
-/// fraction of the plate's boundary — or the absolute floor below, whichever
-/// is larger. Even a small continental contact locks the plate (India–Asia
-/// style; also terrane dockings): without this, sub-saturation contacts
-/// never slow below the suture threshold and grind continental margins away
-/// for the whole run.
-const COLLISION_SATURATION: f32 = 0.05;
-const COLLISION_SATURATION_MIN_CELLS: f32 = 4.0;
-/// Per-step relaxation of speed toward its slab-pull target: braking is much
-/// faster than acceleration, so a plate hitting a continent stalls within a
-/// few steps instead of grinding tens of My of margin away.
-const SPEED_RELAX_UP: f32 = 0.15;
-const SPEED_RELAX_DOWN: f32 = 0.5;
-/// Speed clamp, deg/My (spec; shared with setup's base-speed draw).
-pub(super) const SPEED_MIN: f32 = 0.1;
-/// Raised 1.2 → 2.0 (WO-0003 Fix 4): at tectonic_vigor 1.73 the old cap
-/// pegged most base speeds and every slab-pull target at 1.2, so vigor
-/// stopped spreading speeds. 2.0 sits above the fastest draw at the maximum
-/// vigor 2.0 (|N(0.5, 0.15)| × 2), so the clamp is a safety rail again, not
-/// the operating point.
+
+// ----- force balance (WO-0006, plate-physics-model.md §1) -----
+// Plates are inertialess Stokes flow: speed is the quotient of driving
+// forces over resistances, relaxed over the mantle re-equilibration time.
+// Units: forces in cell-units such that v_target comes out in deg/My; the
+// S1 values below are placeholders calibrated only to §9 metric 7's coarse
+// shape (mean speed and slab ranking) — final calibration is WO-0006 S3.
+/// Slab pull per attached-slab cell (age-weighted): the dominant driver.
+const K_SLAB: f32 = 0.70;
+/// Ridge push per divergent boundary cell (~an order below slab pull).
+const K_RIDGE: f32 = 1.0;
+/// Residual mantle traction per plate cell; K_MANTLE / C_DRAG is the
+/// residual drift of a slab-free, ridge-free plate (~0.8 cm/yr).
+const K_MANTLE: f32 = 0.06;
+/// Basal drag per plate cell (the normalization of the balance).
+const C_DRAG: f32 = 1.0;
+/// Continent-continent contact resistance per contact cell (strength = 1.0
+/// until WO-0006 S2 lands the strength field).
+const C_CONTACT: f32 = 60.0;
+/// Transform friction per transform-only boundary cell.
+const C_TRANSFORM: f32 = 2.0;
+/// Speed/pole relaxation time, My (mantle re-equilibration; India's
+/// slowdown played out over ~10–20 My).
+const TAU_MY: f32 = 30.0;
+/// Slab-pull age weight saturates at this subduction age (half-space
+/// cooling: older = colder = denser).
+const SLAB_AGE_REF_MY: f32 = 80.0;
+/// Safety rail only (~22 cm/yr; Cretaceous India is the fastest sustained
+/// plate motion known). Not an operating point, and there is NO floor: a
+/// plate whose forces vanish coasts down to the residual drift.
 pub(super) const SPEED_MAX: f32 = 2.0;
-/// Speed floor of a fully jammed plate (f_coll = 1), deg/My. The old floor
-/// `SPEED_MIN * (1 - f_coll)` collapsed to exactly zero, and with the
-/// slab-pull target also zeroed by COLLISION_DAMP the clamp held jammed
-/// plates at 0.00 deg/My forever (WO-0003 Fix 4 diagnosis). A jammed plate
-/// now keeps this residual creep — ~0.55 cm/yr at the rotation equator, at
-/// the suture threshold scale, so welded pairs still read slow and suture —
-/// and can never freeze to the grid permanently.
-pub(super) const SPEED_FLOOR_JAMMED: f32 = 0.05;
-/// Euler-pole random walk, degrees (1 sigma) per step.
-const POLE_WALK_DEG: f32 = 0.6;
+/// A slab segment detaches (stops pulling) this long after it went under:
+/// upper-mantle transit takes ~10–30 My and post-collision slab breakoff is
+/// observed ~10–20 My after continental arrival (von Blanckenburg & Davies
+/// 1995). Segments detach individually (Dan's amendment C): continuous
+/// subduction keeps a rolling attached slab; pull fades only after
+/// subduction stops. Detached segments are dropped after 2× this age.
+pub(super) const SLAB_DETACH_MY: f32 = 60.0;
 /// Banked sub-cell rotation commits once it reaches this fraction of a cell.
 const COMMIT_FRACTION: f32 = 0.75;
 /// Oceanic crust created at ridges: thickness (km).
@@ -109,13 +109,11 @@ const RIFT_OCEANIZE_KM: f32 = 25.0;
 /// classification noise on quasi-transform boundaries cannot mature a rift).
 const RIFT_DECAY_MULT: f32 = 2.0;
 /// Slow-collision threshold for suturing (cm/yr) and required duration (My).
-/// Raised 0.5 → 1.2 (WO-0003 Fix 4): two fully jammed plates now creep at
-/// the SPEED_FLOOR_JAMMED residual instead of stopping dead, which closes
-/// their contact at up to ~1.1 cm/yr (2 × 0.05 deg/My at the rotation
-/// equator). At 0.5 that creep read as *active* convergence, reset the pair
-/// timer every step, and welded pairs ground against each other forever —
-/// the threshold must sit above the jam-creep ceiling so a stalled
-/// collision always matures toward suture.
+/// 1.2 sits above the residual-drift ceiling of two stalled plates (their
+/// contact can still close at up to ~2 × the K_MANTLE / C_DRAG drift), so a
+/// jammed collision always matures toward suture instead of resetting the
+/// pair timer with its residual creep. WO-0006 S2 replaces this rule with
+/// the model's three-condition suture (§3), threshold 0.4.
 const SUTURE_SLOW_CMYR: f32 = 1.2;
 pub(super) const SUTURE_AFTER_MY: f32 = 30.0;
 /// Fast-convergence steps decay the pair timer at 2× real time instead of
@@ -155,6 +153,8 @@ const ARC_MIN_KM: f32 = 150.0;
 const ARC_MAX_KM: f32 = 250.0;
 
 const NONE: u32 = u32::MAX;
+/// "No slab beneath this cell" sentinel for the per-cell `slab_plate` field.
+pub const SLAB_NONE: u16 = u16::MAX;
 
 /// Per-cell result of the advection gather.
 #[derive(Clone, Copy)]
@@ -169,8 +169,13 @@ struct CellOut {
     build: f32,
     /// Plate whose crust was consumed at this cell, or NONE.
     subducted: u32,
+    /// Crust age of the consumed cell (slab-ledger input; 0 if none).
+    subducted_age: f32,
     /// Plate jammed against `plate` in continent-continent contact, or NONE.
     collided: u32,
+    /// Advected slab-ledger cell fields (from the source cell).
+    slab_plate: u16,
+    slab_since: f32,
 }
 
 /// Per-cell result of boundary classification.
@@ -188,6 +193,9 @@ struct ClassOut {
     contact_conv_cmyr: f32,
     /// Cell has at least one foreign neighbor.
     boundary: bool,
+    /// This cell's contribution to its plate's drive torque: subducting
+    /// edges pull toward the trench, divergent edges push off the ridge.
+    torque: [f32; 3],
 }
 
 /// The working state of one tectonic run. All arrays are cell-count long;
@@ -209,6 +217,11 @@ pub struct SimState {
     pub features: Vec<u32>,
     pub elev: Vec<f32>,
     pub sea_offset_m: f32,
+    /// Plate whose slab lies beneath this cell (SLAB_NONE = none); rides
+    /// with the overriding plate's cells.
+    pub slab_plate: Vec<u16>,
+    /// When that slab went under (My; 0 where slab_plate is SLAB_NONE).
+    pub slab_since_my: Vec<f32>,
 
     // Plate-level state.
     pub plates: Vec<PlateState>,
@@ -222,6 +235,10 @@ pub struct SimState {
     boundary_cells: Vec<u32>,
     subducting_cells: Vec<u32>,
     colliding_cells: Vec<u32>,
+    ridge_cells: Vec<u32>,
+    transform_cells: Vec<u32>,
+    /// Summed boundary torque directions per plate (pole-update input).
+    torques: Vec<[f32; 3]>,
     /// Cell count per plate id, kept current.
     plate_cells: Vec<u32>,
 
@@ -241,6 +258,9 @@ pub struct SimState {
     pub cont_gained_by_arc: u64,
     pub suture_count: u64,
     pub breakup_count: u64,
+    /// Cells reassigned by the connectivity backstop (cumulative). The §7
+    /// invariant target: this fires only for advection seam noise.
+    pub connectivity_reassigned: u64,
 }
 
 impl SimState {
@@ -261,6 +281,8 @@ impl SimState {
             features: vec![0; n],
             elev: vec![0.0; n],
             sea_offset_m: 0.0,
+            slab_plate: vec![SLAB_NONE; n],
+            slab_since_my: vec![0.0; n],
             plates: Vec::new(),
             collisions: Vec::new(),
             hotspots: Vec::new(),
@@ -268,6 +290,9 @@ impl SimState {
             boundary_cells: Vec::new(),
             subducting_cells: Vec::new(),
             colliding_cells: Vec::new(),
+            ridge_cells: Vec::new(),
+            transform_cells: Vec::new(),
+            torques: Vec::new(),
             plate_cells: Vec::new(),
             cand_mask: (0..n).map(|_| AtomicU32::new(0)).collect(),
             outs: Vec::new(),
@@ -281,6 +306,7 @@ impl SimState {
             cont_gained_by_arc: 0,
             suture_count: 0,
             breakup_count: 0,
+            connectivity_reassigned: 0,
         }
     }
 
@@ -302,6 +328,7 @@ impl SimState {
             self.orogeny_age[i] = q_u16(self.orogeny_age[i]);
             self.rift_age[i] = q_u16(self.rift_age[i]);
             self.buildup[i] = q_u16(self.buildup[i] * 100.0) * 0.01;
+            self.slab_since_my[i] = q_u16(self.slab_since_my[i]);
         }
     }
 
@@ -329,6 +356,8 @@ impl SimState {
             s.buildup[i] = kf.buildup_ckm[i] as f32 * 0.01;
             s.features[i] = (kf.flags[i] & 0xff) as u32;
             s.elev[i] = kf.elev_m[i] as f32;
+            s.slab_plate[i] = kf.slab_plate[i];
+            s.slab_since_my[i] = kf.slab_since_my[i] as f32;
         }
         s.plates = kf.plates.clone();
         s.collisions = kf.collisions.clone();
@@ -341,12 +370,18 @@ impl SimState {
         s.boundary_cells = vec![0; np];
         s.subducting_cells = vec![0; np];
         s.colliding_cells = vec![0; np];
+        s.ridge_cells = vec![0; np];
+        s.transform_cells = vec![0; np];
+        s.torques = vec![[0.0; 3]; np];
         s.plate_cells = vec![0; np];
         for p in &s.plates {
             let i = p.id as usize;
             s.boundary_cells[i] = p.boundary_cells;
             s.subducting_cells[i] = p.subducting_cells;
             s.colliding_cells[i] = p.colliding_cells;
+            s.ridge_cells[i] = p.ridge_cells;
+            s.transform_cells[i] = p.transform_cells;
+            s.torques[i] = p.drive_torque;
         }
         for &p in &s.plate_id {
             s.plate_cells[p as usize] += 1;
@@ -361,6 +396,9 @@ impl SimState {
         self.boundary_cells = vec![0; np];
         self.subducting_cells = vec![0; np];
         self.colliding_cells = vec![0; np];
+        self.ridge_cells = vec![0; np];
+        self.transform_cells = vec![0; np];
+        self.torques = vec![[0.0; 3]; np];
         self.plate_cells = vec![0; np];
         for &p in &self.plate_id {
             self.plate_cells[p as usize] += 1;
@@ -370,10 +408,12 @@ impl SimState {
     }
 
     /// Advance one step. `step_idx` is the absolute step number since t = 0;
-    /// all randomness is keyed on it, so resumed runs replay identically.
+    /// all randomness is keyed on it, so resumed runs replay identically
+    /// (motion itself is RNG-free since WO-0006; breakup still draws).
     pub fn step(&mut self, master_seed: u64, step_idx: u32) {
-        self.motion_update(master_seed, step_idx);
+        self.motion_update();
         self.advect();
+        self.enforce_connectivity();
         self.classify_boundaries();
         self.accumulate_boundary_stats();
         self.apply_arcs();
@@ -385,43 +425,49 @@ impl SimState {
         self.t_my += DT_MY;
     }
 
-    // ----- F: plate motion -----
+    // ----- F: plate motion (WO-0006 force balance, model §1) -----
 
-    fn motion_update(&mut self, master_seed: u64, step_idx: u32) {
+    /// Inertialess force balance: v_target = drivers / resistances, relaxed
+    /// over TAU_MY; the pole relaxes toward the summed boundary torque
+    /// direction. RNG-free — poles wander exactly when the plate's boundary
+    /// makeup changes.
+    fn motion_update(&mut self) {
         for pid in 0..self.plates.len() {
             if !self.plates[pid].alive {
                 continue;
             }
-            let mut rng = sub_rng(
-                master_seed,
-                STAGE_ID,
-                &format!("plate-motion-{pid}-step{step_idx}"),
-            );
-            let bnd = self.boundary_cells[pid].max(1) as f32;
-            let f_sub = self.subducting_cells[pid] as f32 / bnd;
-            let sat = (bnd * COLLISION_SATURATION).max(COLLISION_SATURATION_MIN_CELLS);
-            let f_coll = (self.colliding_cells[pid] as f32 / sat).min(1.0);
+            // Slab pull from attached ledger segments, weighted by thermal
+            // age at subduction (serial, fixed segment order).
+            let mut slab_weighted = 0.0f32;
+            for seg in &self.plates[pid].slab {
+                if seg.attached {
+                    slab_weighted += seg.area_cells as f32
+                        * (seg.age_at_subduction_my / SLAB_AGE_REF_MY).min(1.0);
+                }
+            }
+            let area = self.plate_cells[pid].max(1) as f32;
+            let f_slab = K_SLAB * slab_weighted;
+            let f_ridge = K_RIDGE * self.ridge_cells[pid] as f32;
+            let f_resid = K_MANTLE * area;
+            let r_drag = C_DRAG * area;
+            // strength(cell) = 1.0 until WO-0006 S2 lands the strength field.
+            let r_bnd = C_CONTACT * self.colliding_cells[pid] as f32
+                + C_TRANSFORM * self.transform_cells[pid] as f32;
+            let v_target = (f_slab + f_ridge + f_resid) / (r_drag + r_bnd);
+            let torque = self.torques[pid];
             let p = &mut self.plates[pid];
-            // Slow pole random walk.
-            let axis = random_tangent(&mut rng, p.pole);
-            let ang = (gaussian_f32(&mut rng) * POLE_WALK_DEG * DEG2RAD).clamp(-0.05, 0.05);
-            let rot = rotation3(axis, ang);
-            p.pole = normalize3(mat3_mul(&rot, p.pole));
-            // Slab pull / collision damping from last step's boundary makeup.
-            // The speed floor eases with collision fraction but never below
-            // SPEED_FLOOR_JAMMED: a fully jammed plate keeps a residual
-            // convergence creep instead of stopping dead (Fix 4 liveliness).
-            let target = p.base_speed_deg_my
-                * (1.0 + SLAB_PULL_GAIN * f_sub)
-                * (1.0 - COLLISION_DAMP * f_coll);
-            let floor = SPEED_MIN - (SPEED_MIN - SPEED_FLOOR_JAMMED) * f_coll;
-            let relax = if target < p.speed_deg_my {
-                SPEED_RELAX_DOWN
-            } else {
-                SPEED_RELAX_UP
-            };
             p.speed_deg_my =
-                (p.speed_deg_my + relax * (target - p.speed_deg_my)).clamp(floor, SPEED_MAX);
+                (p.speed_deg_my + (DT_MY / TAU_MY) * (v_target - p.speed_deg_my)).min(SPEED_MAX);
+            // Pole: relax toward the boundary-torque direction. A plate with
+            // no boundary drivers keeps its pole (nothing is steering it).
+            let len = dot3(torque, torque).sqrt();
+            if len > 1e-12 {
+                let omega_target = scale3(torque, 1.0 / len);
+                p.pole = normalize3(add3(
+                    p.pole,
+                    scale3(sub3(omega_target, p.pole), DT_MY / TAU_MY),
+                ));
+            }
             // Bank this step's rotation; advection commits it when it
             // reaches a usable fraction of a cell.
             let step_rot = rotation3(p.pole, p.speed_deg_my * DEG2RAD * DT_MY);
@@ -505,11 +551,17 @@ impl SimState {
         let prev_rift = &self.rift_age;
         let prev_build = &self.buildup;
         let prev_feat = &self.features;
+        let prev_slab_plate = &self.slab_plate;
+        let prev_slab_since = &self.slab_since_my;
         let inv_ref = &inv;
         let id_of_dense_ref = &id_of_dense;
         let dense_of_id_ref = &dense_of_id;
+        // Plate speeds for the continent-continent overlap rule: the cell
+        // resolves to the slower plate (§7 cause removal — no frozen cells).
+        let speeds: Vec<f32> = self.plates.iter().map(|p| p.speed_deg_my).collect();
+        let speeds_ref = &speeds;
 
-        // Copy of a cell's previous state, used for no-op and jammed cells.
+        // Copy of a cell's previous state, used for no-op cells.
         let keep_cell = |c: usize, features: u32, collided: u32| CellOut {
             plate: plate_id[c],
             ctype: prev_ctype[c],
@@ -520,7 +572,10 @@ impl SimState {
             rift: prev_rift[c],
             build: prev_build[c],
             subducted: NONE,
+            subducted_age: 0.0,
             collided,
+            slab_plate: prev_slab_plate[c],
+            slab_since: prev_slab_since[c],
         };
 
         let mut outs = std::mem::take(&mut self.outs);
@@ -577,7 +632,10 @@ impl SimState {
                                 rift: 0.0,
                                 build: 0.0,
                                 subducted: NONE,
+                                subducted_age: 0.0,
                                 collided: NONE,
+                                slab_plate: SLAB_NONE,
+                                slab_since: 0.0,
                             }
                         }
                     }
@@ -593,7 +651,10 @@ impl SimState {
                             rift: prev_rift[s],
                             build: prev_build[s],
                             subducted: NONE,
+                            subducted_age: 0.0,
                             collided: NONE,
+                            slab_plate: prev_slab_plate[s],
+                            slab_since: prev_slab_since[s],
                         }
                     }
                     _ => {
@@ -606,19 +667,48 @@ impl SimState {
                         };
                         let hard_count = (0..covers).filter(|&i| is_hard(i)).count();
                         if hard_count >= 2 {
-                            // Continent-continent jam: the cell freezes in
-                            // place; both sides record the collision.
-                            let first_hard = (0..covers).find(|&i| is_hard(i)).unwrap();
-                            let other = (first_hard + 1..covers)
-                                .find(|&i| is_hard(i))
+                            // Continent-continent overlap: the cell resolves
+                            // to the SLOWER hard plate (§7 cause removal —
+                            // rigid plates cannot shed frozen cells; the
+                            // force balance is what slows the plates). Both
+                            // sides still record the collision for orogeny.
+                            let mut win = usize::MAX;
+                            for i in 0..covers {
+                                if !is_hard(i) {
+                                    continue;
+                                }
+                                if win == usize::MAX {
+                                    win = i;
+                                    continue;
+                                }
+                                let (sw, si) = (
+                                    speeds_ref[cover_plate[win] as usize],
+                                    speeds_ref[cover_plate[i] as usize],
+                                );
+                                if si < sw || (si == sw && cover_plate[i] < cover_plate[win]) {
+                                    win = i;
+                                }
+                            }
+                            let other = (0..covers)
+                                .find(|&i| is_hard(i) && i != win)
                                 .map(|i| cover_plate[i])
                                 .unwrap_or(NONE);
-                            let mine = if plate_id[c] == cover_plate[first_hard] {
-                                other
-                            } else {
-                                cover_plate[first_hard]
-                            };
-                            keep_cell(c, 0, mine)
+                            let s = cover_src[win] as usize;
+                            CellOut {
+                                plate: cover_plate[win],
+                                ctype: prev_ctype[s],
+                                features: 0,
+                                age: prev_age[s],
+                                thick: prev_thick[s],
+                                orog: prev_orog[s],
+                                rift: prev_rift[s],
+                                build: prev_build[s],
+                                subducted: NONE,
+                                subducted_age: 0.0,
+                                collided: other,
+                                slab_plate: prev_slab_plate[s],
+                                slab_since: prev_slab_since[s],
+                            }
                         } else {
                             // At most one hard plate: it overrides; otherwise
                             // the youngest (least dense) soft crust overrides.
@@ -638,13 +728,17 @@ impl SimState {
                                 }
                             }
                             // First non-winner is the consumed plate for
-                            // slab-pull stats (multi-way overlaps are rare).
+                            // the slab ledger (multi-way overlaps are rare).
                             let loser = (0..covers).find(|&i| i != win).unwrap();
                             let s = cover_src[win] as usize;
-                            let (subducted, features) = if was_transform_only {
-                                (NONE, 0) // transform jitter: no trench
+                            let (subducted, subducted_age, features) = if was_transform_only {
+                                (NONE, 0.0, 0) // transform jitter: no trench
                             } else {
-                                (cover_plate[loser], F_TRENCH)
+                                (
+                                    cover_plate[loser],
+                                    prev_age[cover_src[loser] as usize],
+                                    F_TRENCH,
+                                )
                             };
                             CellOut {
                                 plate: cover_plate[win],
@@ -656,7 +750,10 @@ impl SimState {
                                 rift: prev_rift[s],
                                 build: prev_build[s],
                                 subducted,
+                                subducted_age,
                                 collided: NONE,
+                                slab_plate: prev_slab_plate[s],
+                                slab_since: prev_slab_since[s],
                             }
                         }
                     }
@@ -664,10 +761,16 @@ impl SimState {
             })
             .collect_into_vec(&mut outs);
 
-        // Scatter into the SoA arrays and refresh plate cell counts.
+        // Scatter into the SoA arrays and refresh plate cell counts. Slab
+        // ledger: consumption this step is merged into one segment per
+        // consumed plate (serial, id-ordered — deterministic), and the
+        // overriding plate's trench cell records whose slab went under.
         for v in self.plate_cells.iter_mut() {
             *v = 0;
         }
+        let np = self.plates.len();
+        let mut consumed_cells = vec![0u32; np];
+        let mut consumed_age_sum = vec![0.0f32; np];
         for (c, o) in outs.iter().enumerate() {
             // Inventory flows (self.crust_type[c] still holds the previous
             // value at this point in the serial scatter).
@@ -686,6 +789,26 @@ impl SimState {
             self.buildup[c] = o.build;
             self.features[c] = o.features;
             self.plate_cells[o.plate as usize] += 1;
+            if o.subducted != NONE {
+                consumed_cells[o.subducted as usize] += 1;
+                consumed_age_sum[o.subducted as usize] += o.subducted_age;
+                // The slab hangs under the margin it subducted beneath.
+                self.slab_plate[c] = o.subducted as u16;
+                self.slab_since_my[c] = self.t_my;
+            } else {
+                self.slab_plate[c] = o.slab_plate;
+                self.slab_since_my[c] = o.slab_since;
+            }
+        }
+        for pid in 0..np {
+            if consumed_cells[pid] > 0 {
+                self.plates[pid].slab.push(SlabSegment {
+                    area_cells: consumed_cells[pid],
+                    age_at_subduction_my: consumed_age_sum[pid] / consumed_cells[pid] as f32,
+                    subducted_at_my: self.t_my,
+                    attached: true,
+                });
+            }
         }
         self.outs = outs;
 
@@ -702,7 +825,115 @@ impl SimState {
                 self.plates[pid].alive = false;
                 self.collisions
                     .retain(|t| t.a != pid as u32 && t.b != pid as u32);
+                // Slabs keep pulling after the subducting plate dies (Dan's
+                // ruling): the ledger transfers to the plate that consumed
+                // most of it this step (tie → lowest plate id).
+                let mut best: Option<(u32, u32)> = None; // (consumer, count)
+                let mut counts = vec![0u32; self.plates.len()];
+                for o in &self.outs {
+                    if o.subducted == pid as u32 {
+                        counts[o.plate as usize] += 1;
+                    }
+                }
+                for (consumer, &cnt) in counts.iter().enumerate() {
+                    if cnt > 0 && best.is_none_or(|(_, b)| cnt > b) {
+                        best = Some((consumer as u32, cnt));
+                    }
+                }
+                if let Some((consumer, _)) = best {
+                    let segs = std::mem::take(&mut self.plates[pid].slab);
+                    self.plates[consumer as usize].slab.extend(segs);
+                }
                 log::debug!("t={} My: plate {pid} fully consumed", self.t_my);
+            }
+        }
+    }
+
+    /// §7 invariant: every alive plate is one connected region, every step.
+    /// Serial BFS in cell-id order; per plate the largest component is kept
+    /// (tie → the component holding the lowest cell id, i.e. the earliest
+    /// discovered); every other fragment is reassigned to the neighbor plate
+    /// sharing the longest border with it (tie → lowest plate id). Targets
+    /// are chosen from pre-pass ownership, so the sweep is order-free.
+    fn enforce_connectivity(&mut self) {
+        let n = self.grid.cell_count() as usize;
+        // Component labeling in cell-id order.
+        let mut comp_of = vec![u32::MAX; n];
+        let mut comp_plate: Vec<u32> = Vec::new();
+        let mut comp_size: Vec<u32> = Vec::new();
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for c0 in 0..n {
+            if comp_of[c0] != u32::MAX {
+                continue;
+            }
+            let p = self.plate_id[c0];
+            let ci = comp_plate.len() as u32;
+            comp_plate.push(p);
+            comp_size.push(0);
+            comp_of[c0] = ci;
+            queue.push_back(c0 as u32);
+            while let Some(c) = queue.pop_front() {
+                comp_size[ci as usize] += 1;
+                for &nb in self.grid.neighbors_of(c) {
+                    let nbu = nb as usize;
+                    if comp_of[nbu] == u32::MAX && self.plate_id[nbu] == p {
+                        comp_of[nbu] = ci;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+        }
+        // Keeper per plate: largest component; ties resolve to the earliest
+        // discovered, which holds the lowest cell id (strict > keeps it).
+        let mut keep = vec![u32::MAX; self.plates.len()];
+        for ci in 0..comp_plate.len() {
+            let p = comp_plate[ci] as usize;
+            if keep[p] == u32::MAX || comp_size[ci] > comp_size[keep[p] as usize] {
+                keep[p] = ci as u32;
+            }
+        }
+        // Reassign each fragment to the pre-pass neighbor plate with the
+        // longest shared border (tie → lowest plate id). One pass gathers
+        // fragment cell lists; borders are then counted per fragment.
+        let mut frag_cells: Vec<Vec<u32>> = vec![Vec::new(); comp_plate.len()];
+        for (c, &ci) in comp_of.iter().enumerate() {
+            if keep[comp_plate[ci as usize] as usize] != ci {
+                frag_cells[ci as usize].push(c as u32);
+            }
+        }
+        let mut target = vec![u32::MAX; comp_plate.len()];
+        let mut border: Vec<u32> = vec![0; self.plates.len()];
+        for (ci, cells) in frag_cells.iter().enumerate() {
+            if cells.is_empty() {
+                continue;
+            }
+            let p = comp_plate[ci];
+            for b in border.iter_mut() {
+                *b = 0;
+            }
+            for &c in cells {
+                for &nb in self.grid.neighbors_of(c) {
+                    let q = self.plate_id[nb as usize];
+                    if q != p {
+                        border[q as usize] += 1;
+                    }
+                }
+            }
+            let mut best = u32::MAX;
+            for (q, &cnt) in border.iter().enumerate() {
+                if cnt > 0 && (best == u32::MAX || cnt > border[best as usize]) {
+                    best = q as u32;
+                }
+            }
+            target[ci] = best;
+        }
+        for (c, &ci) in comp_of.iter().enumerate() {
+            let t = target[ci as usize];
+            if t != u32::MAX {
+                self.plate_cells[self.plate_id[c] as usize] -= 1;
+                self.plate_cells[t as usize] += 1;
+                self.plate_id[c] = t;
+                self.connectivity_reassigned += 1;
             }
         }
     }
@@ -723,6 +954,8 @@ impl SimState {
         let grid = &self.grid;
         let plate_id = &self.plate_id;
         let ctype = &self.crust_type;
+        let thick = &self.thickness;
+        let age = &self.crust_age;
 
         let mut class = std::mem::take(&mut self.class);
         (0..n)
@@ -754,8 +987,30 @@ impl SimState {
                     let sep_cmyr = dot3(sub3(vb, va), e) * RADMY_TO_CMYR;
                     if sep_cmyr > CLASSIFY_CMYR {
                         any_div = true;
+                        // Ridge push: this plate slides AWAY from the ridge
+                        // (torque sense opposite the boundary direction).
+                        let t = cross3(xa, e);
+                        out.torque = sub3(out.torque, t);
                     } else if sep_cmyr < -CLASSIFY_CMYR {
                         any_conv = true;
+                        // Slab pull steers the SUBDUCTING side toward its
+                        // trench. Which side subducts mirrors the advection
+                        // overlap rule: hard continental crust overrides;
+                        // between soft crusts the older (denser) goes under
+                        // (tie → the higher plate id, since the lower id
+                        // wins the override).
+                        let hard_a = ctype[c] == 1 && thick[c] >= SUBDUCTIBLE_CONT_KM;
+                        let hard_b =
+                            ctype[nb as usize] == 1 && thick[nb as usize] >= SUBDUCTIBLE_CONT_KM;
+                        let a_subducts = if hard_a || hard_b {
+                            !hard_a && hard_b
+                        } else {
+                            age[c] > age[nb as usize] || (age[c] == age[nb as usize] && a > b)
+                        };
+                        if a_subducts {
+                            let t = cross3(xa, e);
+                            out.torque = add3(out.torque, t);
+                        }
                     } else {
                         any_trans = true;
                     }
@@ -803,16 +1058,30 @@ impl SimState {
         self.boundary_cells = vec![0; np];
         self.subducting_cells = vec![0; np];
         self.colliding_cells = vec![0; np];
+        self.ridge_cells = vec![0; np];
+        self.transform_cells = vec![0; np];
+        self.torques = vec![[0.0; 3]; np];
         for (c, cl) in self.class.iter().enumerate() {
+            let p = self.plate_id[c] as usize;
             if cl.boundary {
-                self.boundary_cells[self.plate_id[c] as usize] += 1;
+                self.boundary_cells[p] += 1;
             }
+            // Force-balance inputs: divergent cells drive ridge push,
+            // transform-only cells resist, and the per-cell torque
+            // contributions sum in cell-id order (deterministic).
+            if cl.flags & F_BND_DIVERGENT != 0 {
+                self.ridge_cells[p] += 1;
+            }
+            if cl.flags & F_BND_TRANSFORM != 0 {
+                self.transform_cells[p] += 1;
+            }
+            self.torques[p] = add3(self.torques[p], cl.torque);
             // Colliding = continent-continent contact that is not actively
             // separating. Classification-based (not overlap events), so a
             // stalled plate keeps reading as colliding and stays stalled
             // instead of oscillating.
             if cl.contact_partner != NONE && cl.contact_conv_cmyr > -CLASSIFY_CMYR {
-                self.colliding_cells[self.plate_id[c] as usize] += 1;
+                self.colliding_cells[p] += 1;
             }
         }
         if !self.outs.is_empty() {
@@ -1013,6 +1282,10 @@ impl SimState {
         self.plate_cells[loser as usize] = 0;
         self.plates[loser as usize].alive = false;
         self.plates[winner as usize].youngest_suture_my = self.t_my;
+        // The merged plate inherits the loser's slab ledger (slabs keep
+        // sinking under the weld).
+        let segs = std::mem::take(&mut self.plates[loser as usize].slab);
+        self.plates[winner as usize].slab.extend(segs);
         self.collisions.retain(|t| t.a != loser && t.b != loser);
     }
 
@@ -1114,9 +1387,10 @@ impl SimState {
             cross3(centroid, plane_n),
             0.5 * BREAKUP_RIFT_SPEED * DEG2RAD,
         );
+        let t_now = self.t_my;
         let mk_plate = |om: [f32; 3], id: u32, fallback_pole: [f32; 3]| {
             let w = dot3(om, om).sqrt();
-            let speed = (w / DEG2RAD).clamp(SPEED_MIN, SPEED_MAX);
+            let speed = (w / DEG2RAD).min(SPEED_MAX);
             PlateState {
                 id,
                 alive: true,
@@ -1126,24 +1400,32 @@ impl SimState {
                     fallback_pole
                 },
                 speed_deg_my: speed,
-                base_speed_deg_my: speed,
-                youngest_suture_my: self.t_my, // reset the breakup clock
+                youngest_suture_my: t_now, // reset the breakup clock
                 pending_rot: IDENTITY3,
                 pending_deg: 0.0,
+                slab: Vec::new(),
                 boundary_cells: 0,
                 subducting_cells: 0,
                 colliding_cells: 0,
+                ridge_cells: 0,
+                transform_cells: 0,
+                drive_torque: [0.0; 3],
             }
         };
         let fallback = old.pole;
-        let plate_a = mk_plate(sub3(omega_old, push), pid as u32, fallback);
+        let mut plate_a = mk_plate(sub3(omega_old, push), pid as u32, fallback);
         let plate_b = mk_plate(add3(omega_old, push), new_id, fallback);
+        // The retained half keeps the slab ledger (its trenches persist).
+        plate_a.slab = std::mem::take(&mut self.plates[pid].slab);
         self.plates[pid] = plate_a;
         self.plates.push(plate_b);
         self.plate_cells.push(0);
         self.boundary_cells.push(0);
         self.subducting_cells.push(0);
         self.colliding_cells.push(0);
+        self.ridge_cells.push(0);
+        self.transform_cells.push(0);
+        self.torques.push([0.0; 3]);
 
         self.breakup_count += 1;
         log::debug!(
@@ -1198,6 +1480,19 @@ impl SimState {
     // ----- D: aging -----
 
     fn age_and_relax(&mut self) {
+        // Slab detachment: a segment stops pulling SLAB_DETACH_MY after it
+        // went under; long-detached segments leave the ledger. Fixed plate
+        // and segment order.
+        let t = self.t_my;
+        for p in self.plates.iter_mut() {
+            for seg in p.slab.iter_mut() {
+                if seg.attached && t - seg.subducted_at_my > SLAB_DETACH_MY {
+                    seg.attached = false;
+                }
+            }
+            p.slab
+                .retain(|seg| seg.attached || t - seg.subducted_at_my <= 2.0 * SLAB_DETACH_MY);
+        }
         let thick = &mut self.thickness;
         let age = &mut self.crust_age;
         let orog = &mut self.orogeny_age;
@@ -1236,6 +1531,9 @@ impl SimState {
             p.boundary_cells = self.boundary_cells[i];
             p.subducting_cells = self.subducting_cells[i];
             p.colliding_cells = self.colliding_cells[i];
+            p.ridge_cells = self.ridge_cells[i];
+            p.transform_cells = self.transform_cells[i];
+            p.drive_torque = self.torques[i];
         }
         Keyframe::encode(
             self.t_my,
@@ -1249,6 +1547,8 @@ impl SimState {
             &self.buildup,
             &self.crust_type,
             &self.features,
+            &self.slab_plate,
+            &self.slab_since_my,
             plates,
             self.collisions.clone(),
         )
@@ -1257,5 +1557,161 @@ impl SimState {
     /// Count of alive plates.
     pub fn alive_plates(&self) -> usize {
         self.plates.iter().filter(|p| p.alive).count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_plate(id: u32, speed: f32) -> PlateState {
+        PlateState {
+            id,
+            alive: true,
+            pole: [0.0, 0.0, 1.0],
+            speed_deg_my: speed,
+            youngest_suture_my: super::super::keyframe::NEVER_SUTURED,
+            pending_rot: IDENTITY3,
+            pending_deg: 0.0,
+            slab: Vec::new(),
+            boundary_cells: 0,
+            subducting_cells: 0,
+            colliding_cells: 0,
+            ridge_cells: 0,
+            transform_cells: 0,
+            drive_torque: [0.0; 3],
+        }
+    }
+
+    /// A minimal one-plate state for exercising motion_update directly.
+    fn one_plate_state(area_cells: u32, speed: f32) -> SimState {
+        let grid = Arc::new(Grid::build(2));
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, speed));
+        s.plate_cells = vec![area_cells];
+        s.boundary_cells = vec![0];
+        s.subducting_cells = vec![0];
+        s.colliding_cells = vec![0];
+        s.ridge_cells = vec![0];
+        s.transform_cells = vec![0];
+        s.torques = vec![[0.0; 3]];
+        s
+    }
+
+    /// §1: with no slab, no ridge, and no boundary resistance, the balance
+    /// is residual traction over basal drag — speed relaxes to
+    /// K_MANTLE / C_DRAG regardless of plate size or starting speed.
+    #[test]
+    fn zero_drivers_relax_to_residual_drift() {
+        let v_resid = K_MANTLE / C_DRAG;
+        for (area, start) in [(100u32, 1.5f32), (5000, 0.0), (321, v_resid)] {
+            let mut s = one_plate_state(area, start);
+            for _ in 0..2000 {
+                s.motion_update();
+            }
+            let v = s.plates[0].speed_deg_my;
+            assert!(
+                (v - v_resid).abs() < 1e-4,
+                "area {area}, start {start}: relaxed to {v}, want {v_resid}"
+            );
+        }
+    }
+
+    /// §1: an attached slab segment is a driver — the same plate with one
+    /// attached segment ends up faster than without.
+    #[test]
+    fn attached_slab_outpulls_slab_free() {
+        let mut free = one_plate_state(1000, 0.3);
+        let mut pulled = one_plate_state(1000, 0.3);
+        pulled.plates[0].slab.push(SlabSegment {
+            area_cells: 200,
+            age_at_subduction_my: 80.0,
+            subducted_at_my: 0.0,
+            attached: true,
+        });
+        // A detached copy of the same segment must NOT pull.
+        let mut detached = one_plate_state(1000, 0.3);
+        detached.plates[0].slab.push(SlabSegment {
+            area_cells: 200,
+            age_at_subduction_my: 80.0,
+            subducted_at_my: 0.0,
+            attached: false,
+        });
+        for _ in 0..100 {
+            free.motion_update();
+            pulled.motion_update();
+            detached.motion_update();
+        }
+        let (vf, vp, vd) = (
+            free.plates[0].speed_deg_my,
+            pulled.plates[0].speed_deg_my,
+            detached.plates[0].speed_deg_my,
+        );
+        assert!(vp > vf, "attached slab must pull: {vp} <= {vf}");
+        assert_eq!(vd, vf, "a detached slab must not pull");
+    }
+
+    /// §7: a hand-built two-fragment plate leaves enforce_connectivity as
+    /// one component, the smaller fragment reassigned to its border plate.
+    #[test]
+    fn connectivity_backstop_reunifies_fragments() {
+        let grid = Arc::new(Grid::build(3));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.3));
+        s.plates.push(test_plate(1, 0.3));
+        // Plate 1 = a large patch around cell 40 (3 rings) plus a distant
+        // exclave around cell 600 (1 ring); plate 0 owns the rest.
+        let grow = |seed: u32, rings: u32| {
+            let mut cells = vec![seed];
+            for _ in 0..rings {
+                let mut next = cells.clone();
+                for &c in &cells {
+                    next.extend_from_slice(grid.neighbors_of(c));
+                }
+                next.sort_unstable();
+                next.dedup();
+                cells = next;
+            }
+            cells
+        };
+        let main_patch = grow(40, 3);
+        let exclave = grow(600, 1);
+        assert!(main_patch.len() > exclave.len());
+        for &c in main_patch.iter().chain(&exclave) {
+            s.plate_id[c as usize] = 1;
+        }
+        s.plate_cells = vec![0, 0];
+        for &p in &s.plate_id {
+            s.plate_cells[p as usize] += 1;
+        }
+
+        s.enforce_connectivity();
+
+        assert_eq!(s.connectivity_reassigned, exclave.len() as u64);
+        // Every plate-1 cell now reachable from the main patch: BFS count
+        // equals the plate-1 census (one component).
+        let census = s.plate_id.iter().filter(|&&p| p == 1).count();
+        let mut seen = vec![false; n];
+        let start = *main_patch.first().unwrap() as usize;
+        assert_eq!(s.plate_id[start], 1);
+        let mut queue = VecDeque::from([start as u32]);
+        seen[start] = true;
+        let mut count = 0;
+        while let Some(c) = queue.pop_front() {
+            count += 1;
+            for &nb in grid.neighbors_of(c) {
+                if !seen[nb as usize] && s.plate_id[nb as usize] == 1 {
+                    seen[nb as usize] = true;
+                    queue.push_back(nb);
+                }
+            }
+        }
+        assert_eq!(count, census, "plate 1 must be a single component");
+        assert_eq!(census, main_patch.len(), "the largest fragment is kept");
+        // The exclave went to the only bordering plate.
+        for &c in &exclave {
+            assert_eq!(s.plate_id[c as usize], 0);
+        }
     }
 }

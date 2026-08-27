@@ -13,7 +13,7 @@ use worldmaker_core::Grid;
 
 use super::keyframe::{PlateState, IDENTITY3, NEVER_SUTURED};
 use super::plate_gen;
-use super::step::{SimState, OCEAN_THICKNESS_KM, SPEED_MAX, SPEED_MIN};
+use super::step::{SimState, OCEAN_THICKNESS_KM, SPEED_MAX};
 use super::{TectonicsParams, STAGE_ID};
 
 /// Continental crust fraction relative to the land-fraction target: the
@@ -53,23 +53,28 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         plate_gen::generate_plates(master_seed, grid, &plate_gen::PlateGenParams::from(params));
 
     // --- 3. plate motions ---
+    // Initial poles and speeds are random draws (WO-0006: the only RNG left
+    // in motion); from step 1 on, the force balance owns both.
     for pid in 0..p_count {
         let mut prng = sub_rng(master_seed, STAGE_ID, &format!("plate-init-{pid}"));
         let speed = ((SPEED_MEAN + SPEED_SIGMA * gaussian_f32(&mut prng)).abs()
             * params.tectonic_vigor)
-            .clamp(SPEED_MIN, SPEED_MAX);
+            .min(SPEED_MAX);
         s.plates.push(PlateState {
             id: pid as u32,
             alive: true,
             pole: random_unit_vec(&mut prng),
             speed_deg_my: speed,
-            base_speed_deg_my: speed,
             youngest_suture_my: NEVER_SUTURED,
             pending_rot: IDENTITY3,
             pending_deg: 0.0,
+            slab: Vec::new(),
             boundary_cells: 0,
             subducting_cells: 0,
             colliding_cells: 0,
+            ridge_cells: 0,
+            transform_cells: 0,
+            drive_torque: [0.0; 3],
         });
     }
 

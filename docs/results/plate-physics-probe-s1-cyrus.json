@@ -1,0 +1,1889 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-27",
+  "app_version": "0.1.0",
+  "metrics": {
+    "breakup_events": [
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 4705,
+        "new_plate": 12,
+        "plate_cells": 7152,
+        "plate_cont_cells": 4695,
+        "pre_alive_count": 12,
+        "split_plate": 1,
+        "suture_age_my": 1000000128.0,
+        "t_my": 120.0,
+        "trigger": "unattributed"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 3355,
+        "new_plate": 13,
+        "plate_cells": 7206,
+        "plate_cont_cells": 3291,
+        "pre_alive_count": 12,
+        "split_plate": 0,
+        "suture_age_my": 1000000320.0,
+        "t_my": 350.0,
+        "trigger": "unattributed"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 2982,
+        "new_plate": 14,
+        "plate_cells": 7992,
+        "plate_cont_cells": 3215,
+        "pre_alive_count": 12,
+        "split_plate": 0,
+        "suture_age_my": 102.0,
+        "t_my": 482.0,
+        "trigger": "continental_share_over_third"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 2007,
+        "new_plate": 15,
+        "plate_cells": 8832,
+        "plate_cont_cells": 3661,
+        "pre_alive_count": 12,
+        "split_plate": 1,
+        "suture_age_my": 102.0,
+        "t_my": 634.0,
+        "trigger": "continental_share_over_third"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 1931,
+        "new_plate": 16,
+        "plate_cells": 7223,
+        "plate_cont_cells": 2172,
+        "pre_alive_count": 12,
+        "split_plate": 1,
+        "suture_age_my": 102.0,
+        "t_my": 736.0,
+        "trigger": "continental_share_over_third"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 1890,
+        "new_plate": 17,
+        "plate_cells": 4743,
+        "plate_cont_cells": 1300,
+        "pre_alive_count": 13,
+        "split_plate": 14,
+        "suture_age_my": 470.0,
+        "t_my": 952.0,
+        "trigger": "unattributed"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 1861,
+        "new_plate": 18,
+        "plate_cells": 5996,
+        "plate_cont_cells": 1857,
+        "pre_alive_count": 14,
+        "split_plate": 15,
+        "suture_age_my": 370.0,
+        "t_my": 1004.0,
+        "trigger": "unattributed"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 1242,
+        "new_plate": 19,
+        "plate_cells": 5989,
+        "plate_cont_cells": 1938,
+        "pre_alive_count": 12,
+        "split_plate": 17,
+        "suture_age_my": 102.0,
+        "t_my": 1338.0,
+        "trigger": "continental_share_over_third"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 1217,
+        "new_plate": 20,
+        "plate_cells": 3444,
+        "plate_cont_cells": 1203,
+        "pre_alive_count": 12,
+        "split_plate": 17,
+        "suture_age_my": 110.0,
+        "t_my": 1448.0,
+        "trigger": "unattributed"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 958,
+        "new_plate": 21,
+        "plate_cells": 4240,
+        "plate_cont_cells": 918,
+        "pre_alive_count": 12,
+        "split_plate": 19,
+        "suture_age_my": 216.0,
+        "t_my": 1554.0,
+        "trigger": "unattributed"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 830,
+        "new_plate": 22,
+        "plate_cells": 2575,
+        "plate_cont_cells": 352,
+        "pre_alive_count": 12,
+        "split_plate": 20,
+        "suture_age_my": 400.0,
+        "t_my": 1848.0,
+        "trigger": "unattributed"
+      },
+      {
+        "area_threshold_cells": 13654,
+        "cont_threshold_cells": 696,
+        "new_plate": 23,
+        "plate_cells": 2533,
+        "plate_cont_cells": 362,
+        "pre_alive_count": 13,
+        "split_plate": 22,
+        "suture_age_my": 134.0,
+        "t_my": 1982.0,
+        "trigger": "unattributed"
+      }
+    ],
+    "config": {
+      "dt_my": 2.0,
+      "grid_level": 6,
+      "land_fraction": 0.29,
+      "plate_count_param": 12,
+      "sample_interval_my": 100.0,
+      "seed_text": "cyrus",
+      "seed_u64": 14176781840892274037,
+      "span_my": 2000.0,
+      "tectonic_vigor": 1.0
+    },
+    "headline": {
+      "breakup_count_total": 12,
+      "breakups_by_area_count": 0,
+      "breakups_by_cont_share_count": 4,
+      "breakups_by_gridlock_breaker_count": 0,
+      "breakups_unattributed_count": 8,
+      "connectivity_reassigned_total": 114385,
+      "final_alive_plate_count": 14,
+      "max_multi_component_plates_in_sample": 0,
+      "min_sampled_alive_plate_count": 12,
+      "sample_count": 21,
+      "samples_with_exclaves_count": 0,
+      "suture_count_total": 3
+    },
+    "samples": [
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 0,
+            "speed_deg_my": 0.4790131151676178
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 1,
+            "speed_deg_my": 0.4802078604698181
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 2,
+            "speed_deg_my": 0.6062102317810059
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 3,
+            "speed_deg_my": 0.6297652721405029
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 4,
+            "speed_deg_my": 0.5182521939277649
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 5,
+            "speed_deg_my": 0.6686990261077881
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 6,
+            "speed_deg_my": 0.5431966781616211
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 7,
+            "speed_deg_my": 0.6541591882705688
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 8,
+            "speed_deg_my": 0.6649477481842041
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 9,
+            "speed_deg_my": 0.5053442716598511
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 10,
+            "speed_deg_my": 0.36456555128097534
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 11,
+            "speed_deg_my": 0.38315945863723755
+          }
+        ],
+        "breakup_count_cum": 0,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "largest_plate_cell_share": 0.2556759923831844,
+        "mean_plate_speed_deg_my": 0.5414600496490797,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 0,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 0.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 2142,
+            "plate_id": 0,
+            "speed_deg_my": 0.2215050756931305
+          },
+          {
+            "attached_slab_cells": 952,
+            "plate_id": 1,
+            "speed_deg_my": 0.14148855209350586
+          },
+          {
+            "attached_slab_cells": 1986,
+            "plate_id": 2,
+            "speed_deg_my": 0.30701330304145813
+          },
+          {
+            "attached_slab_cells": 1386,
+            "plate_id": 3,
+            "speed_deg_my": 0.23100146651268005
+          },
+          {
+            "attached_slab_cells": 1265,
+            "plate_id": 4,
+            "speed_deg_my": 0.2699562907218933
+          },
+          {
+            "attached_slab_cells": 956,
+            "plate_id": 5,
+            "speed_deg_my": 0.34546276926994324
+          },
+          {
+            "attached_slab_cells": 131,
+            "plate_id": 6,
+            "speed_deg_my": 0.2193661481142044
+          },
+          {
+            "attached_slab_cells": 749,
+            "plate_id": 7,
+            "speed_deg_my": 0.1521013081073761
+          },
+          {
+            "attached_slab_cells": 516,
+            "plate_id": 8,
+            "speed_deg_my": 0.35489925742149353
+          },
+          {
+            "attached_slab_cells": 274,
+            "plate_id": 9,
+            "speed_deg_my": 0.22512318193912506
+          },
+          {
+            "attached_slab_cells": 420,
+            "plate_id": 10,
+            "speed_deg_my": 0.3970670700073242
+          },
+          {
+            "attached_slab_cells": 1654,
+            "plate_id": 11,
+            "speed_deg_my": 0.9460802674293518
+          }
+        ],
+        "breakup_count_cum": 0,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 913,
+        "largest_plate_cell_share": 0.24061325130608857,
+        "mean_plate_speed_deg_my": 0.3175887241959572,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 100.0
+      },
+      {
+        "alive_plate_count": 13,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1399,
+            "plate_id": 0,
+            "speed_deg_my": 0.18929332494735718
+          },
+          {
+            "attached_slab_cells": 619,
+            "plate_id": 1,
+            "speed_deg_my": 0.11788221448659897
+          },
+          {
+            "attached_slab_cells": 1261,
+            "plate_id": 2,
+            "speed_deg_my": 0.19896675646305084
+          },
+          {
+            "attached_slab_cells": 1922,
+            "plate_id": 3,
+            "speed_deg_my": 0.25838443636894226
+          },
+          {
+            "attached_slab_cells": 2066,
+            "plate_id": 4,
+            "speed_deg_my": 0.39734968543052673
+          },
+          {
+            "attached_slab_cells": 1637,
+            "plate_id": 5,
+            "speed_deg_my": 0.47880953550338745
+          },
+          {
+            "attached_slab_cells": 371,
+            "plate_id": 6,
+            "speed_deg_my": 0.21090130507946014
+          },
+          {
+            "attached_slab_cells": 1015,
+            "plate_id": 7,
+            "speed_deg_my": 0.37558266520500183
+          },
+          {
+            "attached_slab_cells": 98,
+            "plate_id": 8,
+            "speed_deg_my": 0.20200176537036896
+          },
+          {
+            "attached_slab_cells": 343,
+            "plate_id": 9,
+            "speed_deg_my": 0.2661035358905792
+          },
+          {
+            "attached_slab_cells": 386,
+            "plate_id": 10,
+            "speed_deg_my": 0.3384208083152771
+          },
+          {
+            "attached_slab_cells": 1223,
+            "plate_id": 11,
+            "speed_deg_my": 0.6857775449752808
+          },
+          {
+            "attached_slab_cells": 254,
+            "plate_id": 12,
+            "speed_deg_my": 0.11285769194364548
+          }
+        ],
+        "breakup_count_cum": 1,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 2303,
+        "largest_plate_cell_share": 0.22689321810458474,
+        "mean_plate_speed_deg_my": 0.2947947130753444,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 200.0
+      },
+      {
+        "alive_plate_count": 13,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 2242,
+            "plate_id": 0,
+            "speed_deg_my": 0.26286575198173523
+          },
+          {
+            "attached_slab_cells": 845,
+            "plate_id": 1,
+            "speed_deg_my": 0.19354364275932312
+          },
+          {
+            "attached_slab_cells": 1395,
+            "plate_id": 2,
+            "speed_deg_my": 0.25321391224861145
+          },
+          {
+            "attached_slab_cells": 1547,
+            "plate_id": 3,
+            "speed_deg_my": 0.3028613030910492
+          },
+          {
+            "attached_slab_cells": 1120,
+            "plate_id": 4,
+            "speed_deg_my": 0.2930483818054199
+          },
+          {
+            "attached_slab_cells": 3866,
+            "plate_id": 5,
+            "speed_deg_my": 1.098963737487793
+          },
+          {
+            "attached_slab_cells": 1394,
+            "plate_id": 6,
+            "speed_deg_my": 0.6195084452629089
+          },
+          {
+            "attached_slab_cells": 3174,
+            "plate_id": 7,
+            "speed_deg_my": 2.0
+          },
+          {
+            "attached_slab_cells": 19,
+            "plate_id": 8,
+            "speed_deg_my": 0.18377800285816193
+          },
+          {
+            "attached_slab_cells": 1531,
+            "plate_id": 9,
+            "speed_deg_my": 0.474832683801651
+          },
+          {
+            "attached_slab_cells": 623,
+            "plate_id": 10,
+            "speed_deg_my": 0.2679343819618225
+          },
+          {
+            "attached_slab_cells": 976,
+            "plate_id": 11,
+            "speed_deg_my": 0.6957542300224304
+          },
+          {
+            "attached_slab_cells": 450,
+            "plate_id": 12,
+            "speed_deg_my": 0.13246338069438934
+          }
+        ],
+        "breakup_count_cum": 1,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 4860,
+        "largest_plate_cell_share": 0.19652360724573995,
+        "mean_plate_speed_deg_my": 0.5214436810750228,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 300.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 3036,
+            "plate_id": 0,
+            "speed_deg_my": 0.32685530185699463
+          },
+          {
+            "attached_slab_cells": 578,
+            "plate_id": 1,
+            "speed_deg_my": 0.20620688796043396
+          },
+          {
+            "attached_slab_cells": 1696,
+            "plate_id": 2,
+            "speed_deg_my": 0.6095380783081055
+          },
+          {
+            "attached_slab_cells": 984,
+            "plate_id": 3,
+            "speed_deg_my": 0.2369462251663208
+          },
+          {
+            "attached_slab_cells": 2107,
+            "plate_id": 4,
+            "speed_deg_my": 0.7706966996192932
+          },
+          {
+            "attached_slab_cells": 2063,
+            "plate_id": 5,
+            "speed_deg_my": 1.065232276916504
+          },
+          {
+            "attached_slab_cells": 1827,
+            "plate_id": 6,
+            "speed_deg_my": 0.30473560094833374
+          },
+          {
+            "attached_slab_cells": 346,
+            "plate_id": 8,
+            "speed_deg_my": 0.25193604826927185
+          },
+          {
+            "attached_slab_cells": 2131,
+            "plate_id": 9,
+            "speed_deg_my": 0.46153220534324646
+          },
+          {
+            "attached_slab_cells": 710,
+            "plate_id": 10,
+            "speed_deg_my": 0.29512423276901245
+          },
+          {
+            "attached_slab_cells": 904,
+            "plate_id": 11,
+            "speed_deg_my": 1.1258866786956787
+          },
+          {
+            "attached_slab_cells": 836,
+            "plate_id": 12,
+            "speed_deg_my": 0.150147944688797
+          }
+        ],
+        "breakup_count_cum": 2,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 13234,
+        "largest_plate_cell_share": 0.22069234900639617,
+        "mean_plate_speed_deg_my": 0.483736515045166,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 6,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 1,
+        "sutures_in_window_count": 1,
+        "t_my": 400.0
+      },
+      {
+        "alive_plate_count": 13,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1766,
+            "plate_id": 0,
+            "speed_deg_my": 0.28057751059532166
+          },
+          {
+            "attached_slab_cells": 1116,
+            "plate_id": 1,
+            "speed_deg_my": 0.2262400984764099
+          },
+          {
+            "attached_slab_cells": 2363,
+            "plate_id": 2,
+            "speed_deg_my": 0.8514896631240845
+          },
+          {
+            "attached_slab_cells": 1181,
+            "plate_id": 3,
+            "speed_deg_my": 0.22958049178123474
+          },
+          {
+            "attached_slab_cells": 3049,
+            "plate_id": 4,
+            "speed_deg_my": 0.8372067213058472
+          },
+          {
+            "attached_slab_cells": 1295,
+            "plate_id": 5,
+            "speed_deg_my": 1.2985293865203857
+          },
+          {
+            "attached_slab_cells": 2132,
+            "plate_id": 6,
+            "speed_deg_my": 0.6473861336708069
+          },
+          {
+            "attached_slab_cells": 1463,
+            "plate_id": 8,
+            "speed_deg_my": 0.7089182138442993
+          },
+          {
+            "attached_slab_cells": 2796,
+            "plate_id": 9,
+            "speed_deg_my": 0.5453752279281616
+          },
+          {
+            "attached_slab_cells": 343,
+            "plate_id": 10,
+            "speed_deg_my": 0.24512791633605957
+          },
+          {
+            "attached_slab_cells": 676,
+            "plate_id": 11,
+            "speed_deg_my": 0.4661504924297333
+          },
+          {
+            "attached_slab_cells": 1904,
+            "plate_id": 12,
+            "speed_deg_my": 0.26369374990463257
+          },
+          {
+            "attached_slab_cells": 105,
+            "plate_id": 14,
+            "speed_deg_my": 0.23262189328670502
+          }
+        ],
+        "breakup_count_cum": 3,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 16244,
+        "largest_plate_cell_share": 0.13890923294760998,
+        "mean_plate_speed_deg_my": 0.5256074999387448,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 1,
+        "sutures_in_window_count": 0,
+        "t_my": 500.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 2186,
+            "plate_id": 1,
+            "speed_deg_my": 0.23101164400577545
+          },
+          {
+            "attached_slab_cells": 2114,
+            "plate_id": 2,
+            "speed_deg_my": 0.7698739767074585
+          },
+          {
+            "attached_slab_cells": 1168,
+            "plate_id": 3,
+            "speed_deg_my": 0.30963370203971863
+          },
+          {
+            "attached_slab_cells": 2571,
+            "plate_id": 4,
+            "speed_deg_my": 0.8037062883377075
+          },
+          {
+            "attached_slab_cells": 413,
+            "plate_id": 5,
+            "speed_deg_my": 0.718083381652832
+          },
+          {
+            "attached_slab_cells": 852,
+            "plate_id": 6,
+            "speed_deg_my": 0.26644167304039
+          },
+          {
+            "attached_slab_cells": 1775,
+            "plate_id": 8,
+            "speed_deg_my": 0.790733277797699
+          },
+          {
+            "attached_slab_cells": 2683,
+            "plate_id": 9,
+            "speed_deg_my": 0.43623074889183044
+          },
+          {
+            "attached_slab_cells": 1485,
+            "plate_id": 10,
+            "speed_deg_my": 0.36382007598876953
+          },
+          {
+            "attached_slab_cells": 1420,
+            "plate_id": 11,
+            "speed_deg_my": 0.39581531286239624
+          },
+          {
+            "attached_slab_cells": 2767,
+            "plate_id": 12,
+            "speed_deg_my": 0.3950065076351166
+          },
+          {
+            "attached_slab_cells": 1200,
+            "plate_id": 14,
+            "speed_deg_my": 0.19435273110866547
+          }
+        ],
+        "breakup_count_cum": 3,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 21057,
+        "largest_plate_cell_share": 0.21119574239539085,
+        "mean_plate_speed_deg_my": 0.47289244333902997,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 2,
+        "sutures_in_window_count": 1,
+        "t_my": 600.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 842,
+            "plate_id": 1,
+            "speed_deg_my": 0.19153665006160736
+          },
+          {
+            "attached_slab_cells": 2731,
+            "plate_id": 2,
+            "speed_deg_my": 0.8900743722915649
+          },
+          {
+            "attached_slab_cells": 2478,
+            "plate_id": 3,
+            "speed_deg_my": 0.3687528073787689
+          },
+          {
+            "attached_slab_cells": 2489,
+            "plate_id": 4,
+            "speed_deg_my": 0.8306212425231934
+          },
+          {
+            "attached_slab_cells": 1316,
+            "plate_id": 6,
+            "speed_deg_my": 0.2415962964296341
+          },
+          {
+            "attached_slab_cells": 953,
+            "plate_id": 8,
+            "speed_deg_my": 0.5439304113388062
+          },
+          {
+            "attached_slab_cells": 3271,
+            "plate_id": 9,
+            "speed_deg_my": 0.9831988215446472
+          },
+          {
+            "attached_slab_cells": 2007,
+            "plate_id": 10,
+            "speed_deg_my": 0.6618142127990723
+          },
+          {
+            "attached_slab_cells": 1169,
+            "plate_id": 11,
+            "speed_deg_my": 0.32922205328941345
+          },
+          {
+            "attached_slab_cells": 3874,
+            "plate_id": 12,
+            "speed_deg_my": 0.7140138149261475
+          },
+          {
+            "attached_slab_cells": 636,
+            "plate_id": 14,
+            "speed_deg_my": 0.23581929504871368
+          },
+          {
+            "attached_slab_cells": 982,
+            "plate_id": 15,
+            "speed_deg_my": 0.21716052293777466
+          }
+        ],
+        "breakup_count_cum": 4,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 24135,
+        "largest_plate_cell_share": 0.1528245691128363,
+        "mean_plate_speed_deg_my": 0.5173117083807787,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 2,
+        "sutures_in_window_count": 0,
+        "t_my": 700.0
+      },
+      {
+        "alive_plate_count": 13,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 729,
+            "plate_id": 1,
+            "speed_deg_my": 0.31200194358825684
+          },
+          {
+            "attached_slab_cells": 2430,
+            "plate_id": 2,
+            "speed_deg_my": 0.7031295895576477
+          },
+          {
+            "attached_slab_cells": 3236,
+            "plate_id": 3,
+            "speed_deg_my": 0.4456326365470886
+          },
+          {
+            "attached_slab_cells": 2724,
+            "plate_id": 4,
+            "speed_deg_my": 0.8475624918937683
+          },
+          {
+            "attached_slab_cells": 2492,
+            "plate_id": 6,
+            "speed_deg_my": 0.5210160613059998
+          },
+          {
+            "attached_slab_cells": 895,
+            "plate_id": 8,
+            "speed_deg_my": 0.21274085342884064
+          },
+          {
+            "attached_slab_cells": 3844,
+            "plate_id": 9,
+            "speed_deg_my": 0.9422417879104614
+          },
+          {
+            "attached_slab_cells": 1924,
+            "plate_id": 10,
+            "speed_deg_my": 0.7504178285598755
+          },
+          {
+            "attached_slab_cells": 2438,
+            "plate_id": 11,
+            "speed_deg_my": 0.6587091088294983
+          },
+          {
+            "attached_slab_cells": 7159,
+            "plate_id": 12,
+            "speed_deg_my": 0.8827158808708191
+          },
+          {
+            "attached_slab_cells": 1413,
+            "plate_id": 14,
+            "speed_deg_my": 0.25570550560951233
+          },
+          {
+            "attached_slab_cells": 1418,
+            "plate_id": 15,
+            "speed_deg_my": 0.44988325238227844
+          },
+          {
+            "attached_slab_cells": 937,
+            "plate_id": 16,
+            "speed_deg_my": 0.19577749073505402
+          }
+        ],
+        "breakup_count_cum": 5,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 31458,
+        "largest_plate_cell_share": 0.15536350764122844,
+        "mean_plate_speed_deg_my": 0.5521180331707001,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 2,
+        "sutures_in_window_count": 0,
+        "t_my": 800.0
+      },
+      {
+        "alive_plate_count": 13,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1366,
+            "plate_id": 1,
+            "speed_deg_my": 0.3414171636104584
+          },
+          {
+            "attached_slab_cells": 2748,
+            "plate_id": 2,
+            "speed_deg_my": 0.5619089603424072
+          },
+          {
+            "attached_slab_cells": 3588,
+            "plate_id": 3,
+            "speed_deg_my": 0.6684867143630981
+          },
+          {
+            "attached_slab_cells": 1552,
+            "plate_id": 4,
+            "speed_deg_my": 0.8369385600090027
+          },
+          {
+            "attached_slab_cells": 3428,
+            "plate_id": 6,
+            "speed_deg_my": 0.9051418900489807
+          },
+          {
+            "attached_slab_cells": 2478,
+            "plate_id": 8,
+            "speed_deg_my": 0.5652573108673096
+          },
+          {
+            "attached_slab_cells": 2271,
+            "plate_id": 9,
+            "speed_deg_my": 1.1531566381454468
+          },
+          {
+            "attached_slab_cells": 1549,
+            "plate_id": 10,
+            "speed_deg_my": 0.7944546341896057
+          },
+          {
+            "attached_slab_cells": 2388,
+            "plate_id": 11,
+            "speed_deg_my": 0.6904562711715698
+          },
+          {
+            "attached_slab_cells": 2233,
+            "plate_id": 12,
+            "speed_deg_my": 0.7329285144805908
+          },
+          {
+            "attached_slab_cells": 2050,
+            "plate_id": 14,
+            "speed_deg_my": 0.3075399696826935
+          },
+          {
+            "attached_slab_cells": 630,
+            "plate_id": 15,
+            "speed_deg_my": 0.17687924206256866
+          },
+          {
+            "attached_slab_cells": 623,
+            "plate_id": 16,
+            "speed_deg_my": 0.20298191905021667
+          }
+        ],
+        "breakup_count_cum": 5,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 38066,
+        "largest_plate_cell_share": 0.16564132610712368,
+        "mean_plate_speed_deg_my": 0.6105805990787653,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 6,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 2,
+        "sutures_in_window_count": 0,
+        "t_my": 900.0
+      },
+      {
+        "alive_plate_count": 14,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 4556,
+            "plate_id": 1,
+            "speed_deg_my": 1.5076950788497925
+          },
+          {
+            "attached_slab_cells": 2007,
+            "plate_id": 2,
+            "speed_deg_my": 0.5472789406776428
+          },
+          {
+            "attached_slab_cells": 1557,
+            "plate_id": 3,
+            "speed_deg_my": 0.33399710059165955
+          },
+          {
+            "attached_slab_cells": 1162,
+            "plate_id": 4,
+            "speed_deg_my": 0.7825915813446045
+          },
+          {
+            "attached_slab_cells": 2816,
+            "plate_id": 6,
+            "speed_deg_my": 0.8104932308197021
+          },
+          {
+            "attached_slab_cells": 2453,
+            "plate_id": 8,
+            "speed_deg_my": 0.8860661387443542
+          },
+          {
+            "attached_slab_cells": 1605,
+            "plate_id": 9,
+            "speed_deg_my": 1.3688513040542603
+          },
+          {
+            "attached_slab_cells": 635,
+            "plate_id": 10,
+            "speed_deg_my": 0.6155868768692017
+          },
+          {
+            "attached_slab_cells": 1976,
+            "plate_id": 11,
+            "speed_deg_my": 0.4522887170314789
+          },
+          {
+            "attached_slab_cells": 3216,
+            "plate_id": 12,
+            "speed_deg_my": 0.912948489189148
+          },
+          {
+            "attached_slab_cells": 1100,
+            "plate_id": 14,
+            "speed_deg_my": 0.4078308641910553
+          },
+          {
+            "attached_slab_cells": 1939,
+            "plate_id": 15,
+            "speed_deg_my": 0.24438904225826263
+          },
+          {
+            "attached_slab_cells": 1530,
+            "plate_id": 16,
+            "speed_deg_my": 0.26650869846343994
+          },
+          {
+            "attached_slab_cells": 434,
+            "plate_id": 17,
+            "speed_deg_my": 0.25163376331329346
+          }
+        ],
+        "breakup_count_cum": 6,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 45228,
+        "largest_plate_cell_share": 0.15328841365167717,
+        "mean_plate_speed_deg_my": 0.6705828447427068,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 2,
+        "sutures_in_window_count": 0,
+        "t_my": 1000.0
+      },
+      {
+        "alive_plate_count": 14,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 2936,
+            "plate_id": 1,
+            "speed_deg_my": 1.301551342010498
+          },
+          {
+            "attached_slab_cells": 2301,
+            "plate_id": 2,
+            "speed_deg_my": 0.5437824726104736
+          },
+          {
+            "attached_slab_cells": 3218,
+            "plate_id": 3,
+            "speed_deg_my": 0.3795160949230194
+          },
+          {
+            "attached_slab_cells": 1294,
+            "plate_id": 4,
+            "speed_deg_my": 0.40509137511253357
+          },
+          {
+            "attached_slab_cells": 1490,
+            "plate_id": 6,
+            "speed_deg_my": 0.7019460797309875
+          },
+          {
+            "attached_slab_cells": 4157,
+            "plate_id": 8,
+            "speed_deg_my": 1.2353664636611938
+          },
+          {
+            "attached_slab_cells": 1627,
+            "plate_id": 10,
+            "speed_deg_my": 1.0644731521606445
+          },
+          {
+            "attached_slab_cells": 2449,
+            "plate_id": 11,
+            "speed_deg_my": 0.6874485015869141
+          },
+          {
+            "attached_slab_cells": 3236,
+            "plate_id": 12,
+            "speed_deg_my": 0.8015216588973999
+          },
+          {
+            "attached_slab_cells": 864,
+            "plate_id": 14,
+            "speed_deg_my": 0.2159777730703354
+          },
+          {
+            "attached_slab_cells": 1706,
+            "plate_id": 15,
+            "speed_deg_my": 0.41620737314224243
+          },
+          {
+            "attached_slab_cells": 1723,
+            "plate_id": 16,
+            "speed_deg_my": 0.2822858393192291
+          },
+          {
+            "attached_slab_cells": 156,
+            "plate_id": 17,
+            "speed_deg_my": 0.10776660591363907
+          },
+          {
+            "attached_slab_cells": 578,
+            "plate_id": 18,
+            "speed_deg_my": 0.2551884353160858
+          }
+        ],
+        "breakup_count_cum": 7,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 47060,
+        "largest_plate_cell_share": 0.13856745276109564,
+        "mean_plate_speed_deg_my": 0.5998659405325141,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 2,
+        "sutures_in_window_count": 0,
+        "t_my": 1100.0
+      },
+      {
+        "alive_plate_count": 14,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1142,
+            "plate_id": 1,
+            "speed_deg_my": 2.0
+          },
+          {
+            "attached_slab_cells": 1344,
+            "plate_id": 2,
+            "speed_deg_my": 0.6360949873924255
+          },
+          {
+            "attached_slab_cells": 1598,
+            "plate_id": 3,
+            "speed_deg_my": 0.3520147204399109
+          },
+          {
+            "attached_slab_cells": 2748,
+            "plate_id": 4,
+            "speed_deg_my": 0.7276766896247864
+          },
+          {
+            "attached_slab_cells": 614,
+            "plate_id": 6,
+            "speed_deg_my": 0.371743768453598
+          },
+          {
+            "attached_slab_cells": 1931,
+            "plate_id": 8,
+            "speed_deg_my": 0.7683146595954895
+          },
+          {
+            "attached_slab_cells": 1463,
+            "plate_id": 10,
+            "speed_deg_my": 0.8496623039245605
+          },
+          {
+            "attached_slab_cells": 2314,
+            "plate_id": 11,
+            "speed_deg_my": 0.39624521136283875
+          },
+          {
+            "attached_slab_cells": 1027,
+            "plate_id": 12,
+            "speed_deg_my": 0.415378212928772
+          },
+          {
+            "attached_slab_cells": 2794,
+            "plate_id": 14,
+            "speed_deg_my": 0.47145408391952515
+          },
+          {
+            "attached_slab_cells": 1689,
+            "plate_id": 15,
+            "speed_deg_my": 0.32379159331321716
+          },
+          {
+            "attached_slab_cells": 2159,
+            "plate_id": 16,
+            "speed_deg_my": 0.3453146815299988
+          },
+          {
+            "attached_slab_cells": 220,
+            "plate_id": 17,
+            "speed_deg_my": 0.10707983374595642
+          },
+          {
+            "attached_slab_cells": 829,
+            "plate_id": 18,
+            "speed_deg_my": 0.2270621359348297
+          }
+        ],
+        "breakup_count_cum": 7,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 52930,
+        "largest_plate_cell_share": 0.15926956691567795,
+        "mean_plate_speed_deg_my": 0.5708452058689935,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 9,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 2,
+        "sutures_in_window_count": 0,
+        "t_my": 1200.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 3518,
+            "plate_id": 2,
+            "speed_deg_my": 0.7241026163101196
+          },
+          {
+            "attached_slab_cells": 2263,
+            "plate_id": 3,
+            "speed_deg_my": 0.27623608708381653
+          },
+          {
+            "attached_slab_cells": 2395,
+            "plate_id": 4,
+            "speed_deg_my": 0.848508894443512
+          },
+          {
+            "attached_slab_cells": 1239,
+            "plate_id": 6,
+            "speed_deg_my": 0.3951123356819153
+          },
+          {
+            "attached_slab_cells": 814,
+            "plate_id": 8,
+            "speed_deg_my": 0.4425319731235504
+          },
+          {
+            "attached_slab_cells": 364,
+            "plate_id": 10,
+            "speed_deg_my": 1.371241807937622
+          },
+          {
+            "attached_slab_cells": 2362,
+            "plate_id": 11,
+            "speed_deg_my": 0.5272136330604553
+          },
+          {
+            "attached_slab_cells": 1367,
+            "plate_id": 12,
+            "speed_deg_my": 0.29527583718299866
+          },
+          {
+            "attached_slab_cells": 3777,
+            "plate_id": 14,
+            "speed_deg_my": 0.7814157605171204
+          },
+          {
+            "attached_slab_cells": 2253,
+            "plate_id": 15,
+            "speed_deg_my": 0.3641057312488556
+          },
+          {
+            "attached_slab_cells": 4623,
+            "plate_id": 16,
+            "speed_deg_my": 1.135260820388794
+          },
+          {
+            "attached_slab_cells": 2523,
+            "plate_id": 17,
+            "speed_deg_my": 0.35827240347862244
+          }
+        ],
+        "breakup_count_cum": 7,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 59592,
+        "largest_plate_cell_share": 0.2210585420633758,
+        "mean_plate_speed_deg_my": 0.6266064917047819,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 3,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 1,
+        "t_my": 1300.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 2775,
+            "plate_id": 2,
+            "speed_deg_my": 0.4643000066280365
+          },
+          {
+            "attached_slab_cells": 2653,
+            "plate_id": 3,
+            "speed_deg_my": 0.3294476270675659
+          },
+          {
+            "attached_slab_cells": 1480,
+            "plate_id": 4,
+            "speed_deg_my": 0.6147998571395874
+          },
+          {
+            "attached_slab_cells": 1799,
+            "plate_id": 6,
+            "speed_deg_my": 0.37928858399391174
+          },
+          {
+            "attached_slab_cells": 1571,
+            "plate_id": 8,
+            "speed_deg_my": 0.6699044704437256
+          },
+          {
+            "attached_slab_cells": 4801,
+            "plate_id": 11,
+            "speed_deg_my": 1.8435888290405273
+          },
+          {
+            "attached_slab_cells": 1926,
+            "plate_id": 12,
+            "speed_deg_my": 0.4736216068267822
+          },
+          {
+            "attached_slab_cells": 3566,
+            "plate_id": 14,
+            "speed_deg_my": 0.7332279682159424
+          },
+          {
+            "attached_slab_cells": 3002,
+            "plate_id": 15,
+            "speed_deg_my": 0.4152916371822357
+          },
+          {
+            "attached_slab_cells": 1557,
+            "plate_id": 16,
+            "speed_deg_my": 0.6836463212966919
+          },
+          {
+            "attached_slab_cells": 356,
+            "plate_id": 17,
+            "speed_deg_my": 0.367398202419281
+          },
+          {
+            "attached_slab_cells": 1227,
+            "plate_id": 19,
+            "speed_deg_my": 0.2680548429489136
+          }
+        ],
+        "breakup_count_cum": 8,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 63279,
+        "largest_plate_cell_share": 0.2155412333382159,
+        "mean_plate_speed_deg_my": 0.6035474961002668,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 0,
+        "t_my": 1400.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 3710,
+            "plate_id": 2,
+            "speed_deg_my": 0.5735922455787659
+          },
+          {
+            "attached_slab_cells": 4146,
+            "plate_id": 3,
+            "speed_deg_my": 0.4654279053211212
+          },
+          {
+            "attached_slab_cells": 1326,
+            "plate_id": 4,
+            "speed_deg_my": 0.5798324346542358
+          },
+          {
+            "attached_slab_cells": 3348,
+            "plate_id": 6,
+            "speed_deg_my": 0.7823715806007385
+          },
+          {
+            "attached_slab_cells": 1784,
+            "plate_id": 8,
+            "speed_deg_my": 0.5686401128768921
+          },
+          {
+            "attached_slab_cells": 1662,
+            "plate_id": 12,
+            "speed_deg_my": 0.6283857822418213
+          },
+          {
+            "attached_slab_cells": 2962,
+            "plate_id": 14,
+            "speed_deg_my": 0.7042845487594604
+          },
+          {
+            "attached_slab_cells": 5268,
+            "plate_id": 15,
+            "speed_deg_my": 0.3911667466163635
+          },
+          {
+            "attached_slab_cells": 1491,
+            "plate_id": 16,
+            "speed_deg_my": 1.775780439376831
+          },
+          {
+            "attached_slab_cells": 427,
+            "plate_id": 17,
+            "speed_deg_my": 0.21791622042655945
+          },
+          {
+            "attached_slab_cells": 887,
+            "plate_id": 19,
+            "speed_deg_my": 0.2111990749835968
+          },
+          {
+            "attached_slab_cells": 389,
+            "plate_id": 20,
+            "speed_deg_my": 0.2151949554681778
+          }
+        ],
+        "breakup_count_cum": 9,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 67828,
+        "largest_plate_cell_share": 0.20016112494507105,
+        "mean_plate_speed_deg_my": 0.5928160039087137,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 7,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 0,
+        "t_my": 1500.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 3800,
+            "plate_id": 2,
+            "speed_deg_my": 0.5931036472320557
+          },
+          {
+            "attached_slab_cells": 3924,
+            "plate_id": 3,
+            "speed_deg_my": 0.4919789135456085
+          },
+          {
+            "attached_slab_cells": 2135,
+            "plate_id": 4,
+            "speed_deg_my": 0.8670805096626282
+          },
+          {
+            "attached_slab_cells": 3475,
+            "plate_id": 6,
+            "speed_deg_my": 0.8187158703804016
+          },
+          {
+            "attached_slab_cells": 1282,
+            "plate_id": 12,
+            "speed_deg_my": 0.9090226888656616
+          },
+          {
+            "attached_slab_cells": 2602,
+            "plate_id": 14,
+            "speed_deg_my": 0.7598872184753418
+          },
+          {
+            "attached_slab_cells": 4140,
+            "plate_id": 15,
+            "speed_deg_my": 0.571380615234375
+          },
+          {
+            "attached_slab_cells": 1030,
+            "plate_id": 16,
+            "speed_deg_my": 0.5801299810409546
+          },
+          {
+            "attached_slab_cells": 1728,
+            "plate_id": 17,
+            "speed_deg_my": 0.34396108984947205
+          },
+          {
+            "attached_slab_cells": 1474,
+            "plate_id": 19,
+            "speed_deg_my": 0.3058139979839325
+          },
+          {
+            "attached_slab_cells": 542,
+            "plate_id": 20,
+            "speed_deg_my": 0.24737754464149475
+          },
+          {
+            "attached_slab_cells": 189,
+            "plate_id": 21,
+            "speed_deg_my": 0.14531148970127106
+          }
+        ],
+        "breakup_count_cum": 10,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 76082,
+        "largest_plate_cell_share": 0.1869049362824081,
+        "mean_plate_speed_deg_my": 0.5528136305510998,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 0,
+        "t_my": 1600.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 3631,
+            "plate_id": 2,
+            "speed_deg_my": 0.7354652285575867
+          },
+          {
+            "attached_slab_cells": 4584,
+            "plate_id": 3,
+            "speed_deg_my": 0.48081523180007935
+          },
+          {
+            "attached_slab_cells": 1105,
+            "plate_id": 4,
+            "speed_deg_my": 1.0501375198364258
+          },
+          {
+            "attached_slab_cells": 1966,
+            "plate_id": 6,
+            "speed_deg_my": 0.5324032306671143
+          },
+          {
+            "attached_slab_cells": 1120,
+            "plate_id": 12,
+            "speed_deg_my": 0.8473641276359558
+          },
+          {
+            "attached_slab_cells": 2440,
+            "plate_id": 14,
+            "speed_deg_my": 0.6799119710922241
+          },
+          {
+            "attached_slab_cells": 4469,
+            "plate_id": 15,
+            "speed_deg_my": 0.5735101103782654
+          },
+          {
+            "attached_slab_cells": 688,
+            "plate_id": 16,
+            "speed_deg_my": 0.4935515820980072
+          },
+          {
+            "attached_slab_cells": 2245,
+            "plate_id": 17,
+            "speed_deg_my": 0.656147837638855
+          },
+          {
+            "attached_slab_cells": 1815,
+            "plate_id": 19,
+            "speed_deg_my": 0.29892534017562866
+          },
+          {
+            "attached_slab_cells": 985,
+            "plate_id": 20,
+            "speed_deg_my": 0.25431591272354126
+          },
+          {
+            "attached_slab_cells": 1053,
+            "plate_id": 21,
+            "speed_deg_my": 0.2990075945854187
+          }
+        ],
+        "breakup_count_cum": 10,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 85468,
+        "largest_plate_cell_share": 0.22332893901664957,
+        "mean_plate_speed_deg_my": 0.5751296405990919,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 2,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 0,
+        "t_my": 1700.0
+      },
+      {
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1997,
+            "plate_id": 2,
+            "speed_deg_my": 0.2568577527999878
+          },
+          {
+            "attached_slab_cells": 5726,
+            "plate_id": 3,
+            "speed_deg_my": 1.2654088735580444
+          },
+          {
+            "attached_slab_cells": 833,
+            "plate_id": 4,
+            "speed_deg_my": 0.5740326046943665
+          },
+          {
+            "attached_slab_cells": 1510,
+            "plate_id": 6,
+            "speed_deg_my": 0.2683107852935791
+          },
+          {
+            "attached_slab_cells": 849,
+            "plate_id": 12,
+            "speed_deg_my": 1.2482450008392334
+          },
+          {
+            "attached_slab_cells": 2227,
+            "plate_id": 14,
+            "speed_deg_my": 1.3073675632476807
+          },
+          {
+            "attached_slab_cells": 3818,
+            "plate_id": 15,
+            "speed_deg_my": 0.7272558808326721
+          },
+          {
+            "attached_slab_cells": 2698,
+            "plate_id": 16,
+            "speed_deg_my": 0.44055694341659546
+          },
+          {
+            "attached_slab_cells": 992,
+            "plate_id": 17,
+            "speed_deg_my": 0.4116400182247162
+          },
+          {
+            "attached_slab_cells": 2466,
+            "plate_id": 19,
+            "speed_deg_my": 0.45954254269599915
+          },
+          {
+            "attached_slab_cells": 1075,
+            "plate_id": 20,
+            "speed_deg_my": 0.3038714528083801
+          },
+          {
+            "attached_slab_cells": 1617,
+            "plate_id": 21,
+            "speed_deg_my": 0.3932625651359558
+          }
+        ],
+        "breakup_count_cum": 10,
+        "breakups_in_window_count": 0,
+        "connectivity_reassigned_cum": 93799,
+        "largest_plate_cell_share": 0.14943118011815829,
+        "mean_plate_speed_deg_my": 0.6380293319622675,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 0,
+        "t_my": 1800.0
+      },
+      {
+        "alive_plate_count": 13,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 3469,
+            "plate_id": 2,
+            "speed_deg_my": 1.0131276845932007
+          },
+          {
+            "attached_slab_cells": 5688,
+            "plate_id": 3,
+            "speed_deg_my": 0.9628705382347107
+          },
+          {
+            "attached_slab_cells": 1777,
+            "plate_id": 4,
+            "speed_deg_my": 0.5254471898078918
+          },
+          {
+            "attached_slab_cells": 2500,
+            "plate_id": 6,
+            "speed_deg_my": 0.9612038135528564
+          },
+          {
+            "attached_slab_cells": 825,
+            "plate_id": 12,
+            "speed_deg_my": 0.6584947109222412
+          },
+          {
+            "attached_slab_cells": 2127,
+            "plate_id": 14,
+            "speed_deg_my": 0.524025559425354
+          },
+          {
+            "attached_slab_cells": 4273,
+            "plate_id": 15,
+            "speed_deg_my": 0.8616928458213806
+          },
+          {
+            "attached_slab_cells": 3220,
+            "plate_id": 16,
+            "speed_deg_my": 0.69938725233078
+          },
+          {
+            "attached_slab_cells": 2131,
+            "plate_id": 17,
+            "speed_deg_my": 0.27807334065437317
+          },
+          {
+            "attached_slab_cells": 1800,
+            "plate_id": 19,
+            "speed_deg_my": 0.35860684514045715
+          },
+          {
+            "attached_slab_cells": 858,
+            "plate_id": 20,
+            "speed_deg_my": 0.36213934421539307
+          },
+          {
+            "attached_slab_cells": 3077,
+            "plate_id": 21,
+            "speed_deg_my": 0.5392555594444275
+          },
+          {
+            "attached_slab_cells": 1959,
+            "plate_id": 22,
+            "speed_deg_my": 0.3281649053096771
+          }
+        ],
+        "breakup_count_cum": 11,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 103509,
+        "largest_plate_cell_share": 0.12518919974610615,
+        "mean_plate_speed_deg_my": 0.6209607376502111,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 0,
+        "t_my": 1900.0
+      },
+      {
+        "alive_plate_count": 14,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 3704,
+            "plate_id": 2,
+            "speed_deg_my": 0.8054021000862122
+          },
+          {
+            "attached_slab_cells": 4270,
+            "plate_id": 3,
+            "speed_deg_my": 0.8780808448791504
+          },
+          {
+            "attached_slab_cells": 1411,
+            "plate_id": 4,
+            "speed_deg_my": 0.5302883386611938
+          },
+          {
+            "attached_slab_cells": 1910,
+            "plate_id": 6,
+            "speed_deg_my": 0.7527775168418884
+          },
+          {
+            "attached_slab_cells": 1499,
+            "plate_id": 12,
+            "speed_deg_my": 0.5206032991409302
+          },
+          {
+            "attached_slab_cells": 2631,
+            "plate_id": 14,
+            "speed_deg_my": 0.7533295154571533
+          },
+          {
+            "attached_slab_cells": 3202,
+            "plate_id": 15,
+            "speed_deg_my": 0.6044321060180664
+          },
+          {
+            "attached_slab_cells": 2570,
+            "plate_id": 16,
+            "speed_deg_my": 0.682388186454773
+          },
+          {
+            "attached_slab_cells": 3366,
+            "plate_id": 17,
+            "speed_deg_my": 0.553751528263092
+          },
+          {
+            "attached_slab_cells": 905,
+            "plate_id": 19,
+            "speed_deg_my": 0.28345394134521484
+          },
+          {
+            "attached_slab_cells": 1418,
+            "plate_id": 20,
+            "speed_deg_my": 0.2788989245891571
+          },
+          {
+            "attached_slab_cells": 5749,
+            "plate_id": 21,
+            "speed_deg_my": 1.012015700340271
+          },
+          {
+            "attached_slab_cells": 1739,
+            "plate_id": 22,
+            "speed_deg_my": 0.7298295497894287
+          },
+          {
+            "attached_slab_cells": 89,
+            "plate_id": 23,
+            "speed_deg_my": 0.35782763361930847
+          }
+        ],
+        "breakup_count_cum": 12,
+        "breakups_in_window_count": 1,
+        "connectivity_reassigned_cum": 114385,
+        "largest_plate_cell_share": 0.15699916996240418,
+        "mean_plate_speed_deg_my": 0.6245056561061314,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_at_or_below_0p05_deg_my_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "suture_count_cum": 3,
+        "sutures_in_window_count": 0,
+        "t_my": 2000.0
+      }
+    ],
+    "suture_events": []
+  }
+}
