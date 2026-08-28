@@ -167,6 +167,9 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         if continental[s.plate_id[c] as usize] {
             s.crust_type[c] = 1;
             s.thickness[c] = CRATON_BASE_KM;
+            // Non-craton continent at setup: mixed-sedimentary platform
+            // (WO-0009 S2); craton cores re-stamp below.
+            s.lithology[c] = super::lithology::SM;
         }
     }
 
@@ -227,6 +230,8 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
             s.crust_age[cu] = age;
             // Primordial: exempt from orogenic relaxation from the start.
             s.orogeny_age[cu] = age;
+            // Craton core: acid plutonic shield (WO-0009 S2).
+            s.lithology[cu] = super::lithology::PA;
         }
         // Platform crust: every continental cell of this plate the craton
         // BFS did not reach (cd untouched) keeps base thickness and gets
@@ -261,12 +266,14 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
             s.thickness[c] = PAINTED_THICKNESS_KM;
             s.crust_age[c] = PAINTED_AGE_MY;
             s.orogeny_age[c] = PAINTED_AGE_MY; // primordial, like cratons
+            s.lithology[c] = super::lithology::PA; // painted craton
         } else if v < 0 {
             s.crust_type[c] = 0;
             s.thickness[c] = OCEAN_THICKNESS_KM;
             let t = 0.5 + 0.5 * dot3(grid.positions[c], ramp_axis);
             s.crust_age[c] = OCEAN_AGE_BASE_MY + OCEAN_AGE_SPAN_MY * t;
             s.orogeny_age[c] = 0.0;
+            s.lithology[c] = super::lithology::VB; // forced ocean floor
         }
     }
 

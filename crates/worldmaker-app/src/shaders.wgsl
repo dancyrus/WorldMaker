@@ -25,8 +25,8 @@ struct ShadeParams {
     seed_lo: u32,
     seed_hi: u32,
     // bits 0..=3 layer id (0 elevation, 1 plates, 2 crust age, 3 thickness,
-    // 4 overlay); bit 8 debug true-cell boundaries; bit 9 debug legacy
-    // boundary bands.
+    // 4 overlay, 5 lithology); bit 8 debug true-cell boundaries; bit 9
+    // debug legacy boundary bands.
     layer_flags: u32,
     // Render-detail fBm octaves.
     octaves: u32,
@@ -236,6 +236,10 @@ fn resolve_fragment(
         } else {
             color = base;
         }
+    } else if layer == 5u {
+        // Lithology (WO-0009 S2): categorical GLiM class, winner cell only
+        // — crisp true-cell shapes like Plates. LUT row 6, texel = class.
+        color = lut_texel(6u, cat_win & CAT_RANK_MASK);
     } else {
         // Elevation: the rasterizer interpolates the VALUE (via w), render
         // detail adds sub-cell relief, then the live sea level thresholds

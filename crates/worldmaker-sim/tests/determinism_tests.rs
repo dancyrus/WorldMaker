@@ -116,6 +116,12 @@ const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xaa22_f87a_dacd_7acd;
 /// every results JSON but no test asserted it, leaving crust type free to
 /// drift cross-platform unnoticed. Regenerated with the pair above.
 const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0x1a9b_7e90_1e25_4785;
+/// WO-0009 S2: the per-cell GLiM lithology tracer, NEW with this session.
+/// The seventh sanctioned golden move was budgeted for it but turned out a
+/// no-op: lithology is a passive tracer (no RNG draws, no dynamics reads),
+/// so all three goldens above verified UNMOVED when it landed — this
+/// golden was added, none moved (decision log, WO-0009 S2).
+const GOLDEN_TECTONIC_LITHOLOGY_L6_SEED42: u64 = 0x0580_68b5_b4f4_1de9;
 
 /// Golden-regeneration aid: prints the three tectonic hashes for the
 /// current build. Used exactly once per sanctioned golden move.
@@ -130,9 +136,11 @@ fn print_tectonic_goldens() {
     let elev_hash = hash_f32_slice(world.fields.get(tectonics::ELEVATION_M).unwrap());
     let plate_hash = hash_u32_slice(world.fields.get_u32(tectonics::PLATE_ID).unwrap());
     let crust_hash = hash_u32_slice(world.fields.get_u32(tectonics::CRUST_TYPE).unwrap());
+    let lith_hash = hash_u32_slice(world.fields.get_u32(tectonics::LITHOLOGY).unwrap());
     println!("GOLDEN_TECTONIC_ELEVATION_L6_SEED42 = {elev_hash:#018x}");
     println!("GOLDEN_TECTONIC_PLATES_L6_SEED42 = {plate_hash:#018x}");
     println!("GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42 = {crust_hash:#018x}");
+    println!("GOLDEN_TECTONIC_LITHOLOGY_L6_SEED42 = {lith_hash:#018x}");
 }
 
 #[test]
@@ -156,6 +164,11 @@ fn tectonics_reproduces_committed_goldens() {
     assert_eq!(
         crust_hash, GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42,
         "tectonic crust type drifted from the committed golden"
+    );
+    let lith_hash = hash_u32_slice(world.fields.get_u32(tectonics::LITHOLOGY).unwrap());
+    assert_eq!(
+        lith_hash, GOLDEN_TECTONIC_LITHOLOGY_L6_SEED42,
+        "tectonic lithology drifted from the committed golden"
     );
 }
 

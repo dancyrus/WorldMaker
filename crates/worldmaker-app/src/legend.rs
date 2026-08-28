@@ -6,7 +6,7 @@
 //! latest one — the caller hands the keyframe in (WO-0007 step 5).
 
 use eframe::egui;
-use worldmaker_sim::tectonics::{Keyframe, SLAB_DETACH_MY};
+use worldmaker_sim::tectonics::{lithology, Keyframe, SLAB_DETACH_MY};
 
 use crate::layers::{self, Layer};
 
@@ -79,6 +79,18 @@ fn elev_frac(e_m: f32) -> f32 {
 
 /// Build the legend for one layer over the viewed keyframe.
 pub fn legend_spec(layer: Layer, kf: &Keyframe, sea_level_m: f32) -> LegendSpec {
+    legend_spec_with(layer, kf, sea_level_m, None)
+}
+
+/// [`legend_spec`] with an optional displayed-lithology override
+/// (WO-0009 S2): when the terrain view is on, the Lithology legend counts
+/// the deposition-stamped classes actually on screen (`su` included).
+pub fn legend_spec_with(
+    layer: Layer,
+    kf: &Keyframe,
+    sea_level_m: f32,
+    lith_override: Option<&[u8]>,
+) -> LegendSpec {
     match layer {
         Layer::Elevation => {
             // The bar is labeled in keyframe-relative meters; each sample is
@@ -207,6 +219,42 @@ pub fn legend_spec(layer: Layer, kf: &Keyframe, sea_level_m: f32) -> LegendSpec 
                     colors,
                     ticks,
                     marker: None,
+                },
+            }
+        }
+        Layer::Lithology => {
+            // Only the classes actually present in the displayed field
+            // (WO-0009 S2 step 3), largest area first, id tie-break.
+            let lith = lith_override.unwrap_or(&kf.lithology);
+            let n = lith.len().max(1);
+            let mut counts = [0usize; lithology::CLASS_COUNT];
+            for &l in lith {
+                counts[(l as usize).min(lithology::CLASS_COUNT - 1)] += 1;
+            }
+            let mut present: Vec<(usize, usize)> = counts
+                .iter()
+                .enumerate()
+                .filter(|&(_, &c)| c > 0)
+                .map(|(i, &c)| (i, c))
+                .collect();
+            present.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            let rows = present
+                .into_iter()
+                .map(|(class, cells)| SwatchRow {
+                    color: layers::lithology_color(class),
+                    label: format!(
+                        "{} {:.1}%  {}",
+                        lithology::CODES[class],
+                        cells as f32 * 100.0 / n as f32,
+                        lithology::NAMES[class],
+                    ),
+                })
+                .collect();
+            LegendSpec {
+                title: "Lithology",
+                kind: LegendKind::Swatches {
+                    rows,
+                    more_count: 0,
                 },
             }
         }
@@ -387,6 +435,7 @@ mod tests {
             rift_age_my: vec![0; n],
             buildup_ckm: vec![0; n],
             flags: vec![0; n],
+            lithology: vec![worldmaker_sim::tectonics::lithology::SM; n],
             slab_plate: vec![u16::MAX; n],
             slab_since_my: vec![0; n],
             suture_at_my: vec![u16::MAX; n],

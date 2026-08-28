@@ -14,6 +14,9 @@
 
 mod elevation;
 mod keyframe;
+/// Per-cell GLiM lithology classes (WO-0009 S2). Public: the terrain
+/// stage's erodibility table and the app's Lithology layer index it.
+pub mod lithology;
 /// Committed plate-map metrics (WO-0003 Fix 2). Public forever: the CI gate
 /// test and the acceptance harness call it.
 pub mod metrics;
@@ -52,6 +55,9 @@ pub const PLATE_ID: &str = "plate_id";
 /// 0 = oceanic, 1 = continental.
 pub const CRUST_TYPE: &str = "crust_type";
 pub const FEATURES: &str = "features";
+/// GLiM lithology class per cell (WO-0009 S2), values from
+/// [`lithology`]; stored as a u32 field, class values fit in u8.
+pub const LITHOLOGY: &str = "lithology";
 
 // ----- feature bits -----
 pub const F_RIDGE: u32 = 1 << 0;

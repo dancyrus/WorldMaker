@@ -3,16 +3,16 @@
 //! A keyframe every 10 My holds the full simulation state — per-cell fields
 //! packed to 16 bits each plus the per-plate and per-pair bookkeeping — so a
 //! run can restart from any keyframe (plate drag now, branching later) and the
-//! era picker can decode any moment for display. 22 B/cell (WO-0006: slab
-//! ledger fields per Dan's ruling, plus the S2 suture scar) keeps a 2 Gy run
-//! at L7 (201 keyframes × 163,842 cells) near 0.72 GB, inside the 1 GB
-//! budget; S3 re-measures.
+//! era picker can decode any moment for display. 23 B/cell (WO-0006: slab
+//! ledger fields per Dan's ruling, plus the S2 suture scar; WO-0009 S2 added
+//! the 1-byte lithology class) keeps a 2 Gy run at L7 (201 keyframes ×
+//! 163,842 cells) near 0.76 GB, inside the 1 GB budget.
 
 use worldmaker_core::FieldStore;
 
 use super::{
-    CRUST_AGE_MY, CRUST_TYPE, ELEVATION_M, FEATURES, HOTSPOT_BUILDUP_KM, OROGENY_AGE_MY, PLATE_ID,
-    RIFT_AGE_MY,
+    CRUST_AGE_MY, CRUST_TYPE, ELEVATION_M, FEATURES, HOTSPOT_BUILDUP_KM, LITHOLOGY, OROGENY_AGE_MY,
+    PLATE_ID, RIFT_AGE_MY,
 };
 
 /// Row-major 3×3 identity, the empty pending rotation.
@@ -268,6 +268,9 @@ pub struct Keyframe {
     pub buildup_ckm: Vec<u16>,
     /// Feature bits 0..=7, crust_type at bit 15.
     pub flags: Vec<u16>,
+    /// GLiM lithology class per cell (WO-0009 S2, [`super::lithology`]).
+    /// Raw u8 — exact round-trip by construction.
+    pub lithology: Vec<u8>,
     /// Plate whose slab lies beneath this cell (`u16::MAX` = none).
     pub slab_plate: Vec<u16>,
     /// When that slab went under (My; 0 where `slab_plate` is none).
@@ -326,7 +329,7 @@ fn enc_i16(v: f32) -> i16 {
 impl Keyframe {
     /// Approximate heap size in bytes (per-cell arrays dominate).
     pub fn approx_bytes(&self) -> usize {
-        self.elev_m.len() * 22
+        self.elev_m.len() * 23
             + self.plates.len() * std::mem::size_of::<PlateState>()
             + self
                 .plates
@@ -353,6 +356,7 @@ impl Keyframe {
         buildup: &[f32],
         crust_type: &[u32],
         features: &[u32],
+        lithology: &[u8],
         slab_plate: &[u16],
         slab_since_my: &[f32],
         suture_at_my: &[f32],
@@ -375,6 +379,7 @@ impl Keyframe {
             rift_age_my: Vec::with_capacity(n),
             buildup_ckm: Vec::with_capacity(n),
             flags: Vec::with_capacity(n),
+            lithology: lithology.to_vec(),
             slab_plate: slab_plate.to_vec(),
             slab_since_my: Vec::with_capacity(n),
             suture_at_my: Vec::with_capacity(n),
@@ -463,6 +468,12 @@ impl Keyframe {
                 *o = (v & 0xff) as u32;
             }
         }
+        {
+            let lith = fields.get_or_insert_mut_u32(LITHOLOGY);
+            for (o, &v) in lith.iter_mut().zip(&self.lithology) {
+                *o = v as u32;
+            }
+        }
     }
 }
 
@@ -533,6 +544,14 @@ mod tests {
         let build = vec![0.0f32, 0.0, 3.25, 0.0, 0.0, 0.0];
         let ctype = vec![0u32, 1, 1, 0, 0, 1];
         let feats = vec![0u32, 0b1_0000, 0b100, 0b10, 0, 0b1];
+        let lith = vec![
+            super::super::lithology::VB,
+            super::super::lithology::SM,
+            super::super::lithology::PA,
+            super::super::lithology::VB,
+            super::super::lithology::VB,
+            super::super::lithology::MT,
+        ];
         let slab_plate = vec![u16::MAX, 3, u16::MAX, u16::MAX, 0, u16::MAX];
         let slab_since = vec![0.0f32, 140.0, 0.0, 0.0, 12.0, 0.0];
         let suture_at = vec![NEVER_SUTURED, 118.0, NEVER_SUTURED, 0.0, 90_000.0, 30.4];
@@ -568,6 +587,7 @@ mod tests {
             &build,
             &ctype,
             &feats,
+            &lith,
             &slab_plate,
             &slab_since,
             &suture_at,
@@ -595,6 +615,8 @@ mod tests {
         assert_eq!(kf.rifts, rifts);
         // Live welds ride raw and bit-exact (WO-0011 S2).
         assert_eq!(kf.welds, welds);
+        // Lithology rides raw u8, exact (WO-0009 S2).
+        assert_eq!(kf.lithology, lith);
         // The water inventory rides along as raw f64, bit-exact (WO-0009).
         assert_eq!(kf.water_mass_kg, 1.234e21);
 
@@ -613,6 +635,10 @@ mod tests {
         );
         assert_eq!(fields.get(RIFT_AGE_MY).unwrap()[1], 21.0);
         assert_eq!(fields.get(HOTSPOT_BUILDUP_KM).unwrap()[2], 3.25);
+        assert_eq!(
+            fields.get_u32(LITHOLOGY).unwrap(),
+            &lith.iter().map(|&v| v as u32).collect::<Vec<_>>()[..]
+        );
     }
 
     #[test]
@@ -635,6 +661,7 @@ mod tests {
                     rift_age_my: vec![],
                     buildup_ckm: vec![],
                     flags: vec![],
+                    lithology: vec![],
                     slab_plate: vec![],
                     slab_since_my: vec![],
                     suture_at_my: vec![],
