@@ -89,7 +89,16 @@ fn fixed_seed_reproduces_committed_hash() {
 /// crust 0x08f5_c8f9_67db_bc04. Values from print_tectonic_goldens on
 /// Daniels-MacBook-Air; the phase-0 noise golden above verified UNMOVED
 /// in the same suite run.
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xabb5_3577_2c81_9c99;
+/// ELEVATION ONLY regenerated 2026-08-28 for WO-0009 — the fifth
+/// sanctioned golden move (decision log, "fifth sanctioned golden move,
+/// WO-0009"): sea level switched from the fixed t = 0 datum to a
+/// conserved water mass re-solved per keyframe, which shifts every
+/// elevation's datum after t = 0 but touches no dynamics — the plate and
+/// crust goldens verified UNMOVED in the same run, exactly the
+/// display-datum-only signature. Old elevation value
+/// 0xabb5_3577_2c81_9c99. Value from print_tectonic_goldens on
+/// Daniels-MacBook-Air; the phase-0 noise golden above again UNMOVED.
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xaa15_8d4f_1563_9cd8;
 const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0x7680_b5da_d03d_486a;
 /// Pinned at WO-0003 close (S4 audit): the harness had recorded this hash in
 /// every results JSON but no test asserted it, leaving crust type free to
@@ -115,7 +124,6 @@ fn print_tectonic_goldens() {
 }
 
 #[test]
-#[ignore = "WO-0009 in progress"]
 fn tectonics_reproduces_committed_goldens() {
     let grid = Arc::new(Grid::build(6));
     let mut world = WorldState::new(grid);
