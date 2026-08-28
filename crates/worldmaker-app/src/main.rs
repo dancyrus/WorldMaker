@@ -303,7 +303,10 @@ fn run_hypsometry_harness(
             "frac": (count as f64 / n as f64 * 100_000.0).round() / 100_000.0,
         }));
     }
-    metrics.insert("hypsometry_bands_500m".into(), serde_json::Value::Array(bands));
+    metrics.insert(
+        "hypsometry_bands_500m".into(),
+        serde_json::Value::Array(bands),
+    );
     for sea in [0i32, -2000, -4000, -6000] {
         let land = kf.elev_m.iter().filter(|&&e| (e as i32) >= sea).count();
         metrics.insert(
@@ -345,7 +348,9 @@ fn main() {
         }
     }
     // Headless-only invocation: done without opening a window.
-    if (args.determinism_out.is_some() || args.tectonics_out.is_some() || args.hypsometry_out.is_some())
+    if (args.determinism_out.is_some()
+        || args.tectonics_out.is_some()
+        || args.hypsometry_out.is_some())
         && args.perf_out.is_none()
         && args.screenshots_dir.is_none()
         && args.wo4_dir.is_none()

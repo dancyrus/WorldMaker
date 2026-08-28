@@ -987,7 +987,9 @@ impl WorldApp {
                 self.legend_spec = Some(legend::legend_spec(self.layer, kf, self.sea_level_m));
             }
         }
-        let Some(spec) = &self.legend_spec else { return };
+        let Some(spec) = &self.legend_spec else {
+            return;
+        };
         let margin = 8.0;
         if let Some(seam) = seam_x {
             if full.min.x + margin + self.legend_width >= seam {
