@@ -6,6 +6,7 @@ mod app;
 mod boundaries;
 mod harness;
 mod layers;
+mod legend;
 mod pending_edits;
 mod render;
 mod worldgen;
