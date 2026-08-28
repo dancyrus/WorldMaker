@@ -75,6 +75,8 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
             speed_deg_my: speed,
             youngest_suture_my: NEVER_SUTURED,
             youngest_rift_my: NEVER_SUTURED,
+            youngest_breakup_my: NEVER_SUTURED,
+            quiet_my: 0.0,
             pending_rot: IDENTITY3,
             pending_deg: 0.0,
             slab: Vec::new(),

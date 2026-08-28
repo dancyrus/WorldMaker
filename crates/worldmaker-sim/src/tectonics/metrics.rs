@@ -726,8 +726,12 @@ pub struct PhysicsTracker {
     slow_flagged: Vec<bool>,
     slow_violations: Vec<String>,
     // WO-0008 S1 gates: relic basins inside old locked collisions, and
-    // the continental-area balance.
+    // the continental-area balance. A basin flags only when it PERSISTS
+    // across two consecutive samples (closure clears a late-enclosed
+    // basin within a sample interval; a one-sample transient while it is
+    // mid-clearing is not "closure failed").
     relic_violations: Vec<String>,
+    relic_pending: Vec<(u32, u32)>,
     cont_cells_first: Option<u64>,
     cont_cells_last: u64,
     // Scratch.
@@ -996,6 +1000,7 @@ impl PhysicsTracker {
             slow_flagged: Vec::new(),
             slow_violations: Vec::new(),
             relic_violations: Vec::new(),
+            relic_pending: Vec::new(),
             cont_cells_first: None,
             cont_cells_last: 0,
             comp_seen: vec![false; sim.grid.cell_count() as usize],
@@ -1032,23 +1037,34 @@ impl PhysicsTracker {
 
         // WO-0008 S1 relic-basin gate: a pair locked past the gate age
         // must hold no enclosed oceanic region larger than the relic cap
-        // in its suture window (closure has had time to finish).
+        // in its suture window (closure has had time to finish). A basin
+        // seen at only ONE sample is a late-enclosure transient that
+        // closure is already clearing; it flags when it persists to the
+        // next sample too.
+        let mut pending: Vec<(u32, u32)> = Vec::new();
         for t in &sim.collisions {
-            if t.locked_my > RELIC_LOCKED_GATE_MY && self.relic_violations.len() < 20 {
+            if t.locked_my > RELIC_LOCKED_GATE_MY {
                 if let Some((size, frac)) = oversized_enclosed_basin(sim, t.a, t.b) {
-                    self.relic_violations.push(format!(
-                        "t={} My: pair ({},{}) locked {} My holds an enclosed \
-                         basin of {} cells ({:.0}% pair border)",
-                        sim.t_my,
-                        t.a,
-                        t.b,
-                        t.locked_my,
-                        size,
-                        frac * 100.0
-                    ));
+                    if self.relic_pending.contains(&(t.a, t.b)) {
+                        if self.relic_violations.len() < 20 {
+                            self.relic_violations.push(format!(
+                                "t={} My: pair ({},{}) locked {} My holds an enclosed \
+                                 basin of {} cells ({:.0}% pair border) across two samples",
+                                sim.t_my,
+                                t.a,
+                                t.b,
+                                t.locked_my,
+                                size,
+                                frac * 100.0
+                            ));
+                        }
+                    } else {
+                        pending.push((t.a, t.b));
+                    }
                 }
             }
         }
+        self.relic_pending = pending;
 
         // Metric 1: alive count, band + pin runs.
         let alive: u32 = sim.plates.iter().filter(|p| p.alive).count() as u32;
@@ -1333,9 +1349,17 @@ impl PhysicsTracker {
         for e in &sim.events[self.base_events..] {
             match e {
                 super::keyframe::TectonicEvent::Suture {
-                    contact_fraction, ..
+                    contact_fraction,
+                    contact_cells,
+                    ..
                 } => {
-                    if *contact_fraction < super::step::SUTURE_CONTACT_FRACTION {
+                    // §3 condition 1 (amended WO-0008 S1): the fraction
+                    // threshold OR the absolute margin-span floor.
+                    let abs_cells =
+                        super::step::SUTURE_ABS_CONTACT_KM / sim.cell_spacing_km;
+                    if *contact_fraction < super::step::SUTURE_CONTACT_FRACTION
+                        && (*contact_cells as f32) < abs_cells
+                    {
                         suture_bad += 1;
                     }
                 }

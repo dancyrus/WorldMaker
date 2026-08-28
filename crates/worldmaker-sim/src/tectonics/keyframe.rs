@@ -38,6 +38,17 @@ pub struct PlateState {
     /// needs, so nucleation observes a refractory period from here
     /// (WO-0006 S2).
     pub youngest_rift_my: f32,
+    /// When this plate last actually broke up — split a child off or was
+    /// itself born of a split ([`NEVER_SUTURED`] = never). WO-0008 S1:
+    /// the mantle-insulation venting anchor — trapped heat escapes
+    /// through real new ocean, not through a failed nucleation attempt.
+    pub youngest_breakup_my: f32,
+    /// How long this plate's entire boundary has stayed below the
+    /// classification dead band (WO-0008 S1): the fossil-boundary capture
+    /// clock. A sub-§6-scale plate whose boundary is kinematically dead
+    /// for `CAPTURE_AFTER_MY` has fossilized and merges into its dominant
+    /// neighbor (Kula-style capture) — the death path for split debris.
+    pub quiet_my: f32,
     /// Accumulated rotation not yet applied by advection (row-major). Slow
     /// plates bank sub-cell motion here and commit it once it reaches about
     /// one cell, so they never freeze to the grid.
@@ -160,12 +171,21 @@ pub enum TectonicEvent {
         b: u32,
         t: f32,
         contact_fraction: f32,
+        /// Contact cells on the smaller plate's side when the weld fired
+        /// (WO-0008 S1): the §3 condition-1 audit accepts either the
+        /// fraction threshold or the absolute margin-span floor.
+        contact_cells: u32,
     },
     RiftStart {
         plate: u32,
         driver: RiftDriverKind,
         t: f32,
     },
+    /// A small plate's boundary fossilized (below the dead band for
+    /// `CAPTURE_AFTER_MY`) and it merged into its dominant neighbor
+    /// (WO-0008 S1; Kula-style capture). Not a suture: no scar, no
+    /// suture clock.
+    Capture { winner: u32, loser: u32, t: f32 },
     /// The rift stalled (stress no longer exceeded strength ahead of a tip);
     /// its cells keep maturing as a failed-rift scar.
     RiftFailed { plate: u32, t: f32 },

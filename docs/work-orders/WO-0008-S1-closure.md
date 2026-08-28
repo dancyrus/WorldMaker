@@ -18,6 +18,44 @@ STEPS.
 10. Commit, push, PR titled `WO-0008-S1: closure, linkage, seams, balance`. Merge when green. Delete the branch.
 11. Report to Dan in plain language, under 300 words: welds per Gy now, continental area at 2 Gy vs t=0, seam reassignment count, and the one-line paste for S2.
 
+SEAM RULE AS IMPLEMENTED (step 5 record). Three parts, all in `advect()`:
+
+1. **Coverage union.** A plate covers a cell when EITHER rasterization of
+   its rigid motion says so: its back-rotated sample lands on its own
+   crust (gather half), OR one of its cells mapped exactly onto the cell
+   in the forward scatter (a ring-free `direct_mask` bit). The two half
+   tests rasterize the same motion from opposite ends; requiring only
+   their union removes the aliasing flicker of the old gather-only test.
+2. **Per-pair subduction polarity.** Between two soft crusts, which side
+   subducts is decided once per unordered plate pair per step — the side
+   with the older (denser) mean crust age along the shared boundary goes
+   under, tie → the higher plate id subducts — instead of per cell from
+   shifting source samples, which flip-flopped along a single front and
+   let the fronts interpenetrate (pairs measurably consumed each other
+   BOTH ways in the same step). Hard continent still overrides per cell.
+3. **Connectivity-preserving consumption.** After the gather, while any
+   plate's new ownership contains a fragment, the ownership flips that
+   caused it are reverted (every changed cell in the fragment plus every
+   adjacent cell that changed away from the fragment's plate) — a bite
+   may not pinch off a piece of a plate; severed pieces stay attached
+   through the reverted neck and are consumed face-first. Reverts only
+   un-do the current step's changes, so the loop terminates.
+
+Measured at L6 (both seeds, 2 Gy): `connectivity_reassigned` fell from
+~2,900–6,700 cells per 100 My to 0–5, worst window ≤ 10.
+
+- [x] Step 1: branch, work orders committed (with S0's install)
+- [x] Step 2: model addendum + decision log
+- [x] Step 3: relic-basin closure (+ enclosure-based condition 3)
+- [x] Step 4: rift linkage
+- [x] Step 5: seam fix (rule above)
+- [x] Step 6: continental balance (accretion guard + inventory guard)
+- [ ] Step 7: gates armed (calibration in progress)
+- [x] Step 8: tests (basin closure, relic sea; linkage + seam pending)
+- [ ] Step 9: probe s4 committed
+- [ ] Step 10: PR merged
+- [ ] Step 11: report
+
 DONE WHEN. PR merged; the four updated gates pass at both seeds; probe JSON committed; workspace green except ignored goldens.
 
 FINAL LINE. After the report, print this block exactly, as the last output of the session. Print it only when every DONE WHEN condition holds. If the session stops early for any reason, print `NOT DONE` and the reason instead.

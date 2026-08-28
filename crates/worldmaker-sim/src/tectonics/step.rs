@@ -57,7 +57,7 @@ const K_SLAB: f32 = 0.66;
 const K_RIDGE: f32 = 0.25;
 /// Residual mantle traction per plate cell; K_MANTLE / C_DRAG is the
 /// residual drift of a slab-free, ridge-free plate (~0.8 cm/yr).
-const K_MANTLE: f32 = 0.09;
+const K_MANTLE: f32 = 0.10;
 /// Basal drag per plate cell (the normalization of the balance).
 const C_DRAG: f32 = 1.25;
 /// Continent-continent contact resistance per contact cell (strength = 1.0
@@ -119,6 +119,16 @@ pub(super) const SUTURE_AFTER_MY: f32 = 30.0;
 /// smaller plate's perimeter (Dan's ruling, WO-0005) — a pinprick contact
 /// must never weld two plates.
 pub(super) const SUTURE_CONTACT_FRACTION: f32 = 0.3;
+/// Condition 1's absolute alternative (WO-0008 S1): a contact spanning at
+/// least this many km of front is a substantial margin regardless of the
+/// perimeter ratio. The 30%-of-perimeter test structurally vetoed welds
+/// between GIANT plates — a locked 90-cell (~10,000 km) front ground for
+/// 800 My at seed cyrus because both plates had ~400-cell perimeters —
+/// while the §3 intent is only that a pinprick must never weld. 5,500 km
+/// (~50 cells at L6) is far above any pinprick and in the range of real
+/// terminal-collision fronts (the Himalayan front plus its syntaxes;
+/// central Asian composite sutures).
+pub(super) const SUTURE_ABS_CONTACT_KM: f32 = 5500.0;
 /// Condition 2: mean relative speed across the contact (cm/yr) below the
 /// classification dead band — the contact is kinematically indistinguishable
 /// from plate interior (Gordon 1998).
@@ -166,8 +176,8 @@ const HOT_OROGEN_FACTOR: f32 = 1.0;
 // ramping in over 100–300 My since that plate last sutured (Gurnis 1988:
 // trapped heat softens the lithosphere above).
 const INSULATION_CONT_FRACTION: f32 = 1.0 / 3.0;
-const INSULATION_START_MY: f32 = 100.0;
-const INSULATION_FULL_MY: f32 = 300.0;
+const INSULATION_START_MY: f32 = 55.0;
+const INSULATION_FULL_MY: f32 = 165.0;
 const INSULATION_FLOOR: f32 = 0.18;
 
 // ----- rifting (WO-0006 S2, model §5 + amendment A) -----
@@ -200,7 +210,7 @@ const RIFT_PROP_KM_MY: f32 = 75.0;
 /// breakup recurs on ~2×10⁸ yr per plate). Without this, every plume
 /// re-fires the step after each failure or split and the census runs away
 /// (measured: 12 → 28 plates in 200 My at L5).
-const RIFT_REFRACTORY_MY: f32 = 200.0;
+const RIFT_REFRACTORY_MY: f32 = 180.0;
 /// Two active rift tips on the same plate within this many cells connect
 /// along the least-strength path and merge their systems (WO-0008 S1:
 /// East Africa–Red Sea–Gulf of Aden linkage).
@@ -210,7 +220,7 @@ const RIFT_LINK_CELLS: u16 = 3;
 /// it, splits of splinters feed a runaway froth (measured: the census
 /// railed at the 60-plate mask cap by 800 My at L5 and continents ground
 /// away to 1% of the sphere by 2 Gy).
-const MIN_RIFT_PLATE_FRACTION: f32 = 1.0 / 30.0;
+const MIN_RIFT_PLATE_FRACTION: f32 = 1.0 / 15.0;
 /// Completed rifts whose split never materialized leave the ledger after
 /// this long (attribution bookkeeping only; the scar cells stay).
 const RIFT_ENTRY_PRUNE_MY: f32 = 400.0;
@@ -238,6 +248,13 @@ const MICRO_MAX_FRACTION: f32 = 0.02;
 /// Alive-plate headroom guard: the advection candidate mask is a u64, so
 /// fragment promotion falls back to reassignment near the limit.
 const MAX_ALIVE_PLATES: usize = 60;
+/// Fossil-boundary capture (WO-0008 S1): a plate below
+/// MICRO_MAX_FRACTION of the sphere whose ENTIRE boundary stays below the
+/// classification dead band for this long has fossilized and merges into
+/// the neighbor sharing the longest border (Kula-style capture). This is
+/// the death path for split debris: without it, split births outran
+/// deaths and the census inflated through every active Wilson cycle.
+const CAPTURE_AFTER_MY: f32 = 60.0;
 /// Hotspot shield-building rate at the center cell / its ring, km/My, and
 /// the buildup cap (km). Sized so 5–10 My of residence builds a shield that
 /// can breach sea level over mature (−5,600 m) ocean floor.
@@ -649,6 +666,7 @@ impl SimState {
         // construction (a weld is a contact union; split halves are built
         // connected).
         self.update_pair_timers_and_sutures();
+        self.capture_fossilized_plates();
         self.check_rift_splits();
         self.grow_rifts();
         self.apply_hotspots();
@@ -701,13 +719,14 @@ impl SimState {
             {
                 // Venting (WO-0008 S1): breakup releases the trapped heat
                 // through the new ridge, so the insulation ramp restarts
-                // from the plate's last RIFTING as well as its last suture
-                // — without this, a supercontinental plate stayed at the
-                // insulation floor through every breakup and split in a
-                // runaway cascade (measured: 29.5 splits/Gy, census 64).
+                // from the plate's last actual BREAKUP as well as its last
+                // suture — without this, a supercontinental plate stayed
+                // at the insulation floor through every split in a runaway
+                // cascade (measured: 29.5 splits/Gy and a census of 64).
+                // Failed nucleation attempts vent nothing.
                 let anchor = self.plates[pid]
                     .youngest_suture_my
-                    .max(self.plates[pid].youngest_rift_my);
+                    .max(self.plates[pid].youngest_breakup_my);
                 let dt = self.t_my - anchor;
                 let ramp = ((dt - INSULATION_START_MY)
                     / (INSULATION_FULL_MY - INSULATION_START_MY))
@@ -1428,6 +1447,7 @@ impl SimState {
         speed: f32,
         youngest_suture_my: f32,
         youngest_rift_my: f32,
+        youngest_breakup_my: f32,
     ) -> u32 {
         let id = self.plates.len() as u32;
         self.plates.push(PlateState {
@@ -1437,6 +1457,8 @@ impl SimState {
             speed_deg_my: speed,
             youngest_suture_my,
             youngest_rift_my,
+            youngest_breakup_my,
+            quiet_my: 0.0,
             pending_rot: IDENTITY3,
             pending_deg: 0.0,
             slab: Vec::new(),
@@ -1573,13 +1595,14 @@ impl SimState {
                     });
                 {
                     let parent = &self.plates[p as usize];
-                    let (pole, speed, ys, yr) = (
+                    let (pole, speed, ys, yr, yb) = (
                         parent.pole,
                         parent.speed_deg_my,
                         parent.youngest_suture_my,
                         parent.youngest_rift_my,
+                        parent.youngest_breakup_my,
                     );
-                    let id = self.spawn_plate(pole, speed, ys, yr);
+                    let id = self.spawn_plate(pole, speed, ys, yr, yb);
                     for &c in &frag_cells[ci] {
                         self.plate_cells[self.plate_id[c as usize] as usize] -= 1;
                         self.plate_cells[id as usize] += 1;
@@ -2001,7 +2024,9 @@ impl SimState {
                     (e.b, e.cells_b)
                 };
             let perimeter = self.boundary_cells[small as usize].max(1);
-            let extent_ok = small_contact as f32 >= SUTURE_CONTACT_FRACTION * perimeter as f32;
+            let abs_cells = SUTURE_ABS_CONTACT_KM / self.cell_spacing_km;
+            let extent_ok = small_contact as f32 >= SUTURE_CONTACT_FRACTION * perimeter as f32
+                || small_contact as f32 >= abs_cells;
             // Condition 2: kinematically locked.
             let mean_rel = e.rel_sum / e.rel_n.max(1) as f32;
             let locked = mean_rel < SUTURE_LOCK_CMYR;
@@ -2031,7 +2056,16 @@ impl SimState {
             let old = self.collisions.iter().find(|t| t.a == e.a && t.b == e.b);
             let old_slow = old.map(|t| t.slow_collision_my).unwrap_or(0.0);
             let old_locked = old.map(|t| t.locked_my).unwrap_or(0.0);
-            let t = if holds { old_slow + DT_MY } else { 0.0 };
+            // Both pair clocks decay at 2x instead of hard-resetting on a
+            // lapse (WO-0008 S1): the zigzag hex boundary sprays one-step
+            // classification flickers (the documented advection problem
+            // the rift-onset clock already guards against with the same
+            // 2x hysteresis), and a hard reset let a single flicker erase
+            // 28 My of accumulated lock — welds structurally undershot the
+            // 2/Gy floor at seed cyrus in every calibration. A real unlock
+            // still drains the clock in half the time it took to build.
+            let decay = |v: f32| (v - RIFT_DECAY_MULT * DT_MY).max(0.0);
+            let t = if holds { old_slow + DT_MY } else { decay(old_slow) };
             if t >= SUTURE_AFTER_MY && matured.is_none() {
                 matured = Some(i);
             }
@@ -2042,7 +2076,7 @@ impl SimState {
                 locked_my: if extent_ok && locked {
                     old_locked + DT_MY
                 } else {
-                    0.0
+                    decay(old_locked)
                 },
             });
         }
@@ -2070,6 +2104,7 @@ impl SimState {
             b: loser,
             t: self.t_my,
             contact_fraction,
+            contact_cells: small_contact,
         });
         log::debug!("t={} My: suturing plate {loser} into {winner}", self.t_my);
         // The scar is data: every contact cell (both sides) records the weld.
@@ -2267,7 +2302,7 @@ impl SimState {
             if margin.is_empty() {
                 continue;
             }
-            let want = ((margin.len() as f32 * frac).round() as u32).max(1);
+            let want = ((margin.len() as f32 * frac).round() as u32).max(2);
             let n_consume = want.min(size - RELIC_BASIN_KEEP_CELLS) as usize;
             // (plate, cells, age sum) for the slab segments, id-ordered.
             let mut consumed: Vec<(u32, u32, f32)> = Vec::new();
@@ -2481,12 +2516,30 @@ impl SimState {
                         done = true;
                         break;
                     }
-                    // Walk to the weakest unclaimed neighbor (tie → lowest
-                    // id via strict <; neighbors come in fixed CCW order,
-                    // so sort candidates by id first).
+                    // Walk on: weakness GATES (amendment A: only cells the
+                    // driver stress can break are walkable), the stress
+                    // axis STEERS (WO-0008 S1): each tip advances into the
+                    // walkable neighbor most aligned with the direction
+                    // away from the OTHER tip, so the rift crosses the
+                    // plate instead of curling out through the nearest
+                    // margin — the m4 sliver problem: least-strength
+                    // steering never dropped the supercontinent below the
+                    // 1/3 insulation threshold and the breakup engine
+                    // stayed permanently armed. Cracks propagate along the
+                    // stress axis, deflecting into weak zones only through
+                    // the gate. Ties → weaker cell → lower id.
+                    let other_tip = if tip_b { r.tip_a } else { r.tip_b };
+                    let axis = if tip != other_tip {
+                        Some(normalize3(sub3(
+                            self.grid.positions[tip as usize],
+                            self.grid.positions[other_tip as usize],
+                        )))
+                    } else {
+                        None // first advance: pure least strength
+                    };
                     let mut nbs: Vec<u32> = self.grid.neighbors_of(tip).to_vec();
                     nbs.sort_unstable();
-                    let mut best: Option<(u32, f32)> = None;
+                    let mut best: Option<(u32, f32, f32)> = None; // (cell, align, strength)
                     for &nb in &nbs {
                         let nbu = nb as usize;
                         let claimed_cont =
@@ -2497,18 +2550,31 @@ impl SimState {
                             continue;
                         }
                         let s = self.strength(nbu);
-                        if best.is_none_or(|(_, bs)| s < bs) {
-                            best = Some((nb, s));
+                        if r.stress <= s {
+                            continue; // the gate: stress cannot break it
+                        }
+                        let a = match axis {
+                            Some(ax) => dot3(
+                                ax,
+                                normalize3(sub3(
+                                    self.grid.positions[nbu],
+                                    self.grid.positions[tip as usize],
+                                )),
+                            ),
+                            None => 0.0,
+                        };
+                        let better = match best {
+                            None => true,
+                            Some((_, ba, bs)) => a > ba || (a == ba && s < bs),
+                        };
+                        if better {
+                            best = Some((nb, a, s));
                         }
                     }
-                    let Some((nb, s_next)) = best else {
-                        failed = true;
-                        break;
-                    };
-                    if r.stress <= s_next {
+                    let Some((nb, _, _)) = best else {
                         failed = true; // amendment A: stalled = failed
                         break;
-                    }
+                    };
                     let nbu = nb as usize;
                     if self.crust_type[nbu] == 1 {
                         // Claim continental path: jump-start maturation.
@@ -2572,11 +2638,20 @@ impl SimState {
                 1
             };
             let live = self.rifts.iter().filter(|r| r.plate == d.plate).count();
-            // The refractory models stress relief; while an arm is live no
-            // split or failure has spent the plate's stress yet, so only a
-            // rift-free plate is refractory-gated (the arm cap above is
-            // what throttles multi-arm nucleation).
-            let refractory = live == 0
+            // The refractory models stress relief; while an arm is still
+            // GROWING no split or failure has spent the plate's stress, so
+            // the plate keeps probing for its second arm through the
+            // growth phase (~30–80 My). Once every arm is complete and
+            // waiting for oceanization the extension is localized at the
+            // corridor and the refractory applies again — probing through
+            // the whole 400 My waiting window cascaded the census to 39
+            // at seed cyrus, while gating the second arm at all froze that
+            // world at 0 splits.
+            let growing = self
+                .rifts
+                .iter()
+                .any(|r| r.plate == d.plate && !(r.done_a && r.done_b));
+            let refractory = !growing
                 && self.t_my - self.plates[d.plate as usize].youngest_rift_my
                     < RIFT_REFRACTORY_MY;
             if !self.plates[d.plate as usize].alive
@@ -2751,6 +2826,121 @@ impl SimState {
         Some(path)
     }
 
+    /// Fossil-boundary capture (WO-0008 S1): each plate below
+    /// MICRO_MAX_FRACTION of the sphere accumulates a quiet clock while
+    /// the mean relative speed over its entire boundary stays below the
+    /// classification dead band; at `CAPTURE_AFTER_MY` its boundary has
+    /// fossilized and it merges into the neighbor sharing the longest
+    /// border. Kula-style capture: not a suture — no scar, no suture
+    /// clock; ledger and rifts transfer like any merge. Serial, id-order.
+    fn capture_fossilized_plates(&mut self) {
+        let n = self.grid.cell_count() as usize;
+        let small_max = (n as f32 * MICRO_MAX_FRACTION) as u32;
+        let omegas: Vec<[f32; 3]> = (0..self.plates.len())
+            .map(|pid| {
+                if self.plates[pid].alive {
+                    self.omega(pid as u32)
+                } else {
+                    [0.0; 3]
+                }
+            })
+            .collect();
+        // Mean boundary relative speed and border census per small plate.
+        let np = self.plates.len();
+        let mut rel_sum = vec![0.0f64; np];
+        let mut rel_n = vec![0u32; np];
+        let mut border: Vec<Vec<u32>> = vec![Vec::new(); np];
+        let mut any_small = false;
+        for pid in 0..np {
+            if self.plates[pid].alive && self.plate_cells[pid] <= small_max {
+                any_small = true;
+                border[pid] = vec![0; np];
+            }
+        }
+        if !any_small {
+            return;
+        }
+        for c in 0..n {
+            let a = self.plate_id[c];
+            let au = a as usize;
+            if border[au].is_empty() {
+                continue; // not a small plate
+            }
+            let xa = self.grid.positions[c];
+            for &nb in self.grid.neighbors_of(c as u32) {
+                let b = self.plate_id[nb as usize];
+                if b == a {
+                    continue;
+                }
+                let mid = normalize3(add3(xa, self.grid.positions[nb as usize]));
+                let rel = sub3(
+                    cross3(omegas[b as usize], mid),
+                    cross3(omegas[au], mid),
+                );
+                rel_sum[au] += (dot3(rel, rel).sqrt() * RADMY_TO_CMYR) as f64;
+                rel_n[au] += 1;
+                border[au][b as usize] += 1;
+            }
+        }
+        for pid in 0..np {
+            if border[pid].is_empty() || rel_n[pid] == 0 {
+                continue;
+            }
+            let quiet = (rel_sum[pid] / rel_n[pid] as f64) < CLASSIFY_CMYR as f64;
+            if !quiet {
+                self.plates[pid].quiet_my = 0.0;
+                continue;
+            }
+            self.plates[pid].quiet_my += DT_MY;
+            if self.plates[pid].quiet_my < CAPTURE_AFTER_MY {
+                continue;
+            }
+            // Fossilized: merge into the longest-border neighbor (tie →
+            // lowest plate id via strict >).
+            let mut winner = u32::MAX;
+            for (q, &cnt) in border[pid].iter().enumerate() {
+                if cnt > 0
+                    && self.plates[q].alive
+                    && (winner == u32::MAX || cnt > border[pid][winner as usize])
+                {
+                    winner = q as u32;
+                }
+            }
+            if winner == u32::MAX {
+                continue;
+            }
+            let loser = pid as u32;
+            let wu = winner as usize;
+            for id in self.plate_id.iter_mut() {
+                if *id == loser {
+                    *id = winner;
+                }
+            }
+            self.plate_cells[wu] += self.plate_cells[pid];
+            self.plate_cells[pid] = 0;
+            self.cont_cells_per_plate[wu] += self.cont_cells_per_plate[pid];
+            self.cont_cells_per_plate[pid] = 0;
+            self.plates[pid].alive = false;
+            let segs = std::mem::take(&mut self.plates[pid].slab);
+            self.plates[wu].slab.extend(segs);
+            for r in self.rifts.iter_mut() {
+                if r.plate == loser {
+                    r.plate = winner;
+                }
+            }
+            self.collisions.retain(|t| t.a != loser && t.b != loser);
+            self.events.push(TectonicEvent::Capture {
+                winner,
+                loser,
+                t: self.t_my,
+            });
+            log::debug!(
+                "t={} My: fossilized plate {loser} captured by {winner}",
+                self.t_my
+            );
+        }
+    }
+
     /// Model §5 split: when a completed rift's corridor (young plate-
     /// interior ocean) cuts the plate's remaining cells into disconnected
     /// regions, the plate splits along it. The halves keep the parent's
@@ -2827,9 +3017,12 @@ impl SimState {
             let parent = &self.plates[pid as usize];
             let (pole, speed, ys) = (parent.pole, parent.speed_deg_my, parent.youngest_suture_my);
             self.plates[pid as usize].youngest_rift_my = self.t_my;
+            // The split vents the parent's trapped mantle heat through the
+            // fresh corridor (insulation anchor, WO-0008 S1).
+            self.plates[pid as usize].youngest_breakup_my = self.t_my;
             let mut new_of_comp = vec![u32::MAX; comp_cells.len()];
             for &ci in &big {
-                let child = self.spawn_plate(pole, speed, ys, self.t_my);
+                let child = self.spawn_plate(pole, speed, ys, self.t_my, self.t_my);
                 new_of_comp[ci as usize] = child;
                 let cells = &comp_cells[ci as usize];
                 let cont = cells
@@ -3044,6 +3237,8 @@ mod tests {
             speed_deg_my: speed,
             youngest_suture_my: super::super::keyframe::NEVER_SUTURED,
             youngest_rift_my: super::super::keyframe::NEVER_SUTURED,
+            youngest_breakup_my: super::super::keyframe::NEVER_SUTURED,
+            quiet_my: 0.0,
             pending_rot: IDENTITY3,
             pending_deg: 0.0,
             slab: Vec::new(),
