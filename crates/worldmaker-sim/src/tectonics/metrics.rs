@@ -820,6 +820,7 @@ pub struct PhysicsReport {
     pub underthrust_removed_q: i64,
     pub underthrust_deposited_q: i64,
     pub underthrust_spilled_q: i64,
+    pub underthrust_incorporated_q: i64,
 }
 
 impl PhysicsReport {
@@ -1004,14 +1005,15 @@ impl PhysicsReport {
             ),
             (
                 "s2_volume_ledger",
-                self.vol_collision_q == self.underthrust_deposited_q
+                self.vol_collision_q
+                    == self.underthrust_deposited_q + self.underthrust_incorporated_q
                     && self.underthrust_removed_q
                         == self.underthrust_deposited_q + self.underthrust_spilled_q,
                 format!(
-                    "collision {} vs deposited {} (removed {} = deposited + spilled {}); \
+                    "collision {} vs deposited+incorporated {} (removed {} = deposited + spilled {}); \
                      advect {} closure {} arc {} rift {} spread {} relax {} quantize {}",
                     self.vol_collision_q,
-                    self.underthrust_deposited_q,
+                    self.underthrust_deposited_q + self.underthrust_incorporated_q,
                     self.underthrust_removed_q,
                     self.underthrust_deposited_q + self.underthrust_spilled_q,
                     self.vol_advect_q,
@@ -1666,6 +1668,7 @@ impl PhysicsTracker {
             underthrust_removed_q: sim.underthrust_removed_q,
             underthrust_deposited_q: sim.underthrust_deposited_q,
             underthrust_spilled_q: sim.underthrust_spilled_q,
+            underthrust_incorporated_q: sim.underthrust_incorporated_q,
         }
     }
 }

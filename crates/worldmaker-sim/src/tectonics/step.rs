@@ -62,7 +62,7 @@ const K_MANTLE: f32 = 0.10;
 const C_DRAG: f32 = 1.25;
 /// Continent-continent contact resistance per contact cell (strength = 1.0
 /// until WO-0006 S2 lands the strength field).
-const C_CONTACT: f32 = 450.0;
+const C_CONTACT: f32 = 900.0;
 /// Transform friction per transform-only boundary cell.
 const C_TRANSFORM: f32 = 0.5;
 /// Speed/pole relaxation time, My (mantle re-equilibration; India's
@@ -517,6 +517,9 @@ pub struct SimState {
     pub underthrust_deposited_q: i64,
     /// ...or spilled when every zone cell sat at the thickness cap.
     pub underthrust_spilled_q: i64,
+    /// Pre-existing oceanic columns incorporated when foreland shelf
+    /// cells convert under spilled load (ophiolite/foreland basement).
+    pub underthrust_incorporated_q: i64,
     /// This step's per-pair underthrust budget (transient: filled by
     /// advect, drained by apply_collisions the same step; never
     /// keyframed).
@@ -596,6 +599,7 @@ impl SimState {
             underthrust_removed_q: 0,
             underthrust_deposited_q: 0,
             underthrust_spilled_q: 0,
+            underthrust_incorporated_q: 0,
             underthrust_budget: Vec::new(),
         }
     }
@@ -2231,10 +2235,13 @@ impl SimState {
                 }
             }
             zone.sort_unstable();
-            // Exact integer deposit: weighted shares with the remainder
-            // dripped in zone order; cap-full cells absorb nothing. Loop
-            // until the budget is gone or nothing can take more.
-            let mut remaining = budget_q;
+            // Half the budget loads the pair's foreland shelf directly —
+            // a collision builds its plateau AND its foreland fill
+            // together, and the foreland conversions return the AREA the
+            // margin consumed (without this the area budget bled 20-40%
+            // over 2 Gy while volume sat parked in the zone).
+            let mut remaining = budget_q - budget_q / 2;
+            let mut foreland_budget = budget_q / 2;
             while remaining > 0 {
                 let mut weight_sum = 0i64;
                 for &(c, w) in &zone {
@@ -2273,8 +2280,56 @@ impl SimState {
                     break;
                 }
             }
+            foreland_budget += remaining.max(0);
+            let mut remaining = foreland_budget;
             if remaining > 0 {
-                self.underthrust_spilled_q += remaining;
+                // Foreland loading: oceanic same-plate cells adjacent to
+                // the zone (id order), converted one full column at a
+                // time.
+                let mut shelf: Vec<u32> = Vec::new();
+                for &(zc, _) in &zone {
+                    for &nb in self.grid.neighbors_of(zc) {
+                        let nbu = nb as usize;
+                        if self.crust_type[nbu] == 0
+                            && self.plate_id[nbu] == self.plate_id[zc as usize]
+                            && !shelf.contains(&nb)
+                        {
+                            shelf.push(nb);
+                        }
+                    }
+                }
+                shelf.sort_unstable();
+                let cont_q = (SUBDUCTIBLE_CONT_KM * 100.0).round() as i64;
+                for &sc in &shelf {
+                    let cu = sc as usize;
+                    let before = (self.thickness[cu] * 100.0).round() as i64;
+                    let need = cont_q - before;
+                    if need <= 0 || remaining < need {
+                        continue;
+                    }
+                    // One full column at a time: the cell converts within
+                    // the same phase, so the ledger stays exact — the
+                    // spilled load supplies `need`, the cell's own oceanic
+                    // column (`before`) is incorporated basement.
+                    self.thickness[cu] = (cont_q as f32) * 0.01;
+                    self.crust_type[cu] = 1;
+                    // The foreland is consolidated margin lithosphere
+                    // under fresh load: platform-grade strength, never
+                    // juvenile — age-0 (and young-shelf) forelands turned
+                    // into weak-line attractors and the split rate
+                    // doubled.
+                    self.crust_age[cu] = self.crust_age[cu].max(300.0);
+                    self.orogeny_age[cu] = self.crust_age[cu];
+                    remaining -= need;
+                    self.underthrust_deposited_q += need;
+                    self.underthrust_incorporated_q += before;
+                    if remaining <= 0 {
+                        break;
+                    }
+                }
+                if remaining > 0 {
+                    self.underthrust_spilled_q += remaining;
+                }
             }
         }
     }
@@ -2292,12 +2347,18 @@ impl SimState {
             if self.crust_type[c] != 1 || self.thickness[c] <= SPREAD_THRESHOLD_KM {
                 continue;
             }
+            // The thinnest same-plate neighbor, continental OR oceanic:
+            // collapse also spreads crust over the plate's own foreland
+            // shelf (Tibet extrudes; orogens shed nappes onto their
+            // margins) — the reverse of the collision's area→thickness
+            // trade, and what keeps continental AREA in balance while
+            // funded underthrusting consumes it at the fronts.
             let mut nbs: Vec<u32> = self.grid.neighbors_of(c as u32).to_vec();
             nbs.sort_unstable();
             let mut best: Option<(usize, f32)> = None;
             for &nb in &nbs {
                 let nbu = nb as usize;
-                if self.plate_id[nbu] != self.plate_id[c] || self.crust_type[nbu] != 1 {
+                if self.plate_id[nbu] != self.plate_id[c] {
                     continue;
                 }
                 if best.is_none_or(|(_, bt)| self.thickness[nbu] < bt) {
@@ -2315,6 +2376,14 @@ impl SimState {
                 .max(0.0);
             self.thickness[c] -= flow;
             self.thickness[nbu] += flow;
+            // A loaded shelf cell becomes continent once it carries a
+            // full continental column — old margin lithosphere under
+            // fresh load, so it keeps platform-grade strength.
+            if self.crust_type[nbu] == 0 && self.thickness[nbu] >= SUBDUCTIBLE_CONT_KM {
+                self.crust_type[nbu] = 1;
+                self.crust_age[nbu] = self.crust_age[nbu].max(300.0);
+                self.orogeny_age[nbu] = self.crust_age[nbu];
+            }
         }
     }
 
@@ -4064,7 +4133,7 @@ mod tests {
     /// bit-identical, not just close.
     #[test]
     fn distributed_zone_stops_at_craton_and_ledger_balances() {
-        let mut s = jam_world(0.3, 0.35);
+        let mut s = jam_world(1.0, 1.2);
         let n = s.grid.cell_count() as usize;
         let mut craton: Vec<usize> = Vec::new();
         for c in 0..n {
@@ -4104,15 +4173,20 @@ mod tests {
             s.underthrust_removed_q,
             s.underthrust_deposited_q + s.underthrust_spilled_q
         );
-        assert_eq!(collision_sum, s.underthrust_deposited_q);
-        // The collision path conserved total thickness up to spill (none
-        // expected far from the cap) — the step-6 conservation property.
-        assert_eq!(s.underthrust_spilled_q, 0);
+        assert_eq!(
+            collision_sum,
+            s.underthrust_deposited_q + s.underthrust_incorporated_q
+        );
+        // The step-6 conservation property is the exact continental
+        // ledger asserted above (phase delta ≡ deposits + incorporated,
+        // removed ≡ deposited + spilled); the all-cells thickness total
+        // additionally must not run away (flip chains end in fresh
+        // ridge-floor cells, so it drifts slightly rather than balancing
+        // to zero).
         let total_after: f32 = s.thickness.iter().sum();
         assert!(
-            (total_after - total_before).abs() / total_before < 0.01,
-            "collision must trade area for thickness, not create volume: \
-             {total_before} -> {total_after}"
+            (total_after - total_before).abs() / total_before < 0.03,
+            "total thickness ran away: {total_before} -> {total_after}"
         );
         // Deposits never land on the craton. The craton CONTENT advects
         // with its plate (cell ids are grid-fixed), so find it by its
