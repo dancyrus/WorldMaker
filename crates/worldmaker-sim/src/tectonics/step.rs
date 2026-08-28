@@ -103,7 +103,7 @@ const ISLAND_ARC_CONVERT_KM: f32 = 20.0;
 /// (strength ~0.3–0.8) gives 3–8 cells at L6 (300–900 km), cratonic
 /// crust ≤ 1 (deformation localizes in weak lithosphere and dies at
 /// cratons — Tarim and Sichuan stop the Himalayan front).
-const W_BASE_KM: f32 = 250.0;
+const W_BASE_KM: f32 = 260.0;
 const W_MAX_CELLS: u32 = 8;
 /// The zone walk stops where strength reaches cratonic grade.
 const CRATON_STOP: f32 = 1.5;
@@ -241,7 +241,7 @@ const RIFT_PROP_KM_MY: f32 = 75.0;
 /// breakup recurs on ~2×10⁸ yr per plate). Without this, every plume
 /// re-fires the step after each failure or split and the census runs away
 /// (measured: 12 → 28 plates in 200 My at L5).
-const RIFT_REFRACTORY_MY: f32 = 180.0;
+const RIFT_REFRACTORY_MY: f32 = 240.0;
 /// Two active rift tips on the same plate within this many cells connect
 /// along the least-strength path and merge their systems (WO-0008 S1:
 /// East Africa–Red Sea–Gulf of Aden linkage).
@@ -259,7 +259,7 @@ const RIFT_ENTRY_PRUNE_MY: f32 = 400.0;
 /// freshly oceanized rift line (and pre-existing basins stay out of it).
 const CORRIDOR_MAX_AGE_MY: f32 = 60.0;
 /// A split component smaller than this stays with the parent (seam noise).
-const MIN_SPLIT_CELLS: u32 = 8;
+const MIN_SPLIT_CELLS: u32 = 24;
 /// Young-ocean boundary cells count as ridge drive even below the
 /// divergence threshold: a fresh corridor's ridge swell pushes its flanks
 /// apart before any divergence exists to classify (model §5: "their new
@@ -2240,8 +2240,8 @@ impl SimState {
             // together, and the foreland conversions return the AREA the
             // margin consumed (without this the area budget bled 20-40%
             // over 2 Gy while volume sat parked in the zone).
-            let mut remaining = budget_q - budget_q / 2;
-            let mut foreland_budget = budget_q / 2;
+            let mut remaining = budget_q / 3;
+            let mut foreland_budget = budget_q - budget_q / 3;
             while remaining > 0 {
                 let mut weight_sum = 0i64;
                 for &(c, w) in &zone {

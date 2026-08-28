@@ -1,10 +1,11 @@
+#![recursion_limit = "256"]
 //! WO-0005 dev probe, extended in WO-0006 (S1: connectivity counter and
 //! per-plate attached slab area; S2: the tectonic event log — every suture
 //! and split carries its §3 condition record or §5 driver) and WO-0008 S1
 //! (S4 probe: continental-inventory flows per window, relic-basin closure,
 //! rift linkage, fossil captures, suture-condition failure counters). Runs
 //! the tectonic sim at seed "cyrus" and seed 42 (L6, 2 Gy, default params)
-//! and writes docs/results/plate-physics-probe-s4-<seed>.json.
+//! and writes docs/results/plate-physics-probe-s5-<seed>.json.
 //!
 //! The probe drives `SimState::step` directly with the same stepping and
 //! keyframe-quantization cadence as `run_history` (the quantize round-trip
@@ -235,6 +236,18 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
                 "suture_fail_extent_cum": sim.suture_fail_extent,
                 "suture_fail_lock_cum": sim.suture_fail_lock,
                 "suture_fail_ocean_cum": sim.suture_fail_ocean,
+                "vol_advect_q_cum": sim.vol_advect_q,
+                "vol_closure_q_cum": sim.vol_closure_q,
+                "vol_arc_q_cum": sim.vol_arc_q,
+                "vol_collision_q_cum": sim.vol_collision_q,
+                "vol_rift_q_cum": sim.vol_rift_q,
+                "vol_spread_q_cum": sim.vol_spread_q,
+                "vol_relax_q_cum": sim.vol_relax_q,
+                "vol_quantize_q_cum": sim.vol_quantize_q,
+                "underthrust_removed_q_cum": sim.underthrust_removed_q,
+                "underthrust_deposited_q_cum": sim.underthrust_deposited_q,
+                "underthrust_spilled_q_cum": sim.underthrust_spilled_q,
+                "underthrust_incorporated_q_cum": sim.underthrust_incorporated_q,
                 "pair_timer_count": sim.collisions.len(),
                 "active_rift_count": sim.rifts.len(),
                 "multi_component_plate_count": multi.len(),
@@ -330,6 +343,12 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
             "continental_cells_final": sim.crust_type.iter().filter(|&&t| t == 1).count(),
             "cont_gained_by_closure_total": sim.cont_gained_by_closure,
             "rift_link_count_total": sim.rift_link_count,
+            "underthrust_removed_q_total": sim.underthrust_removed_q,
+            "underthrust_deposited_q_total": sim.underthrust_deposited_q,
+            "underthrust_spilled_q_total": sim.underthrust_spilled_q,
+            "underthrust_incorporated_q_total": sim.underthrust_incorporated_q,
+            "volume_ledger_exact": sim.vol_collision_q
+                == sim.underthrust_deposited_q + sim.underthrust_incorporated_q,
             "events_recorded": events.len(),
             "events_total": sim.events.len(),
             "max_multi_component_plates_in_sample": max_multi,
@@ -342,10 +361,10 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
     })
 }
 
-/// WO-0006 S2 step 10 / WO-0008 S1 step 9. Ignored: dev probe, ~2×2 Gy
-/// L6 runs (minutes).
+/// WO-0006 S2 step 10 / WO-0008 S1 step 9 / WO-0008 S2 step 11. Ignored:
+/// dev probe, ~2×2 Gy L6 runs (minutes).
 #[test]
-#[ignore = "dev probe: writes docs/results/plate-physics-probe-s4-<seed>.json"]
+#[ignore = "dev probe: writes docs/results/plate-physics-probe-s5-<seed>.json"]
 fn plate_physics_probe() {
     let grid = Arc::new(Grid::build(6));
     let date = today_utc_iso();
@@ -357,7 +376,7 @@ fn plate_physics_probe() {
             serde_json::to_string_pretty(&metrics["headline"]).unwrap()
         );
         let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/results"))
-            .join(format!("plate-physics-probe-s4-{label}.json"));
+            .join(format!("plate-physics-probe-s5-{label}.json"));
         ResultsFile::new(&date, metrics).write(&path).unwrap();
         eprintln!("wrote {}", path.display());
     }
