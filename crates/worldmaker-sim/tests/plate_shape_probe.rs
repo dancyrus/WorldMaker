@@ -23,6 +23,9 @@ use std::sync::Arc;
 
 use worldmaker_core::hash::seed_from_text;
 use worldmaker_core::Grid;
+use worldmaker_sim::tectonics::metrics::{
+    finger_fraction, largest_plate_share, mean_boundary_per_area,
+};
 use worldmaker_sim::tectonics::{SimState, TectonicsParams};
 
 const DT_MY: f32 = 2.0;
@@ -53,14 +56,6 @@ fn quantize(s: &mut SimState) {
     }
 }
 
-fn same_plate_neighbours(grid: &Grid, plate_id: &[u32], c: usize) -> u32 {
-    let p = plate_id[c];
-    grid.neighbors_of(c as u32)
-        .iter()
-        .filter(|&&nb| plate_id[nb as usize] == p)
-        .count() as u32
-}
-
 #[test]
 #[ignore = "dev probe: prints the shape-degradation series"]
 fn plate_shape_probe() {
@@ -81,35 +76,14 @@ fn plate_shape_probe() {
 
     println!("t_My  alive  largest%  compact  finger%  intFlip%");
 
+    // The three shape series live in tectonics::metrics since WO-0011 S1
+    // (same implementations, lifted so S3 can arm gates on them).
     let sample = |sim: &SimState, prev: &[u32]| {
-        let alive: Vec<usize> = (0..sim.plates.len())
-            .filter(|&p| sim.plates[p].alive)
-            .collect();
-        // compactness + fingers
-        let mut boundary = vec![0u32; sim.plates.len()];
-        let mut area = vec![0u32; sim.plates.len()];
-        let mut fingers = 0u64;
-        for c in 0..n {
-            let p = sim.plate_id[c] as usize;
-            area[p] += 1;
-            let same = same_plate_neighbours(&sim.grid, &sim.plate_id, c);
-            let deg = sim.grid.neighbors_of(c as u32).len() as u32;
-            if same < deg {
-                boundary[p] += 1;
-            }
-            if same <= 2 {
-                fingers += 1;
-            }
-        }
-        let mut ratios = Vec::new();
-        for &p in &alive {
-            if area[p] > 0 {
-                ratios.push(boundary[p] as f64 / area[p] as f64);
-            }
-        }
-        let compact = ratios.iter().sum::<f64>() / ratios.len().max(1) as f64;
-        let largest = *area.iter().max().unwrap_or(&0);
-        let finger_frac = fingers as f64 / n as f64;
+        let alive_flags: Vec<bool> = sim.plates.iter().map(|p| p.alive).collect();
+        let alive = alive_flags.iter().filter(|&&a| a).count();
+        let compact = mean_boundary_per_area(&sim.grid, &sim.plate_id, &alive_flags);
+        let finger_frac = finger_fraction(&sim.grid, &sim.plate_id);
+        let largest = largest_plate_share(&sim.plate_id, sim.plates.len());
 
         // interior flip fraction (this-step ownership change vs prev)
         let mut flips = 0u64;
@@ -130,13 +104,7 @@ fn plate_shape_probe() {
             }
         }
         let int_flip_frac = interior_flips as f64 / flips.max(1) as f64;
-        (
-            alive.len(),
-            largest as f64 / n as f64,
-            compact,
-            finger_frac,
-            int_flip_frac,
-        )
+        (alive, largest, compact, finger_frac, int_flip_frac)
     };
 
     for step_idx in 0..total_steps {

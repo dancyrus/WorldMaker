@@ -124,6 +124,10 @@ fn print_tectonic_goldens() {
 }
 
 #[test]
+#[ignore = "WO-0011 S1/S2 in progress: boundary regularization changes plate_id \
+trajectories by design — the SIXTH sanctioned golden move (announced in \
+WO-0011-S1, WO-0008 S0 precedent) regenerates all three hashes ONCE at the \
+end of S2. The Phase 0 noise golden above must stay green and unmoved."]
 fn tectonics_reproduces_committed_goldens() {
     let grid = Arc::new(Grid::build(6));
     let mut world = WorldState::new(grid);

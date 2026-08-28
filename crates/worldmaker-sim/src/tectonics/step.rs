@@ -23,6 +23,7 @@ use rayon::prelude::*;
 use worldmaker_core::dmath::{
     add3, cross3, dot3, mat3_mul, mat3_mul3, mat3_transpose, normalize3, rotation3, scale3, sub3,
 };
+use worldmaker_core::hash::{fnv1a, fnv1a_continue, splitmix64};
 use worldmaker_core::rng::sub_rng;
 use worldmaker_core::Grid;
 
@@ -211,6 +212,20 @@ const INSULATION_START_MY: f32 = 55.0;
 const INSULATION_FULL_MY: f32 = 165.0;
 const INSULATION_FLOOR: f32 = 0.18;
 
+// ----- boundary regularization (WO-0011 S1, plate-shape anti-fray) -----
+/// Mean strength at which lithosphere can fail and let a plate boundary
+/// re-localize through it (`strength()` units). An advection re-sampling
+/// flip keeps its new owner only below the (jittered) threshold. Anchored
+/// between young ocean (g_age floor 0.9 → S ≈ 0.9) and the continental
+/// platform (mature pre-craton continent, S ≈ 1.1–1.5): ordinary oceanic
+/// lithosphere and young margins can fail, platforms and cratons cannot.
+/// Calibrated at L6, seed cyrus (WO-0011 S1 step 6).
+const STRENGTH_FAIL_MEAN: f32 = 1.0;
+/// Sub-grid strength heterogeneity: sigma of the per-(cell, step) normal
+/// jitter on the failure threshold (~15% of MEAN), so the cutoff is a
+/// band, not a knife edge.
+const STRENGTH_FAIL_SIGMA: f32 = 0.15;
+
 // ----- rifting (WO-0006 S2, model §5 + amendment A) -----
 /// A plume qualifies as a rift driver once it has sat under continental
 /// crust this long (Afar / East African Rift).
@@ -311,6 +326,21 @@ const NONE: u32 = u32::MAX;
 /// "No slab beneath this cell" sentinel for the per-cell `slab_plate` field.
 pub const SLAB_NONE: u16 = u16::MAX;
 
+/// Approximately standard-normal draw from a hash: the Irwin–Hall 12
+/// construction of `dmath::gaussian_f32`, fed by a splitmix64 chain instead
+/// of a stream RNG so it is a pure function of its key — no transcendentals,
+/// no RNG state, bit-identical on every platform. Good to ~3 sigma, which is
+/// all sub-grid strength heterogeneity needs.
+fn normal_from_hash(mut h: u64) -> f32 {
+    let mut sum = 0.0f32;
+    for _ in 0..6 {
+        h = splitmix64(h);
+        sum += (h >> 40) as f32 * (1.0 / 16_777_216.0);
+        sum += ((h >> 16) & 0x00FF_FFFF) as f32 * (1.0 / 16_777_216.0);
+    }
+    sum - 6.0
+}
+
 /// Per-cell result of the advection gather.
 #[derive(Clone, Copy)]
 struct CellOut {
@@ -333,6 +363,27 @@ struct CellOut {
     slab_since: f32,
     /// Advected suture scar (NEVER_SUTURED where none).
     suture_at: f32,
+}
+
+/// Pre-advect snapshot of the mutable per-cell fields, refreshed at the
+/// top of `advect` each step. `regularize_boundaries` (WO-0011 S1) reads
+/// it three ways: previous owners define this step's flip candidates,
+/// previous features carry the process-edge exemptions, and the previous
+/// columns are the revert source (a rejected flip means the boundary did
+/// not move here, so the cell keeps its old owner AND its old crust).
+#[derive(Default)]
+struct PrevCells {
+    plate: Vec<u32>,
+    features: Vec<u32>,
+    ctype: Vec<u32>,
+    age: Vec<f32>,
+    thick: Vec<f32>,
+    orog: Vec<f32>,
+    rift: Vec<f32>,
+    build: Vec<f32>,
+    slab_plate: Vec<u16>,
+    slab_since: Vec<f32>,
+    suture_at: Vec<f32>,
 }
 
 /// Per-cell result of boundary classification.
@@ -460,6 +511,9 @@ pub struct SimState {
     outs: Vec<CellOut>,
     class: Vec<ClassOut>,
     bfs_depth: Vec<u16>,
+    /// Pre-advect cell state (see [`PrevCells`]); scratch, never keyframed —
+    /// it is rebuilt at the top of every `advect`.
+    prev: PrevCells,
     pub(super) hotspot_hints: Vec<u32>,
 
     // Cumulative continental-inventory flows (cells), for the acceptance
@@ -490,6 +544,13 @@ pub struct SimState {
     /// Cells reassigned by the connectivity backstop (cumulative). The §7
     /// invariant target: this fires only for advection seam noise.
     pub connectivity_reassigned: u64,
+    /// Ownership flips reverted by `regularize_boundaries` (cumulative,
+    /// WO-0011 S1 diagnostic).
+    pub regularize_reverted: u64,
+    /// Craton-floor violations (cumulative, WO-0011 S1): craton-regime
+    /// cells that still ended a step transferred with no active trench
+    /// consuming their plate. Instrumentation here; S3 arms it at zero.
+    pub craton_transfer_violations: u64,
 
     // ----- crust-volume ledger (WO-0008 S2) -----
     // Continental crustal volume in exact quantized units of
@@ -577,6 +638,7 @@ impl SimState {
             outs: Vec::new(),
             class: vec![ClassOut::default(); n],
             bfs_depth: vec![u16::MAX; n],
+            prev: PrevCells::default(),
             hotspot_hints: Vec::new(),
             cont_lost_to_ridge_gap: 0,
             cont_lost_to_consumption: 0,
@@ -594,6 +656,8 @@ impl SimState {
             rift_link_count: 0,
             microplate_count: 0,
             connectivity_reassigned: 0,
+            regularize_reverted: 0,
+            craton_transfer_violations: 0,
             vol_advect_q: 0,
             vol_closure_q: 0,
             vol_arc_q: 0,
@@ -738,10 +802,11 @@ impl SimState {
         self.accumulate_boundary_stats();
     }
 
-    /// Advance one step. The whole step is RNG-free since WO-0006 S2 (the
-    /// last draw died with the random breakup); the seed/step parameters are
-    /// kept for API stability and S3's calibration hooks.
-    pub fn step(&mut self, _master_seed: u64, _step_idx: u32) {
+    /// Advance one step. The step is RNG-free in the reproducibility sense:
+    /// its only stochastic input is `regularize_boundaries`' per-(cell,
+    /// step) threshold jitter, a pure hash of (master seed, cell id, step
+    /// index) — same seed, same world, resumable at any keyframe.
+    pub fn step(&mut self, master_seed: u64, step_idx: u32) {
         // The crust-volume ledger (WO-0008 S2) measures each phase's
         // continental-volume delta in exact quantized units: the terms
         // telescope to the total change, so nothing is unexplained, and
@@ -751,6 +816,7 @@ impl SimState {
         self.motion_update();
         self.advect();
         self.enforce_connectivity();
+        self.regularize_boundaries(master_seed, step_idx);
         let v1 = self.cont_volume_q();
         self.vol_advect_q += v1 - v0;
         self.classify_boundaries();
@@ -911,6 +977,20 @@ impl SimState {
     fn advect(&mut self) {
         let n = self.grid.cell_count() as usize;
         let commit_deg = COMMIT_FRACTION * self.cell_spacing_km / (R_EARTH_KM * DEG2RAD);
+
+        // Snapshot the pre-advect cell state for regularize_boundaries
+        // (WO-0011 S1). clone_from reuses the buffers after the first step.
+        self.prev.plate.clone_from(&self.plate_id);
+        self.prev.features.clone_from(&self.features);
+        self.prev.ctype.clone_from(&self.crust_type);
+        self.prev.age.clone_from(&self.crust_age);
+        self.prev.thick.clone_from(&self.thickness);
+        self.prev.orog.clone_from(&self.orogeny_age);
+        self.prev.rift.clone_from(&self.rift_age);
+        self.prev.build.clone_from(&self.buildup);
+        self.prev.slab_plate.clone_from(&self.slab_plate);
+        self.prev.slab_since.clone_from(&self.slab_since_my);
+        self.prev.suture_at.clone_from(&self.suture_at_my);
 
         // Dense index for alive plates so candidates fit a u32 bitmask.
         let mut id_of_dense: Vec<u32> = Vec::new();
@@ -1792,6 +1872,224 @@ impl SimState {
             }
         }
         any_fragment
+    }
+
+    // ----- A2: boundary regularization (WO-0011 S1, anti-fray) -----
+
+    /// Strength-gated boundary regularization. `advect()` re-samples the
+    /// plate-id field across every inter-plate velocity discontinuity;
+    /// shear stretches the interleaved teeth into strips, and nothing
+    /// upstream resists it — the pipeline enforces connectedness, never
+    /// compactness (the WO-0011 "gerrymander" diagnosis). Physically a
+    /// plate boundary localizes on weak lithosphere; propagating one
+    /// through strong interior needs stress the driving forces do not
+    /// supply (Vauchez et al. 1997). So a re-sampling flip stands only
+    /// where the lithosphere can actually fail:
+    ///
+    /// * Candidates: cells whose owner changed this step. EXEMPT any cell
+    ///   whose PREVIOUS-step features carry a process-edge bit (divergent /
+    ///   convergent / transform) — real ridges, trenches and transforms are
+    ///   never straightened. One-step-old classes are the correct input by
+    ///   construction: `classify_boundaries()` runs after this pass, the
+    ///   same convention advect's `was_transform_only` uses. A consumption
+    ///   flip (`outs.subducted` set: a trench ate the cell under the
+    ///   per-pair polarity rule) also stands — that is a process edge whose
+    ///   slab segment is already banked in the ledger.
+    /// * Failure test (Dan's ruling: normal distribution): the flip keeps
+    ///   its new owner only when `strength(c) < STRENGTH_FAIL_MEAN + eps`,
+    ///   with `eps` a per-(cell, step) draw from N(0, STRENGTH_FAIL_SIGMA²)
+    ///   by deterministic hash over (master seed, cell id, step index).
+    /// * Geometry test: a flip that passes still reverts unless keeping it
+    ///   LOWERS the local strength-weighted boundary energy — E = Σ over
+    ///   the cell's inter-plate edges of (S(c) + S(nb))/2, new owner vs
+    ///   previous owner; a tie keeps the previous owner. Strong-interior
+    ///   teeth lose to the straight interface; weak young margins keep
+    ///   their irregularity.
+    /// * Craton floor: a cell in the craton strength regime (exactly the
+    ///   `strength()` branch) never transfers, except at an active trench
+    ///   consuming its plate. Transfers that survive the step anyway are
+    ///   counted in `craton_transfer_violations` (S3 arms it at zero).
+    ///
+    /// Serial, cell-id order, iterated to a fixed point with a pass cap of
+    /// 8 (seam-repair convention); reverts only ever un-do this step's
+    /// flips, so the candidate set strictly shrinks and the loop
+    /// terminates. `enforce_connectivity()` re-runs afterwards — reverts
+    /// can re-fragment a plate.
+    ///
+    /// Strength is evaluated once at pass entry on the post-advect fields
+    /// with the previous step's continental census (accumulate_boundary_
+    /// stats has not run yet) — the same one-step-old convention as the
+    /// exemptions. The eps hash keys on the absolute step index, so a run
+    /// resumed from a keyframe replays bit-for-bit.
+    fn regularize_boundaries(&mut self, master_seed: u64, step_idx: u32) {
+        let n = self.grid.cell_count() as usize;
+        let process_bits = F_BND_DIVERGENT | F_BND_CONVERGENT | F_BND_TRANSFORM;
+        let strength: Vec<f32> = (0..n).map(|c| self.strength(c)).collect();
+        let eps_base = {
+            let h = fnv1a(b"tectonics/regularize-eps");
+            let h = fnv1a_continue(h, &master_seed.to_le_bytes());
+            fnv1a_continue(h, &step_idx.to_le_bytes())
+        };
+        let grid = Arc::clone(&self.grid);
+
+        for _pass in 0..8 {
+            let mut reverted_any = false;
+            for c in 0..n {
+                let cur = self.plate_id[c];
+                let prevp = self.prev.plate[c];
+                if cur == prevp {
+                    continue;
+                }
+                if !self.plates[prevp as usize].alive {
+                    continue; // nothing left to revert to
+                }
+                if self.prev.features[c] & process_bits != 0 {
+                    continue; // real process edges are never straightened
+                }
+                let cont = self.crust_type[c] == 1;
+                let age_ref = if cont {
+                    self.crust_age[c].min(self.orogeny_age[c])
+                } else {
+                    self.crust_age[c]
+                };
+                let craton = cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY;
+                let revert = if craton {
+                    // Craton floor: revert unless an active trench is
+                    // consuming this cell's plate here.
+                    !self.trench_consuming_here(c)
+                } else if self.outs[c].subducted != NONE {
+                    false // consumption at a trench: the flip stands
+                } else {
+                    let h = fnv1a_continue(eps_base, &(c as u32).to_le_bytes());
+                    let eps = STRENGTH_FAIL_SIGMA * normal_from_hash(h);
+                    if strength[c] >= STRENGTH_FAIL_MEAN + eps {
+                        true // too strong to fail: the boundary stays put
+                    } else {
+                        // Geometry: lower boundary energy wins; a tie
+                        // keeps the previous owner. f64 in fixed order.
+                        let mut e_new = 0.0f64;
+                        let mut e_prev = 0.0f64;
+                        for &nb in grid.neighbors_of(c as u32) {
+                            let q = self.plate_id[nb as usize];
+                            let half =
+                                0.5 * (strength[c] as f64 + strength[nb as usize] as f64);
+                            if q != cur {
+                                e_new += half;
+                            }
+                            if q != prevp {
+                                e_prev += half;
+                            }
+                        }
+                        e_prev <= e_new
+                    }
+                };
+                if revert {
+                    self.revert_flip(c);
+                    reverted_any = true;
+                }
+            }
+            if !reverted_any {
+                break;
+            }
+        }
+
+        // Reverts can re-fragment a plate; restore the §7 invariant.
+        self.enforce_connectivity();
+
+        // A plate whose only cells this step were reverted-away flips can
+        // end empty; retire it like advect does.
+        for pid in 0..self.plates.len() {
+            if self.plates[pid].alive && self.plate_cells[pid] == 0 {
+                self.plates[pid].alive = false;
+                self.collisions
+                    .retain(|t| t.a != pid as u32 && t.b != pid as u32);
+                log::debug!("t={} My: plate {pid} emptied by regularization", self.t_my);
+            }
+        }
+
+        // Craton-floor instrumentation: transfers that survived anyway
+        // (connectivity reassignment, dead previous owner, ...).
+        for c in 0..n {
+            let prevp = self.prev.plate[c];
+            if self.plate_id[c] == prevp {
+                continue;
+            }
+            let cont = self.crust_type[c] == 1;
+            let age_ref = if cont {
+                self.crust_age[c].min(self.orogeny_age[c])
+            } else {
+                self.crust_age[c]
+            };
+            if cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY && !self.trench_consuming_here(c) {
+                self.craton_transfer_violations += 1;
+            }
+        }
+    }
+
+    /// Is this changed cell at an active trench consuming its previous
+    /// plate (the per-pair polarity rule in advect)? True when the cell
+    /// itself records the consumption, or a ring neighbor consumed the same
+    /// plate for the same winner this step (the terrane-docking path keeps
+    /// the cell's column, so the trench evidence sits on the ring).
+    fn trench_consuming_here(&self, c: usize) -> bool {
+        let prevp = self.prev.plate[c];
+        let cur = self.plate_id[c];
+        if self.outs[c].subducted == prevp {
+            return true;
+        }
+        self.grid.neighbors_of(c as u32).iter().any(|&nb| {
+            let o = &self.outs[nb as usize];
+            o.subducted == prevp && o.plate == cur
+        })
+    }
+
+    /// Un-do one of this step's ownership flips: the boundary did not move
+    /// here, so the cell keeps its previous owner and its previous column
+    /// (the advect-revert convention — features cleared; classification
+    /// re-derives them after this pass). Mirrors and un-books the scatter
+    /// pass's inventory and underthrust entries for this cell so the
+    /// ledger stays truthful and nothing double-deposits.
+    fn revert_flip(&mut self, c: usize) {
+        let cur = self.plate_id[c] as usize;
+        let prevp = self.prev.plate[c];
+        // Un-book the underthrust capture exactly where advect booked it
+        // (same condition, same pair, same quantized column).
+        let outp = self.outs[c].plate;
+        if self.prev.ctype[c] == 1 && outp != prevp {
+            let prev_q = (self.prev.thick[c] * 100.0).round() as i64;
+            let (a, b) = (prevp.min(outp), prevp.max(outp));
+            if prev_q > 0 && self.collisions.iter().any(|t| t.a == a && t.b == b) {
+                self.underthrust_removed_q -= prev_q;
+                if let Some(e) = self
+                    .underthrust_budget
+                    .iter_mut()
+                    .find(|e| e.0 == a && e.1 == b)
+                {
+                    e.2 -= prev_q;
+                }
+            }
+        }
+        // Reverse the scatter's inventory flow for this cell.
+        match (self.prev.ctype[c], self.crust_type[c]) {
+            (1, 0) if self.features[c] & F_RIDGE != 0 => self.cont_lost_to_ridge_gap -= 1,
+            (1, 0) => self.cont_lost_to_consumption -= 1,
+            (0, 1) => self.cont_gained_by_advection -= 1,
+            _ => {}
+        }
+        self.plate_cells[cur] -= 1;
+        self.plate_cells[prevp as usize] += 1;
+        self.plate_id[c] = prevp;
+        self.crust_type[c] = self.prev.ctype[c];
+        self.crust_age[c] = self.prev.age[c];
+        self.thickness[c] = self.prev.thick[c];
+        self.orogeny_age[c] = self.prev.orog[c];
+        self.rift_age[c] = self.prev.rift[c];
+        self.buildup[c] = self.prev.build[c];
+        self.features[c] = 0;
+        self.slab_plate[c] = self.prev.slab_plate[c];
+        self.slab_since_my[c] = self.prev.slab_since[c];
+        self.suture_at_my[c] = self.prev.suture_at[c];
+        self.regularize_reverted += 1;
     }
 
     // ----- B: boundary classification -----
