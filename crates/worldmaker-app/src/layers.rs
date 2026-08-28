@@ -276,6 +276,14 @@ const ARROW_WHITE: [f32; 3] = rgb(255, 255, 255);
 /// Continent flag in the category word (bit 16, frozen in d3a §2.2).
 pub const CAT_CONTINENT: u32 = 1 << 16;
 
+/// The terrain stage's per-cell overrides (WO-0009 S2): when the viewed
+/// era has an eroded terrain computed, Elevation shades the post-erosion
+/// surface and Lithology shows the deposition-stamped classes.
+pub struct TerrainView<'a> {
+    pub elev_m: &'a [f32],
+    pub lithology: &'a [u8],
+}
+
 /// Bake one keyframe into per-cell shading records for the active layer
 /// (d3a §2.2). Per cell: `x` = f32 scalar bits, `y` = category word.
 ///
@@ -289,8 +297,17 @@ pub const CAT_CONTINENT: u32 = 1 << 16;
 ///
 /// No sea level (GPU uniform), no overlay (separate buffer), no colors
 /// (GPU LUT).
-pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
+/// The terrain override (WO-0009 S2): when given, the Elevation scalar
+/// comes from the eroded surface and the Lithology class from the
+/// deposition-stamped field; every other layer is untouched.
+pub fn bake_values_with(
+    layer: Layer,
+    kf: &Keyframe,
+    terrain: Option<TerrainView>,
+) -> Vec<[u32; 2]> {
     let n = kf.elev_m.len();
+    let terrain = terrain.filter(|t| t.elev_m.len() == n && t.lithology.len() == n);
+    let terrain = &terrain;
 
     let mut out: Vec<[u32; 2]> = Vec::with_capacity(n);
     (0..n)
@@ -299,9 +316,11 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
             let flags = kf.flags[c] as u32;
             let continent = flags & (1 << 15) != 0;
             let scalar = match layer {
-                Layer::Elevation | Layer::Plates | Layer::PlateVelocity | Layer::VelocityField => {
-                    kf.elev_m[c] as f32
-                }
+                Layer::Elevation => match terrain {
+                    Some(t) => t.elev_m[c],
+                    None => kf.elev_m[c] as f32,
+                },
+                Layer::Plates | Layer::PlateVelocity | Layer::VelocityField => kf.elev_m[c] as f32,
                 Layer::CrustAge => {
                     if continent {
                         0.0
@@ -337,7 +356,11 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
             if layer == Layer::Lithology {
                 // Bits 0..=7: the GLiM class — the shader's layer-5 branch
                 // reads it as the LUT row 6 texel index.
-                cat |= (kf.lithology[c] as u32) & 0xFF;
+                let class = match terrain {
+                    Some(t) => t.lithology[c],
+                    None => kf.lithology[c],
+                };
+                cat |= (class as u32) & 0xFF;
             }
             if layer == Layer::Overlay && kf.slab_plate[c] != SLAB_NONE {
                 // Bits 20..=27: the slab plate's color index (same stable

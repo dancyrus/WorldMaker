@@ -79,6 +79,18 @@ fn elev_frac(e_m: f32) -> f32 {
 
 /// Build the legend for one layer over the viewed keyframe.
 pub fn legend_spec(layer: Layer, kf: &Keyframe, sea_level_m: f32) -> LegendSpec {
+    legend_spec_with(layer, kf, sea_level_m, None)
+}
+
+/// [`legend_spec`] with an optional displayed-lithology override
+/// (WO-0009 S2): when the terrain view is on, the Lithology legend counts
+/// the deposition-stamped classes actually on screen (`su` included).
+pub fn legend_spec_with(
+    layer: Layer,
+    kf: &Keyframe,
+    sea_level_m: f32,
+    lith_override: Option<&[u8]>,
+) -> LegendSpec {
     match layer {
         Layer::Elevation => {
             // The bar is labeled in keyframe-relative meters; each sample is
@@ -211,11 +223,12 @@ pub fn legend_spec(layer: Layer, kf: &Keyframe, sea_level_m: f32) -> LegendSpec 
             }
         }
         Layer::Lithology => {
-            // Only the classes actually present in the viewed keyframe
+            // Only the classes actually present in the displayed field
             // (WO-0009 S2 step 3), largest area first, id tie-break.
-            let n = kf.lithology.len().max(1);
+            let lith = lith_override.unwrap_or(&kf.lithology);
+            let n = lith.len().max(1);
             let mut counts = [0usize; lithology::CLASS_COUNT];
-            for &l in &kf.lithology {
+            for &l in lith {
                 counts[(l as usize).min(lithology::CLASS_COUNT - 1)] += 1;
             }
             let mut present: Vec<(usize, usize)> = counts

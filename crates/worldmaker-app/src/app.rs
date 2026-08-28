@@ -141,6 +141,12 @@ pub struct Script {
     /// at 1440 px width, timeline mid-scrub, showing every control in the
     /// top bar and no bottom panel. Seed and preset come from the CLI.
     pub wo9_dir: Option<PathBuf>,
+    /// `--wo9-s2-shots`: the WO-0009 S2 terrain set — the final era's
+    /// Elevation layer before (`before-erosion.png`) and after
+    /// (`after-erosion.png`) the terrain stage, plus the Lithology layer
+    /// with its legend (`lithology.png`). Split view, Eckert IV; seed and
+    /// preset come from the CLI.
+    pub wo9_s2_dir: Option<PathBuf>,
     /// `--wo10-shot`: the WO-0010 proof shot — `startup.png` in this
     /// directory, capturing the untouched interactive startup state
     /// (Draft, Flat, Eckert IV) once the first world lands. Deliberately
@@ -192,6 +198,7 @@ impl Script {
             || self.wo8_dir.is_some()
             || self.wo8_s2_dir.is_some()
             || self.wo9_dir.is_some()
+            || self.wo9_s2_dir.is_some()
             || self.wo11_dir.is_some()
             || self.perf_out.is_some()
     }
@@ -262,6 +269,12 @@ enum ScriptState {
         frames: u32,
         requested: bool,
     },
+    /// WO-0009 S2 terrain before/after set (step 8).
+    Wo9S2Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+    },
     /// WO-0010 proof shot (step 6): the untouched interactive startup.
     Wo10Shot {
         frames: u32,
@@ -305,6 +318,21 @@ struct SimJob {
     started: Instant,
 }
 
+/// A finished terrain-stage run (WO-0009 S2): the eroded view of one
+/// pinned era, keyed by the terrain params hash so slider or era changes
+/// recompute exactly when the stage's own cache key moves.
+struct TerrainSlot {
+    out: Arc<worldmaker_sim::terrain::TerrainOutput>,
+    kf_index: usize,
+    key: u64,
+}
+
+/// A terrain run in flight on a worker thread.
+struct TerrainJob {
+    rx: mpsc::Receiver<(Arc<worldmaker_sim::terrain::TerrainOutput>, usize)>,
+    key: u64,
+}
+
 pub struct WorldApp {
     // World state.
     grid: Arc<Grid>,
@@ -335,6 +363,14 @@ pub struct WorldApp {
     hotspot_count: u32,
     craton_paint: BTreeMap<u32, i8>,
     hotspot_overlay: Option<Vec<[f32; 3]>>,
+
+    // Terrain stage (WO-0009 S2): morphologic time, the erosion toggle,
+    // the cached eroded view of the pinned era, and the worker computing
+    // the next one.
+    morpho_my: f32,
+    show_terrain: bool,
+    terrain: Option<TerrainSlot>,
+    terrain_job: Option<TerrainJob>,
 
     // Era picker.
     viewing_kf: usize,
@@ -531,6 +567,10 @@ impl WorldApp {
             hotspot_count: 6,
             craton_paint: BTreeMap::new(),
             hotspot_overlay: None,
+            morpho_my: 30.0,
+            show_terrain: true,
+            terrain: None,
+            terrain_job: None,
             viewing_kf: 0,
             present_kf: 0,
             playing: false,
@@ -617,6 +657,12 @@ impl WorldApp {
                 }
             } else if script.wo9_dir.is_some() {
                 ScriptState::Wo9Shot {
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo9_s2_dir.is_some() {
+                ScriptState::Wo9S2Shot {
+                    stage: 0,
                     frames: 0,
                     requested: false,
                 }
@@ -717,6 +763,10 @@ impl WorldApp {
         self.history = None;
         self.world_state = None;
         self.playing = false;
+        // The old world's eroded view is meaningless for the next one; a
+        // terrain worker in flight is orphaned (its send just fails).
+        self.terrain = None;
+        self.terrain_job = None;
         let (tx, rx) = mpsc::channel();
         let progress = Arc::new(Progress::new());
         let worker_progress = progress.clone();
@@ -787,6 +837,81 @@ impl WorldApp {
         }
     }
 
+    /// The terrain stage's cache key for the CURRENT pinned era and
+    /// morphologic time: exactly the stage's own params hash (WO-0009 S2
+    /// step 5 — the World-panel slider participates in it), folded with
+    /// the master seed the stage would receive.
+    fn terrain_key(&self) -> u64 {
+        let stage = worldmaker_sim::TerrainStage::new(worldmaker_sim::TerrainParams {
+            morpho_my: self.morpho_my,
+            era_index: Some(self.present_kf as u32),
+        });
+        use worldmaker_sim::Stage as _;
+        stage.params_hash() ^ self.master_seed
+    }
+
+    /// Kick a terrain worker when the eroded view is stale (WO-0009 S2):
+    /// a new world landed, the pinned era moved, or the morphologic-time
+    /// slider changed. One worker at a time — a stale finish re-triggers.
+    fn maybe_start_terrain(&mut self) {
+        if !self.show_terrain || self.job.is_some() || self.terrain_job.is_some() {
+            return;
+        }
+        let Some(history) = &self.history else { return };
+        let key = self.terrain_key();
+        if self.terrain.as_ref().is_some_and(|t| t.key == key) {
+            return;
+        }
+        let kf_index = self.present_kf.min(history.keyframes.len() - 1);
+        let kf = history.keyframes[kf_index].clone();
+        let grid = self.grid.clone();
+        let seed = self.master_seed;
+        let morpho = self.morpho_my;
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let t0 = Instant::now();
+            let out = worldmaker_sim::terrain::run_terrain(&grid, &kf, seed, morpho);
+            log::info!(
+                "terrain run finished in {:.2} s (era {kf_index}, {morpho} My)",
+                t0.elapsed().as_secs_f64()
+            );
+            let _ = tx.send((Arc::new(out), kf_index));
+        });
+        self.terrain_job = Some(TerrainJob { rx, key });
+    }
+
+    /// Install a finished terrain run.
+    fn poll_terrain_job(&mut self) {
+        let Some(job) = &self.terrain_job else { return };
+        match job.rx.try_recv() {
+            Ok((out, kf_index)) => {
+                self.terrain = Some(TerrainSlot {
+                    out,
+                    kf_index,
+                    key: job.key,
+                });
+                self.terrain_job = None;
+                self.needs_bake = true;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                log::error!("terrain worker vanished without a result");
+                self.terrain_job = None;
+            }
+        }
+    }
+
+    /// The terrain override to display for the viewed keyframe, if the
+    /// eroded view is on, computed, and describes exactly this era.
+    fn terrain_for_view(&self) -> Option<&TerrainSlot> {
+        if !self.show_terrain {
+            return None;
+        }
+        self.terrain
+            .as_ref()
+            .filter(|t| t.kf_index == self.viewing_kf && t.key == self.terrain_key())
+    }
+
     /// Pin a keyframe as "the present": decode it into the world fields so
     /// downstream stages and exports read that moment.
     fn set_present(&mut self, kf_index: usize) {
@@ -811,9 +936,18 @@ impl WorldApp {
         // right-sized placeholder bundle first (judgement A4).
         let mut new_legend = None;
         let display_sea = self.display_sea_level_m();
+        // Terrain override (WO-0009 S2): when the viewed era's eroded view
+        // is on and current, Elevation shades the post-erosion surface and
+        // Lithology the deposition-stamped classes (legend included).
+        let terrain = self.terrain_for_view().map(|t| t.out.clone());
         let (values, boundaries) = if let Some(history) = &self.history {
             let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
-            new_legend = Some(legend::legend_spec(self.layer, kf, display_sea));
+            new_legend = Some(legend::legend_spec_with(
+                self.layer,
+                kf,
+                display_sea,
+                terrain.as_ref().map(|t| &t.lithology[..]),
+            ));
             self.values_gen += 1;
             // Smoothed boundary polylines are Plates-layer styling (d3a §8):
             // extracted from this keyframe's plate assignment there and on
@@ -847,7 +981,14 @@ impl WorldApp {
             } else {
                 Arc::new(BoundarySet::empty())
             };
-            (Arc::new(layers::bake_values(self.layer, kf)), boundaries)
+            let tv = terrain.as_ref().map(|t| layers::TerrainView {
+                elev_m: &t.elev_m,
+                lithology: &t.lithology,
+            });
+            (
+                Arc::new(layers::bake_values_with(self.layer, kf, tv)),
+                boundaries,
+            )
         } else {
             (self.bundle.values.clone(), self.bundle.boundaries.clone())
         };
@@ -1495,6 +1636,24 @@ impl WorldApp {
                 ui.add(
                     egui::Slider::new(&mut self.hotspot_count, 0..=12).text("Hotspots"),
                 );
+                // Morphologic time (WO-0009 S2 step 5): how long the rain
+                // works on the pinned era. Participates in the terrain
+                // stage's params hash (terrain_key), so a change re-runs
+                // the stage off-thread; no history re-run.
+                ui.add(
+                    egui::Slider::new(&mut self.morpho_my, 5.0..=100.0)
+                        .text("Morphologic time")
+                        .suffix(" My")
+                        .step_by(5.0),
+                );
+                ui.horizontal(|ui| {
+                    if ui.checkbox(&mut self.show_terrain, "Erosion").changed() {
+                        self.needs_bake = true;
+                    }
+                    if self.terrain_job.is_some() {
+                        ui.weak("eroding…");
+                    }
+                });
                 if ui
                     .add_enabled(self.job.is_none(), egui::Button::new("Regenerate"))
                     .clicked()
@@ -1715,6 +1874,7 @@ impl WorldApp {
             ScriptState::Wo7Shot { .. } => self.drive_wo7(ctx),
             ScriptState::Wo8Shot { .. } => self.drive_wo8(ctx),
             ScriptState::Wo9Shot { .. } => self.drive_wo9(ctx),
+            ScriptState::Wo9S2Shot { .. } => self.drive_wo9_s2(ctx),
             ScriptState::Wo10Shot { .. } => self.drive_wo10(ctx),
             ScriptState::Wo11Shot { .. } => self.drive_wo11(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
@@ -1883,6 +2043,78 @@ impl WorldApp {
             };
         } else {
             self.script_state = ScriptState::Wo6Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0009 S2 terrain set (step 8): the final era's Elevation layer
+    /// before and after the terrain stage at matched seed, plus the
+    /// Lithology layer with its legend. Split view, Eckert IV; the after
+    /// and lithology stages wait for the terrain worker before capturing.
+    fn drive_wo9_s2(&mut self, ctx: &egui::Context) {
+        const SHOTS: [(&str, bool, Layer); 3] = [
+            ("before-erosion", false, Layer::Elevation),
+            ("after-erosion", true, Layer::Elevation),
+            ("lithology", true, Layer::Lithology),
+        ];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo9S2Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        let (name, terrain_on, layer) = SHOTS[stage];
+        if frames == 1 {
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            self.view_mode = ViewMode::Split;
+            self.projection = Projection::EckertIv;
+            self.viewing_kf = self.present_kf;
+            self.layer = layer;
+            self.show_terrain = terrain_on;
+            self.needs_bake = true;
+            log::info!("wo9-s2 screenshot stage {stage}: {name}");
+        }
+        // The terrain stages capture only once the eroded view is actually
+        // displayed: maybe_start_terrain computes it off-thread and its
+        // arrival rebakes, so waiting on terrain_for_view is sufficient.
+        let terrain_ready = !terrain_on || self.terrain_for_view().is_some();
+        if frames >= 45 && terrain_ready && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo9_s2_dir.clone().unwrap();
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo9S2Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo9S2Shot {
                 stage,
                 frames,
                 requested,
@@ -2720,6 +2952,8 @@ impl eframe::App for WorldApp {
         self.frame_times.push(dt.max(1e-6));
 
         self.poll_job();
+        self.poll_terrain_job();
+        self.maybe_start_terrain();
         self.drive_script(ctx);
 
         // Cmd/Ctrl+Z: cancel the live stroke first, else pop the newest
