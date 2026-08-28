@@ -48,7 +48,7 @@ impl Preset {
         Preset::High8,
         Preset::Ultra9,
     ];
-    fn level(self) -> u32 {
+    pub fn level(self) -> u32 {
         match self {
             Preset::Draft6 => 6,
             Preset::Standard7 => 7,
@@ -118,6 +118,11 @@ pub struct Script {
     /// velocity-1000; Split view, Eckert IV) into this directory. The run
     /// forces a 2 Gy span; seed and preset come from the CLI.
     pub wo6_dir: Option<PathBuf>,
+    /// `--wo7-shots`: the WO-0007 sea-level/legend documentation set
+    /// (elevation-sea0, elevation-sea-4000, plates-legend, overlay-legend;
+    /// default Split view) into this directory. Seed and preset come from
+    /// the CLI (the WO pins seed cyrus, Draft6).
+    pub wo7_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -171,6 +176,12 @@ enum ScriptState {
     },
     /// WO-0006 S3 screenshot set (step 6).
     Wo6Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0007 sea-level/legend screenshot set (step 8).
+    Wo7Shot {
         stage: usize,
         frames: u32,
         requested: bool,
@@ -460,6 +471,12 @@ impl WorldApp {
                 }
             } else if script.wo6_dir.is_some() {
                 ScriptState::Wo6Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo7_dir.is_some() {
+                ScriptState::Wo7Shot {
                     stage: 0,
                     frames: 0,
                     requested: false,
@@ -1427,6 +1444,7 @@ impl WorldApp {
             ScriptState::Shot { .. } => self.drive_shot(ctx),
             ScriptState::Wo4Shot { .. } => self.drive_wo4(ctx),
             ScriptState::Wo6Shot { .. } => self.drive_wo6(ctx),
+            ScriptState::Wo7Shot { .. } => self.drive_wo7(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -1593,6 +1611,74 @@ impl WorldApp {
             };
         } else {
             self.script_state = ScriptState::Wo6Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0007 screenshot set: Elevation at sea level 0 and −4000 m (the
+    /// step-2 diagnosis pair, reused for the legend shots), then the Plates
+    /// and Overlay legends. Default Split view / equirectangular; seed and
+    /// preset come from the CLI (the WO pins seed cyrus, Draft6).
+    fn drive_wo7(&mut self, ctx: &egui::Context) {
+        const SHOTS: [(&str, f32, Layer); 4] = [
+            ("elevation-sea0", 0.0, Layer::Elevation),
+            ("elevation-sea-4000", -4000.0, Layer::Elevation),
+            ("plates-legend", 0.0, Layer::Plates),
+            ("overlay-legend", 0.0, Layer::Overlay),
+        ];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo7Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            let (name, sea_m, layer) = SHOTS[stage];
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            self.sea_level_m = sea_m;
+            self.layer = layer;
+            self.needs_bake = true;
+            log::info!("wo7 screenshot stage {stage}: {name}");
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo7_dir.clone().unwrap();
+            let name = SHOTS[stage].0;
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo7Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo7Shot {
                 stage,
                 frames,
                 requested,

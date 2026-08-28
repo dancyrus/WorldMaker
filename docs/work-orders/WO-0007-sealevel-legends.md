@@ -25,6 +25,21 @@ STEPS.
 9. Commit, push, PR titled `WO-0007: sea-level fix and legends`. Merge when CI is green. Delete the branch.
 10. Report to Dan in plain language: which case step 2 found, the band populations if 2.2, and the four screenshots.
 
+STEP-2 VERDICT (2026-08-28, case 2.2). The rendering is correct: the sea-level
+uniform is live (packed in `shade_params()` every frame, uploaded in both
+canvases' `prepare`), and the two diagnosis screenshots differ — land pixels
+grow ~9.6% → ~13.3% of the map going from 0 to −4000 m, with mid-ocean ridges
+emerging and continents shifting up the ramp. The world's hypsometry is the
+cause: the hypsometric curve of the final keyframe (seed cyrus, L6, 500 My;
+full table in docs/results/wo-0007-hypsometry-cyrus-l6.json,
+Daniels-MacBook-Air) puts 41.1% of all cells in the single −6000..−5500 m
+band (the abyssal plain), while the whole span −4000..−500 m holds only ~6.3%
+of cells. Land fraction vs sea level: 0 m → 26.6%, −2000 m → 30.2%,
+−4000 m → 36.1%, −6000 m → 97.1%. The old slider floor of −4000 m sits above
+essentially all of the ocean floor, so dragging it down exposed almost
+nothing — evidence for the continental-area item in the WO-0006 S3 open
+questions. No sim change made.
+
 DONE WHEN. PR merged; the step-2 verdict is recorded in this file; legends render for all seven layers; screenshots committed; workspace tests green.
 
 FINAL LINE. After the report, print this block exactly, as the last output of the session. Print it only when every DONE WHEN condition holds. If the session stops early for any reason, print `NOT DONE` and the reason instead.

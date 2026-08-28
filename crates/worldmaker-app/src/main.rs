@@ -26,9 +26,11 @@ struct Args {
     screenshots_dir: Option<PathBuf>,
     wo4_dir: Option<PathBuf>,
     wo6_dir: Option<PathBuf>,
+    wo7_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
     tectonics_out: Option<PathBuf>,
+    hypsometry_out: Option<PathBuf>,
     seed: Option<String>,
     preset: Option<app::Preset>,
     detail: Option<f32>,
@@ -41,9 +43,11 @@ fn parse_args() -> Args {
         screenshots_dir: None,
         wo4_dir: None,
         wo6_dir: None,
+        wo7_dir: None,
         perf_out: None,
         determinism_out: None,
         tectonics_out: None,
+        hypsometry_out: None,
         seed: None,
         preset: None,
         detail: None,
@@ -60,12 +64,20 @@ fn parse_args() -> Args {
             // WO-0006 plate-physics documentation shots (plates-0500/1000/
             // 2000, elevation-2000, overlay-1000, velocity-1000).
             "--wo6-shots" => out.wo6_dir = take_value(&a, args.next()).map(PathBuf::from),
+            // WO-0007 sea-level/legend shots (elevation-sea0,
+            // elevation-sea-4000, plates-legend, overlay-legend).
+            "--wo7-shots" => out.wo7_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--perf-out" => out.perf_out = take_value(&a, args.next()).map(PathBuf::from),
             "--determinism-out" => {
                 out.determinism_out = take_value(&a, args.next()).map(PathBuf::from)
             }
             "--tectonics-results" => {
                 out.tectonics_out = take_value(&a, args.next()).map(PathBuf::from)
+            }
+            // WO-0007 step 2.2: headless hypsometric band populations of the
+            // final keyframe (uses --seed and --preset for world flags).
+            "--hypsometry-out" => {
+                out.hypsometry_out = take_value(&a, args.next()).map(PathBuf::from)
             }
             // World flags (d3a §10.2). --seed is hashed later by the exact
             // seed-box path (seed_from_text), keeping script/UI parity.
@@ -237,6 +249,76 @@ fn run_determinism_harness(out: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// WO-0007 step 2.2: hypsometric band populations of the final keyframe for
+/// a given seed/level — the evidence for the sea-level-slider diagnosis.
+/// Headless, no window; bands are 500 m wide over the keyframe-relative
+/// elevations, fractions of all cells. Serial loops, id order (determinism
+/// rule: no parallel float reductions).
+fn run_hypsometry_harness(
+    out: &std::path::Path,
+    seed_text: &str,
+    level: u32,
+) -> anyhow::Result<()> {
+    use worldmaker_sim::tectonics::{TectonicsParams, TectonicsStage};
+    let seed = worldmaker_core::hash::seed_from_text(seed_text);
+    let grid = Arc::new(Grid::build(level));
+    let n = grid.cell_count() as usize;
+    let mut world = WorldState::new(grid);
+    let mut pipe = Pipeline::new();
+    pipe.push(Box::new(TectonicsStage::new(TectonicsParams::default())));
+    pipe.run(&StageContext::new(seed), &mut world)?;
+    let history = world.history.as_ref().unwrap();
+    let kf = history.keyframes.last().unwrap();
+
+    let mut metrics = serde_json::Map::new();
+    metrics.insert("seed_text".into(), serde_json::json!(seed_text));
+    metrics.insert("seed".into(), serde_json::json!(format!("{seed:#018x}")));
+    metrics.insert("grid_level".into(), serde_json::json!(level));
+    metrics.insert("keyframe_t_my".into(), serde_json::json!(kf.t_my));
+    metrics.insert("cell_count".into(), serde_json::json!(n));
+
+    // 500 m bands over the observed range, keyframe-relative meters.
+    let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+    for &e in &kf.elev_m {
+        lo = lo.min(e as i32);
+        hi = hi.max(e as i32);
+    }
+    let first_band = (lo as f32 / 500.0).floor() as i32;
+    let last_band = (hi as f32 / 500.0).floor() as i32;
+    let mut bands = Vec::new();
+    for band in first_band..=last_band {
+        let (b_lo, b_hi) = (band * 500, band * 500 + 500);
+        let count = kf
+            .elev_m
+            .iter()
+            .filter(|&&e| (e as i32) >= b_lo && (e as i32) < b_hi)
+            .count();
+        if count == 0 {
+            continue;
+        }
+        bands.push(serde_json::json!({
+            "band_m": format!("{b_lo}..{b_hi}"),
+            "cells": count,
+            "frac": (count as f64 / n as f64 * 100_000.0).round() / 100_000.0,
+        }));
+    }
+    metrics.insert("hypsometry_bands_500m".into(), serde_json::Value::Array(bands));
+    for sea in [0i32, -2000, -4000, -6000] {
+        let land = kf.elev_m.iter().filter(|&&e| (e as i32) >= sea).count();
+        metrics.insert(
+            format!("land_frac_at_sea_{sea}m"),
+            serde_json::json!((land as f64 / n as f64 * 10_000.0).round() / 10_000.0),
+        );
+    }
+    let file = worldmaker_io::ResultsFile::new(
+        &worldmaker_io::results::today_utc_iso(),
+        serde_json::Value::Object(metrics),
+    );
+    file.write(out)?;
+    log::info!("hypsometry results written to {}", out.display());
+    Ok(())
+}
+
 fn main() {
     init_logging();
     let args = parse_args();
@@ -253,11 +335,20 @@ fn main() {
             std::process::exit(1);
         }
     }
+    if let Some(hyps_out) = &args.hypsometry_out {
+        let seed_text = args.seed.clone().unwrap_or_else(|| "cyrus".to_string());
+        let level = args.preset.map(app::Preset::level).unwrap_or(6);
+        if let Err(e) = run_hypsometry_harness(hyps_out, &seed_text, level) {
+            log::error!("hypsometry harness failed: {e:#}");
+            std::process::exit(1);
+        }
+    }
     // Headless-only invocation: done without opening a window.
-    if (args.determinism_out.is_some() || args.tectonics_out.is_some())
+    if (args.determinism_out.is_some() || args.tectonics_out.is_some() || args.hypsometry_out.is_some())
         && args.perf_out.is_none()
         && args.screenshots_dir.is_none()
         && args.wo4_dir.is_none()
+        && args.wo7_dir.is_none()
     {
         return;
     }
@@ -284,6 +375,7 @@ fn main() {
         screenshots_dir: args.screenshots_dir,
         wo4_dir: args.wo4_dir,
         wo6_dir: args.wo6_dir,
+        wo7_dir: args.wo7_dir,
         perf_out: args.perf_out,
         grid_build_ms,
         seed: args.seed,
