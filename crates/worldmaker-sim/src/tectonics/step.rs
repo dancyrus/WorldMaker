@@ -509,6 +509,13 @@ pub struct SimState {
     /// accumulate_boundary_stats (the amendment-B insulation input).
     cont_cells_per_plate: Vec<u32>,
     cont_total_cells: u32,
+    /// crust_type as of the census above. The weld bookkeeping moves census
+    /// entries between plates when it transfers cells, so it must decide
+    /// "continental" by the same snapshot the census counted: arcs,
+    /// collision forelands, spreading shelf-loading and relic-basin closure
+    /// all flip cells continental between the census and the weld pass, and
+    /// keying the move on live crust_type underflows the loser's count.
+    census_crust: Vec<u32>,
     /// Rift tip advance budget per step, from RIFT_PROP_KM_MY at this level.
     rift_prop_cells: u32,
 
@@ -648,6 +655,7 @@ impl SimState {
             plate_cells: Vec::new(),
             cont_cells_per_plate: Vec::new(),
             cont_total_cells: 0,
+            census_crust: Vec::new(),
             rift_prop_cells: ((RIFT_PROP_KM_MY * DT_MY / cell_spacing_km).round() as u32).max(1),
             cand_mask: (0..n).map(|_| AtomicU64::new(0)).collect(),
             direct_mask: (0..n).map(|_| AtomicU64::new(0)).collect(),
@@ -2539,6 +2547,7 @@ impl SimState {
         self.transform_cells = vec![0; np];
         self.torques = vec![[0.0; 3]; np];
         // Continental census first: strength()'s insulation factor reads it.
+        self.census_crust.clone_from(&self.crust_type);
         self.cont_cells_per_plate = vec![0; np];
         self.cont_total_cells = 0;
         for (c, &p) in self.plate_id.iter().enumerate() {
@@ -3302,7 +3311,10 @@ impl SimState {
                 self.plate_id[cu] = winner;
                 self.plate_cells[lu] -= 1;
                 self.plate_cells[wu] += 1;
-                if self.crust_type[cu] == 1 {
+                // Census entries move with counted cells only: a cell that
+                // turned continental after this step's census has no entry
+                // to move (the refresh picks it up next step).
+                if self.census_crust[cu] == 1 {
                     self.cont_cells_per_plate[lu] -= 1;
                     self.cont_cells_per_plate[wu] += 1;
                 }
@@ -3421,7 +3433,8 @@ impl SimState {
                 self.plate_id[cu] = winner;
                 self.plate_cells[lu] -= 1;
                 self.plate_cells[wu] += 1;
-                if self.crust_type[cu] == 1 {
+                // Same snapshot rule as advance_weld_fronts' transfer.
+                if self.census_crust[cu] == 1 {
                     self.cont_cells_per_plate[lu] -= 1;
                     self.cont_cells_per_plate[wu] += 1;
                 }
@@ -4968,6 +4981,73 @@ mod tests {
         assert!(
             scarred_late > scarred,
             "the scar must advance with the front ({scarred_late} late cells)"
+        );
+    }
+
+    /// Regression (2026-08-28): a cell that turns continental AFTER the
+    /// step's census — arcs, collision forelands, spreading shelf-loading
+    /// and relic-basin closure all run between accumulate_boundary_stats
+    /// and advance_weld_fronts — has no census entry, so the weld transfer
+    /// must not move one. Keying the move on live crust_type instead of
+    /// the census snapshot underflowed the loser's u32 count whenever its
+    /// census read 0 (observed at seed box "dan", t = 280 My: one foreland
+    /// conversion inside the transfer band; debug builds panicked, release
+    /// builds wrapped).
+    #[test]
+    fn weld_transfer_of_post_census_continent_keeps_census_sound() {
+        let grid = Arc::new(Grid::build(3));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.0));
+        s.plates.push(test_plate(1, 0.0));
+        // All-ocean two-plate world (loser 1 owns z >= 0): both census
+        // counts are 0 — the underflow geometry.
+        for c in 0..n {
+            s.plate_id[c] = u32::from(grid.positions[c][2] >= 0.0);
+        }
+        s.t_my = 500.0;
+        s.init_stats();
+        assert_eq!(s.cont_cells_per_plate, vec![0, 0]);
+        let on_rim = |s: &SimState, c: u32| {
+            let p = s.plate_id[c as usize];
+            s.grid
+                .neighbors_of(c)
+                .iter()
+                .any(|&nb| s.plate_id[nb as usize] != p)
+        };
+        // Scar the winner side of the whole interface and install the weld
+        // at maturity, as update_pair_timers_and_sutures would.
+        for c in 0..n as u32 {
+            if s.plate_id[c as usize] == 0 && on_rim(&s, c) {
+                s.suture_at_my[c as usize] = s.t_my;
+            }
+        }
+        s.welds.push(Weld {
+            winner: 0,
+            loser: 1,
+            fired_my: s.t_my,
+            front_km: 0.0,
+            layers_done: 0,
+        });
+        // One loser-side contact cell converts post-census (a foreland:
+        // full continental column at platform age).
+        let conv = (0..n as u32)
+            .find(|&c| s.plate_id[c as usize] == 1 && on_rim(&s, c))
+            .unwrap();
+        s.crust_type[conv as usize] = 1;
+        s.thickness[conv as usize] = 30.0;
+        s.crust_age[conv as usize] = 300.0;
+        // Must not underflow (debug builds check), and must not move a
+        // census entry the census never counted.
+        s.advance_weld_fronts();
+        assert_eq!(
+            s.plate_id[conv as usize], 0,
+            "the front must sweep the contact layer"
+        );
+        assert_eq!(
+            s.cont_cells_per_plate,
+            vec![0, 0],
+            "an uncounted cell must not move census entries"
         );
     }
 
