@@ -5,16 +5,16 @@
 //! independent, so L6 shows the same mechanism the L7 video shows.
 //!
 //! It measures, every 100 My:
-//!   * compactness  = mean over alive plates of boundary_cells / area
-//!                    (a compact cap is low; a shredded comb is high)
-//!   * finger_frac  = fraction of all owned cells that are "fingers":
-//!                    <=2 of 6 same-plate neighbours (thin strips + necks)
-//!   * interior_flip_frac = of all cells that changed owner this step,
-//!                    the fraction that were INTERIOR of their old plate
-//!                    last step (all neighbours same plate). A rigid plate
-//!                    translating on the grid flips ONLY edge cells; an
-//!                    interior flip is the resample shredding the plate.
-//!   * largest_share = biggest plate's share of the sphere (welding)
+//! * compactness = mean over alive plates of boundary_cells / area
+//!   (a compact cap is low; a shredded comb is high)
+//! * finger_frac = fraction of all owned cells that are "fingers":
+//!   <=2 of 6 same-plate neighbours (thin strips + necks)
+//! * interior_flip_frac = of all cells that changed owner this step,
+//!   the fraction that were INTERIOR of their old plate
+//!   last step (all neighbours same plate). A rigid plate
+//!   translating on the grid flips ONLY edge cells; an
+//!   interior flip is the resample shredding the plate.
+//! * largest_share = biggest plate's share of the sphere (welding)
 //!
 //! Run:
 //!   cargo test -p worldmaker-sim --release plate_shape_probe -- --ignored --nocapture

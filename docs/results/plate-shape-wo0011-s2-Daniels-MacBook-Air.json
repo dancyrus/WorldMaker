@@ -1,0 +1,105 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-28",
+  "app_version": "0.1.0",
+  "metrics": {
+    "config": {
+      "work_order": "WO-0011-S2",
+      "probe": "plate_shape_probe",
+      "grid_level": 6,
+      "plate_count_param": 24,
+      "land_fraction": 0.4,
+      "tectonic_vigor": 1.0,
+      "span_my": 2000.0,
+      "dt_my": 2.0,
+      "sample_interval_my": 100.0,
+      "seed_text": "cyrus",
+      "before_commit": "1ece46a",
+      "weld_front_km_my": 50.0
+    },
+    "probe_after_s2": {
+      "columns": [
+        "t_my",
+        "alive_count",
+        "largest_share_pct",
+        "compact",
+        "finger_pct",
+        "interior_flip_pct",
+        "regularize_reverted_cum",
+        "sliver_captured_cum",
+        "craton_violations_cum"
+      ],
+      "rows": [
+        [100, 23, 13.8, 0.177, 0.1, 0.0, 1144, 344, 4],
+        [200, 18, 19.5, 0.180, 0.1, 4.8, 1274, 686, 71],
+        [300, 16, 20.5, 0.154, 0.1, 0.0, 1537, 950, 71],
+        [400, 16, 20.8, 0.154, 0.1, 0.0, 1701, 1245, 71],
+        [500, 16, 20.8, 0.165, 0.1, 0.0, 1761, 1522, 73],
+        [600, 16, 26.9, 0.194, 0.1, 0.0, 1829, 1740, 89],
+        [700, 15, 37.0, 0.135, 0.1, 0.0, 1880, 1991, 157],
+        [800, 14, 52.0, 0.160, 0.1, 78.0, 1991, 2402, 177],
+        [900, 13, 53.3, 0.171, 0.1, 0.0, 2111, 2888, 194],
+        [1000, 13, 53.4, 0.196, 0.2, 0.0, 2309, 3273, 198],
+        [1100, 13, 53.2, 0.198, 0.2, 0.0, 2462, 3592, 198],
+        [1200, 13, 52.7, 0.203, 0.2, 0.0, 2546, 3873, 204],
+        [1300, 13, 52.7, 0.219, 0.2, 0.0, 2664, 4346, 205],
+        [1400, 13, 53.0, 0.221, 0.1, 0.0, 2755, 4932, 205],
+        [1500, 13, 53.5, 0.224, 0.1, 0.0, 2804, 5220, 211],
+        [1600, 13, 53.8, 0.220, 0.1, 7.7, 2887, 5582, 211],
+        [1700, 13, 54.0, 0.224, 0.2, 0.0, 2974, 5850, 214],
+        [1800, 12, 54.4, 0.214, 0.1, 0.0, 3154, 6108, 227],
+        [1900, 12, 54.9, 0.214, 0.1, 0.0, 3331, 6311, 229],
+        [2000, 12, 55.2, 0.216, 0.1, 0.0, 3471, 6554, 231]
+      ],
+      "note": "WO step-9 expectations met: largest share peaks 55.2% (old wholesale-weld world: 67% at these params, 71% at the S1 build) and alive stays 12-23, above 7 all run. The 53-55% stretch from 900 My is ONE contiguous supercontinent epoch, not a dumbbell: the exact band is S3's measurement, not a gate here. The 78% interior-flip sample at 800 My is a single weld-retirement step (the loser's last cells are its interior)."
+    },
+    "dumbbell_probe": {
+      "test": "dumbbell_probe_partial_contact_welds_as_one_mass (committed, step.rs)",
+      "grid_level": 7,
+      "cap_deg": 18.0,
+      "contact_cells": 3,
+      "neck_bound_km": 170.0,
+      "steps_to_consume": 42,
+      "max_cells_per_step": 166,
+      "max_boundary_cells_per_step": 2,
+      "note": "off-centre 3-cell (~170 km) contact forced to maturity; the winner grows as one mass at every step (2-ring-erosion component scan finds no two masses each >2% of the sphere joined by a sub-170 km neck); the wholesale relabel moved all ~4,000 cap cells and the cap's ~200-cell rim in one step"
+    },
+    "physics_gates_after_s2": {
+      "note": "report_gate_values at defaults, both seeds, shipped S2 build; both ARMED gate tests green in cargo test",
+      "seed_cyrus": {
+        "m1_alive_band": [10, 13],
+        "m1_stddev": 0.85,
+        "m1_pin_my": 360,
+        "m2_sutures_per_gy": 2.5,
+        "m3_splits_per_gy": 4.0,
+        "m5a_exclave_samples": 0,
+        "m5b_backstop_worst_window_cells": 0,
+        "m6_relief_pct": 69,
+        "m7_mean_cmyr": 1.67,
+        "s1_cont_area_change_pct": -6.3,
+        "s2_volume_ledger_exact": true
+      },
+      "seed_42": {
+        "m1_alive_band": [9, 12],
+        "m1_stddev": 0.92,
+        "m1_pin_my": 620,
+        "m2_sutures_per_gy": 2.5,
+        "m3_splits_per_gy": 1.5,
+        "m5a_exclave_samples": 0,
+        "m5b_backstop_worst_window_cells": 0,
+        "m6_relief_pct": 61,
+        "m7_mean_cmyr": 2.35,
+        "s1_cont_area_change_pct": -8.7,
+        "s2_volume_ledger_exact": true
+      },
+      "movement_vs_s1": "m2 sutures/Gy 1.5/2.0 -> 2.5/2.5 (back INSIDE Dan's 2-6 band at both seeds); m1 pin at cyrus 650 -> 360 My; m7 seed-42 mean 2.5 -> 2.35 cm/yr (in band), cyrus 1.66 -> 1.67 (still recorded, S3 re-arms); continental area drift improved -7.7% -> -6.3% at cyrus"
+    },
+    "goldens": {
+      "move": "sixth sanctioned golden move (WO-0011 S1+S2 together, one move)",
+      "elevation_l6_seed42": "0xee3c13410e607b05",
+      "plates_l6_seed42": "0xaa22f87adacd7acd",
+      "crust_type_l6_seed42": "0x1a9b7e901e254785",
+      "phase0_noise_golden": "UNMOVED (verified in the same suite run)"
+    }
+  }
+}

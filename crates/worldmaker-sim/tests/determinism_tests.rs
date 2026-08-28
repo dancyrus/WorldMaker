@@ -98,12 +98,24 @@ fn fixed_seed_reproduces_committed_hash() {
 /// display-datum-only signature. Old elevation value
 /// 0xabb5_3577_2c81_9c99. Value from print_tectonic_goldens on
 /// Daniels-MacBook-Air; the phase-0 noise golden above again UNMOVED.
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xaa15_8d4f_1563_9cd8;
-const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0x7680_b5da_d03d_486a;
+/// ALL THREE regenerated 2026-08-28 for WO-0011 S1+S2 — the SIXTH
+/// sanctioned golden move (announced in WO-0011-S1, decision log,
+/// "sixth sanctioned golden move, WO-0011 S1+S2"), moved ONCE for both
+/// sessions together: S1's boundary regularization reverts advection
+/// re-sampling flips through strong lithosphere every step, and S2
+/// replaced the wholesale suture relabel with the front-limited weld
+/// (progressive contact-proportional merge, motion-slaved losers) —
+/// both alter plate-id trajectories from the first steps by design, a
+/// whole-world change. Old WO-0009-era values 0xaa15_8d4f_1563_9cd8 /
+/// 0x7680_b5da_d03d_486a / crust 0xebe0_d5a5_a29e_2745. Values from
+/// print_tectonic_goldens on Daniels-MacBook-Air; the phase-0 noise
+/// golden above verified UNMOVED in the same suite run.
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xee3c_1341_0e60_7b05;
+const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xaa22_f87a_dacd_7acd;
 /// Pinned at WO-0003 close (S4 audit): the harness had recorded this hash in
 /// every results JSON but no test asserted it, leaving crust type free to
 /// drift cross-platform unnoticed. Regenerated with the pair above.
-const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0xebe0_d5a5_a29e_2745;
+const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0x1a9b_7e90_1e25_4785;
 
 /// Golden-regeneration aid: prints the three tectonic hashes for the
 /// current build. Used exactly once per sanctioned golden move.
@@ -124,10 +136,6 @@ fn print_tectonic_goldens() {
 }
 
 #[test]
-#[ignore = "WO-0011 S1/S2 in progress: boundary regularization changes plate_id \
-trajectories by design — the SIXTH sanctioned golden move (announced in \
-WO-0011-S1, WO-0008 S0 precedent) regenerates all three hashes ONCE at the \
-end of S2. The Phase 0 noise golden above must stay green and unmoved."]
 fn tectonics_reproduces_committed_goldens() {
     let grid = Arc::new(Grid::build(6));
     let mut world = WorldState::new(grid);

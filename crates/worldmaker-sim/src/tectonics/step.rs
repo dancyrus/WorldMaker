@@ -952,8 +952,8 @@ impl SimState {
                 slaved_by[w.loser as usize] = w.winner;
             }
         }
-        for pid in 0..self.plates.len() {
-            if !self.plates[pid].alive || slaved_by[pid] != NONE {
+        for (pid, &slaved) in slaved_by.iter().enumerate() {
+            if !self.plates[pid].alive || slaved != NONE {
                 continue;
             }
             // Slab pull from attached ledger segments, weighted by thermal
@@ -3243,7 +3243,7 @@ impl SimState {
             let mut depth = vec![u16::MAX; n];
             let mut queue: VecDeque<u32> = VecDeque::new();
             let mut transfer: Vec<u32> = Vec::new();
-            for c in 0..n {
+            for (c, d) in depth.iter_mut().enumerate() {
                 if self.plate_id[c] != loser {
                     continue;
                 }
@@ -3251,7 +3251,7 @@ impl SimState {
                     let nbu = nb as usize;
                     self.plate_id[nbu] == winner && self.suture_at_my[nbu] >= fired
                 }) {
-                    depth[c] = 0;
+                    *d = 0;
                     queue.push_back(c as u32);
                     transfer.push(c as u32);
                 }
@@ -3324,7 +3324,10 @@ impl SimState {
                         w.winner = winner;
                     }
                 }
-                log::debug!("t={} My: weld consumed plate {loser} into {winner}", self.t_my);
+                log::debug!(
+                    "t={} My: weld consumed plate {loser} into {winner}",
+                    self.t_my
+                );
             } else {
                 // Rifts follow their cells (WO-0011 S2): a rift whose path
                 // has fully crossed the front belongs to the winner now.
@@ -5029,9 +5032,7 @@ mod tests {
         // components each above 2% of the sphere.
         let mass_min = (0.02 * n as f32) as usize;
         let no_dumbbell = |s: &SimState| {
-            let mut keep: Vec<bool> = (0..n as u32)
-                .map(|c| s.plate_id[c as usize] == 0)
-                .collect();
+            let mut keep: Vec<bool> = (0..n as u32).map(|c| s.plate_id[c as usize] == 0).collect();
             for _ in 0..2 {
                 let interior: Vec<bool> = (0..n as u32)
                     .map(|c| {
