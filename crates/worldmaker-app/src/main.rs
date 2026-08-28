@@ -30,6 +30,7 @@ struct Args {
     wo7_dir: Option<PathBuf>,
     wo8_dir: Option<PathBuf>,
     wo8_s2_dir: Option<PathBuf>,
+    wo9_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
     tectonics_out: Option<PathBuf>,
@@ -49,6 +50,7 @@ fn parse_args() -> Args {
         wo7_dir: None,
         wo8_dir: None,
         wo8_s2_dir: None,
+        wo9_dir: None,
         perf_out: None,
         determinism_out: None,
         tectonics_out: None,
@@ -76,6 +78,9 @@ fn parse_args() -> Args {
             // stacked).
             "--wo8-shots" => out.wo8_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--wo8-s2-shots" => out.wo8_s2_dir = take_value(&a, args.next()).map(PathBuf::from),
+            // WO-0009 step 7 proof shot (top-controls.png: all controls in
+            // the top bar at 1440 px, no bottom panel).
+            "--wo9-shots" => out.wo9_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--perf-out" => out.perf_out = take_value(&a, args.next()).map(PathBuf::from),
             "--determinism-out" => {
                 out.determinism_out = take_value(&a, args.next()).map(PathBuf::from)
@@ -365,6 +370,7 @@ fn main() {
         && args.wo7_dir.is_none()
         && args.wo8_dir.is_none()
         && args.wo8_s2_dir.is_none()
+        && args.wo9_dir.is_none()
     {
         return;
     }
@@ -394,6 +400,7 @@ fn main() {
         wo7_dir: args.wo7_dir,
         wo8_dir: args.wo8_dir,
         wo8_s2_dir: args.wo8_s2_dir,
+        wo9_dir: args.wo9_dir,
         perf_out: args.perf_out,
         grid_build_ms,
         seed: args.seed,

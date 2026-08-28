@@ -299,11 +299,13 @@ fn stability(
         "stability_breakup_count".into(),
         serde_json::json!(history.diagnostics.breakup_count),
     );
-    // Sea level is solved once at t = 0 and then drifts (decision log, Dan),
-    // so the land-fraction gate applies to the anchor keyframe — exact by
-    // construction — while the over-run range is recorded as data (the drift
-    // IS the feature). The quantity the solver cannot mask stays gated:
-    // continental-crust inventory drift over the whole run (review finding).
+    // Sea level anchors to the parameter at t = 0 and is then re-solved per
+    // keyframe against the conserved water inventory (WO-0009), so the
+    // land-fraction gate applies to the anchor keyframe — exact by
+    // construction — while the over-run range is recorded as data (the
+    // shoreline swing IS the feature). The quantity the solver cannot mask
+    // stays gated: continental-crust inventory drift over the whole run
+    // (review finding).
     let land_first = first.elev_m.iter().filter(|&&e| e >= 0).count() as f64 / n;
     metrics.insert(
         "stability_land_fraction_anchor".into(),

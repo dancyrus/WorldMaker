@@ -378,6 +378,7 @@ mod tests {
         Keyframe {
             t_my: 100.0,
             sea_offset_m: 0.0,
+            water_mass_kg: 0.0,
             elev_m: (0..n).map(|i| (i as i32 * 800 - 6400) as i16).collect(),
             plate_id: (0..n).map(|i| (i % 2) as u16).collect(),
             crust_age_my: vec![10; n],

@@ -83,13 +83,12 @@ fn short_run_produces_a_sane_world() {
             land += 1;
         }
     }
-    // Sea level anchors to the parameter at t = 0 and then drifts with the
-    // hypsometry, so the final land fraction sits near — not on — the
-    // target. The band is a sanity rail only: the sim inherits a slow
-    // continental-inventory leak (present on S1 main too, measured
-    // 2026-08-28: cont 0.39 → 0.06 over 2 Gy at L6) that WO-0006 S3's
-    // inventory gate owns; S2's reworked rifting shifts the 200 My drift
-    // at this seed from 0.045 to 0.058.
+    // Sea level anchors to the parameter at t = 0; every later keyframe
+    // re-solves it so the flooded mass stays the t = 0 inventory (WO-0009),
+    // so the final land fraction sits near — not on — the target. The band
+    // is a sanity rail only: the sim inherits a slow continental-inventory
+    // leak (present on S1 main too, measured 2026-08-28: cont 0.39 → 0.06
+    // over 2 Gy at L6) that WO-0006 S3's inventory gate owns.
     let land_frac = land as f32 / n as f32;
     assert!(
         (land_frac - 0.29).abs() < 0.07,
@@ -101,7 +100,10 @@ fn short_run_produces_a_sane_world() {
     assert_eq!(hist.keyframes.len(), 21);
     assert_eq!(hist.hotspots.len(), 6);
 
-    // At the t = 0 anchor the solve is exact; the datum then stays fixed.
+    // At the t = 0 anchor the fraction solve is exact; the water inventory
+    // banked there is conserved in every keyframe, and each keyframe owns
+    // its mass-solved offset (WO-0009 — the water_gates tests check the
+    // conservation itself).
     let kf0 = &hist.keyframes[0];
     let land0 = kf0.elev_m.iter().filter(|&&e| e >= 0).count() as f32 / n as f32;
     assert!(
@@ -109,10 +111,15 @@ fn short_run_produces_a_sane_world() {
         "anchor land fraction {land0} not on the parameter"
     );
     assert!(
+        kf0.water_mass_kg > 1.0e20,
+        "implausible t = 0 water inventory: {} kg",
+        kf0.water_mass_kg
+    );
+    assert!(
         hist.keyframes
             .iter()
-            .all(|kf| kf.sea_offset_m == kf0.sea_offset_m),
-        "sea datum must stay fixed after the anchor solve"
+            .all(|kf| kf.water_mass_kg == kf0.water_mass_kg),
+        "the water inventory must ride every keyframe unchanged"
     );
 
     // Plate count stays plausible. There is no floor or ceiling in the code

@@ -1,0 +1,1026 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-28",
+  "app_version": "0.1.0",
+  "metrics": {
+    "config": {
+      "level": 6,
+      "params": "TectonicsParams::default()",
+      "seed": "0xc4be0bf8f497a575",
+      "seed_label": "cyrus",
+      "span_my": 2000.0
+    },
+    "keyframes": [
+      {
+        "land_fraction": 0.2905,
+        "solved_level_m": -89.00741577148438,
+        "t_my": 0.0
+      },
+      {
+        "land_fraction": 0.343,
+        "solved_level_m": -160.78416442871094,
+        "t_my": 10.0
+      },
+      {
+        "land_fraction": 0.361,
+        "solved_level_m": -205.30780029296875,
+        "t_my": 20.0
+      },
+      {
+        "land_fraction": 0.3679,
+        "solved_level_m": -236.33436584472656,
+        "t_my": 30.0
+      },
+      {
+        "land_fraction": 0.3685,
+        "solved_level_m": -241.74020385742188,
+        "t_my": 40.0
+      },
+      {
+        "land_fraction": 0.3675,
+        "solved_level_m": -272.235107421875,
+        "t_my": 50.0
+      },
+      {
+        "land_fraction": 0.3665,
+        "solved_level_m": -276.68548583984375,
+        "t_my": 60.0
+      },
+      {
+        "land_fraction": 0.3659,
+        "solved_level_m": -314.8202819824219,
+        "t_my": 70.0
+      },
+      {
+        "land_fraction": 0.3626,
+        "solved_level_m": -339.2860107421875,
+        "t_my": 80.0
+      },
+      {
+        "land_fraction": 0.3636,
+        "solved_level_m": -353.22003173828125,
+        "t_my": 90.0
+      },
+      {
+        "land_fraction": 0.3628,
+        "solved_level_m": -353.62890625,
+        "t_my": 100.0
+      },
+      {
+        "land_fraction": 0.3608,
+        "solved_level_m": -361.72747802734375,
+        "t_my": 110.0
+      },
+      {
+        "land_fraction": 0.3613,
+        "solved_level_m": -348.2213134765625,
+        "t_my": 120.0
+      },
+      {
+        "land_fraction": 0.3603,
+        "solved_level_m": -347.85711669921875,
+        "t_my": 130.0
+      },
+      {
+        "land_fraction": 0.3594,
+        "solved_level_m": -360.43133544921875,
+        "t_my": 140.0
+      },
+      {
+        "land_fraction": 0.3604,
+        "solved_level_m": -334.5622863769531,
+        "t_my": 150.0
+      },
+      {
+        "land_fraction": 0.3597,
+        "solved_level_m": -321.8530578613281,
+        "t_my": 160.0
+      },
+      {
+        "land_fraction": 0.3594,
+        "solved_level_m": -310.60784912109375,
+        "t_my": 170.0
+      },
+      {
+        "land_fraction": 0.3602,
+        "solved_level_m": -280.5436096191406,
+        "t_my": 180.0
+      },
+      {
+        "land_fraction": 0.36,
+        "solved_level_m": -268.973388671875,
+        "t_my": 190.0
+      },
+      {
+        "land_fraction": 0.3561,
+        "solved_level_m": -229.73880004882812,
+        "t_my": 200.0
+      },
+      {
+        "land_fraction": 0.3562,
+        "solved_level_m": -231.39706420898438,
+        "t_my": 210.0
+      },
+      {
+        "land_fraction": 0.3537,
+        "solved_level_m": -219.5582733154297,
+        "t_my": 220.0
+      },
+      {
+        "land_fraction": 0.3544,
+        "solved_level_m": -243.52171325683594,
+        "t_my": 230.0
+      },
+      {
+        "land_fraction": 0.3538,
+        "solved_level_m": -222.6187286376953,
+        "t_my": 240.0
+      },
+      {
+        "land_fraction": 0.3526,
+        "solved_level_m": -217.73599243164062,
+        "t_my": 250.0
+      },
+      {
+        "land_fraction": 0.35,
+        "solved_level_m": -204.52005004882812,
+        "t_my": 260.0
+      },
+      {
+        "land_fraction": 0.3498,
+        "solved_level_m": -212.71328735351562,
+        "t_my": 270.0
+      },
+      {
+        "land_fraction": 0.3487,
+        "solved_level_m": -218.25311279296875,
+        "t_my": 280.0
+      },
+      {
+        "land_fraction": 0.3493,
+        "solved_level_m": -212.4945526123047,
+        "t_my": 290.0
+      },
+      {
+        "land_fraction": 0.349,
+        "solved_level_m": -208.01805114746094,
+        "t_my": 300.0
+      },
+      {
+        "land_fraction": 0.3489,
+        "solved_level_m": -230.9677734375,
+        "t_my": 310.0
+      },
+      {
+        "land_fraction": 0.3478,
+        "solved_level_m": -231.33233642578125,
+        "t_my": 320.0
+      },
+      {
+        "land_fraction": 0.3477,
+        "solved_level_m": -217.41351318359375,
+        "t_my": 330.0
+      },
+      {
+        "land_fraction": 0.3476,
+        "solved_level_m": -249.1700439453125,
+        "t_my": 340.0
+      },
+      {
+        "land_fraction": 0.3487,
+        "solved_level_m": -251.5751190185547,
+        "t_my": 350.0
+      },
+      {
+        "land_fraction": 0.3484,
+        "solved_level_m": -271.6621398925781,
+        "t_my": 360.0
+      },
+      {
+        "land_fraction": 0.3476,
+        "solved_level_m": -300.9369812011719,
+        "t_my": 370.0
+      },
+      {
+        "land_fraction": 0.3493,
+        "solved_level_m": -308.9610900878906,
+        "t_my": 380.0
+      },
+      {
+        "land_fraction": 0.3477,
+        "solved_level_m": -336.9719543457031,
+        "t_my": 390.0
+      },
+      {
+        "land_fraction": 0.3489,
+        "solved_level_m": -335.31884765625,
+        "t_my": 400.0
+      },
+      {
+        "land_fraction": 0.3462,
+        "solved_level_m": -356.8434753417969,
+        "t_my": 410.0
+      },
+      {
+        "land_fraction": 0.348,
+        "solved_level_m": -323.95794677734375,
+        "t_my": 420.0
+      },
+      {
+        "land_fraction": 0.3453,
+        "solved_level_m": -348.68084716796875,
+        "t_my": 430.0
+      },
+      {
+        "land_fraction": 0.3471,
+        "solved_level_m": -323.36285400390625,
+        "t_my": 440.0
+      },
+      {
+        "land_fraction": 0.3452,
+        "solved_level_m": -332.1012878417969,
+        "t_my": 450.0
+      },
+      {
+        "land_fraction": 0.3467,
+        "solved_level_m": -317.14697265625,
+        "t_my": 460.0
+      },
+      {
+        "land_fraction": 0.3449,
+        "solved_level_m": -322.0677795410156,
+        "t_my": 470.0
+      },
+      {
+        "land_fraction": 0.3466,
+        "solved_level_m": -307.7183532714844,
+        "t_my": 480.0
+      },
+      {
+        "land_fraction": 0.3449,
+        "solved_level_m": -340.10247802734375,
+        "t_my": 490.0
+      },
+      {
+        "land_fraction": 0.3466,
+        "solved_level_m": -320.315673828125,
+        "t_my": 500.0
+      },
+      {
+        "land_fraction": 0.3444,
+        "solved_level_m": -336.6777648925781,
+        "t_my": 510.0
+      },
+      {
+        "land_fraction": 0.3445,
+        "solved_level_m": -320.03271484375,
+        "t_my": 520.0
+      },
+      {
+        "land_fraction": 0.344,
+        "solved_level_m": -319.55279541015625,
+        "t_my": 530.0
+      },
+      {
+        "land_fraction": 0.3456,
+        "solved_level_m": -299.376708984375,
+        "t_my": 540.0
+      },
+      {
+        "land_fraction": 0.3438,
+        "solved_level_m": -316.71923828125,
+        "t_my": 550.0
+      },
+      {
+        "land_fraction": 0.3454,
+        "solved_level_m": -300.6038513183594,
+        "t_my": 560.0
+      },
+      {
+        "land_fraction": 0.3425,
+        "solved_level_m": -322.3597106933594,
+        "t_my": 570.0
+      },
+      {
+        "land_fraction": 0.3443,
+        "solved_level_m": -298.7773132324219,
+        "t_my": 580.0
+      },
+      {
+        "land_fraction": 0.3422,
+        "solved_level_m": -314.9669494628906,
+        "t_my": 590.0
+      },
+      {
+        "land_fraction": 0.3441,
+        "solved_level_m": -296.6908264160156,
+        "t_my": 600.0
+      },
+      {
+        "land_fraction": 0.3407,
+        "solved_level_m": -330.504150390625,
+        "t_my": 610.0
+      },
+      {
+        "land_fraction": 0.3439,
+        "solved_level_m": -293.0111999511719,
+        "t_my": 620.0
+      },
+      {
+        "land_fraction": 0.3419,
+        "solved_level_m": -319.6708679199219,
+        "t_my": 630.0
+      },
+      {
+        "land_fraction": 0.3434,
+        "solved_level_m": -314.8291931152344,
+        "t_my": 640.0
+      },
+      {
+        "land_fraction": 0.3419,
+        "solved_level_m": -324.76190185546875,
+        "t_my": 650.0
+      },
+      {
+        "land_fraction": 0.3409,
+        "solved_level_m": -340.193603515625,
+        "t_my": 660.0
+      },
+      {
+        "land_fraction": 0.3429,
+        "solved_level_m": -338.8050537109375,
+        "t_my": 670.0
+      },
+      {
+        "land_fraction": 0.3429,
+        "solved_level_m": -341.6329040527344,
+        "t_my": 680.0
+      },
+      {
+        "land_fraction": 0.3395,
+        "solved_level_m": -383.89007568359375,
+        "t_my": 690.0
+      },
+      {
+        "land_fraction": 0.3418,
+        "solved_level_m": -372.81878662109375,
+        "t_my": 700.0
+      },
+      {
+        "land_fraction": 0.3423,
+        "solved_level_m": -378.7223205566406,
+        "t_my": 710.0
+      },
+      {
+        "land_fraction": 0.3399,
+        "solved_level_m": -405.6047058105469,
+        "t_my": 720.0
+      },
+      {
+        "land_fraction": 0.3403,
+        "solved_level_m": -393.1943054199219,
+        "t_my": 730.0
+      },
+      {
+        "land_fraction": 0.3421,
+        "solved_level_m": -377.4066467285156,
+        "t_my": 740.0
+      },
+      {
+        "land_fraction": 0.3412,
+        "solved_level_m": -387.3507995605469,
+        "t_my": 750.0
+      },
+      {
+        "land_fraction": 0.3422,
+        "solved_level_m": -372.043701171875,
+        "t_my": 760.0
+      },
+      {
+        "land_fraction": 0.3404,
+        "solved_level_m": -378.8252868652344,
+        "t_my": 770.0
+      },
+      {
+        "land_fraction": 0.3422,
+        "solved_level_m": -356.2040710449219,
+        "t_my": 780.0
+      },
+      {
+        "land_fraction": 0.3401,
+        "solved_level_m": -368.678466796875,
+        "t_my": 790.0
+      },
+      {
+        "land_fraction": 0.3407,
+        "solved_level_m": -355.2015380859375,
+        "t_my": 800.0
+      },
+      {
+        "land_fraction": 0.3397,
+        "solved_level_m": -365.5859680175781,
+        "t_my": 810.0
+      },
+      {
+        "land_fraction": 0.3422,
+        "solved_level_m": -359.5868225097656,
+        "t_my": 820.0
+      },
+      {
+        "land_fraction": 0.3408,
+        "solved_level_m": -382.5198974609375,
+        "t_my": 830.0
+      },
+      {
+        "land_fraction": 0.3407,
+        "solved_level_m": -365.7835998535156,
+        "t_my": 840.0
+      },
+      {
+        "land_fraction": 0.341,
+        "solved_level_m": -384.63385009765625,
+        "t_my": 850.0
+      },
+      {
+        "land_fraction": 0.3432,
+        "solved_level_m": -375.0409851074219,
+        "t_my": 860.0
+      },
+      {
+        "land_fraction": 0.3405,
+        "solved_level_m": -411.9493103027344,
+        "t_my": 870.0
+      },
+      {
+        "land_fraction": 0.342,
+        "solved_level_m": -413.8067321777344,
+        "t_my": 880.0
+      },
+      {
+        "land_fraction": 0.3419,
+        "solved_level_m": -429.40496826171875,
+        "t_my": 890.0
+      },
+      {
+        "land_fraction": 0.3435,
+        "solved_level_m": -412.0788879394531,
+        "t_my": 900.0
+      },
+      {
+        "land_fraction": 0.3391,
+        "solved_level_m": -444.3121337890625,
+        "t_my": 910.0
+      },
+      {
+        "land_fraction": 0.3435,
+        "solved_level_m": -416.77008056640625,
+        "t_my": 920.0
+      },
+      {
+        "land_fraction": 0.3417,
+        "solved_level_m": -439.463134765625,
+        "t_my": 930.0
+      },
+      {
+        "land_fraction": 0.3434,
+        "solved_level_m": -411.67486572265625,
+        "t_my": 940.0
+      },
+      {
+        "land_fraction": 0.3387,
+        "solved_level_m": -434.5666809082031,
+        "t_my": 950.0
+      },
+      {
+        "land_fraction": 0.3428,
+        "solved_level_m": -393.9096984863281,
+        "t_my": 960.0
+      },
+      {
+        "land_fraction": 0.339,
+        "solved_level_m": -417.5976867675781,
+        "t_my": 970.0
+      },
+      {
+        "land_fraction": 0.3421,
+        "solved_level_m": -365.9576416015625,
+        "t_my": 980.0
+      },
+      {
+        "land_fraction": 0.3381,
+        "solved_level_m": -391.5537109375,
+        "t_my": 990.0
+      },
+      {
+        "land_fraction": 0.3417,
+        "solved_level_m": -348.577392578125,
+        "t_my": 1000.0
+      },
+      {
+        "land_fraction": 0.3366,
+        "solved_level_m": -360.5287170410156,
+        "t_my": 1010.0
+      },
+      {
+        "land_fraction": 0.3408,
+        "solved_level_m": -327.7374267578125,
+        "t_my": 1020.0
+      },
+      {
+        "land_fraction": 0.3371,
+        "solved_level_m": -349.8087158203125,
+        "t_my": 1030.0
+      },
+      {
+        "land_fraction": 0.3386,
+        "solved_level_m": -342.3236389160156,
+        "t_my": 1040.0
+      },
+      {
+        "land_fraction": 0.3377,
+        "solved_level_m": -364.74853515625,
+        "t_my": 1050.0
+      },
+      {
+        "land_fraction": 0.3394,
+        "solved_level_m": -348.0289306640625,
+        "t_my": 1060.0
+      },
+      {
+        "land_fraction": 0.3391,
+        "solved_level_m": -365.8566589355469,
+        "t_my": 1070.0
+      },
+      {
+        "land_fraction": 0.3388,
+        "solved_level_m": -367.52813720703125,
+        "t_my": 1080.0
+      },
+      {
+        "land_fraction": 0.338,
+        "solved_level_m": -374.6831359863281,
+        "t_my": 1090.0
+      },
+      {
+        "land_fraction": 0.3402,
+        "solved_level_m": -352.67266845703125,
+        "t_my": 1100.0
+      },
+      {
+        "land_fraction": 0.3389,
+        "solved_level_m": -362.57275390625,
+        "t_my": 1110.0
+      },
+      {
+        "land_fraction": 0.3372,
+        "solved_level_m": -376.20855712890625,
+        "t_my": 1120.0
+      },
+      {
+        "land_fraction": 0.3374,
+        "solved_level_m": -370.6605224609375,
+        "t_my": 1130.0
+      },
+      {
+        "land_fraction": 0.3389,
+        "solved_level_m": -369.2227783203125,
+        "t_my": 1140.0
+      },
+      {
+        "land_fraction": 0.3347,
+        "solved_level_m": -399.39483642578125,
+        "t_my": 1150.0
+      },
+      {
+        "land_fraction": 0.3372,
+        "solved_level_m": -366.13702392578125,
+        "t_my": 1160.0
+      },
+      {
+        "land_fraction": 0.336,
+        "solved_level_m": -353.74383544921875,
+        "t_my": 1170.0
+      },
+      {
+        "land_fraction": 0.3349,
+        "solved_level_m": -360.9856872558594,
+        "t_my": 1180.0
+      },
+      {
+        "land_fraction": 0.3341,
+        "solved_level_m": -359.9623718261719,
+        "t_my": 1190.0
+      },
+      {
+        "land_fraction": 0.332,
+        "solved_level_m": -396.5298767089844,
+        "t_my": 1200.0
+      },
+      {
+        "land_fraction": 0.3337,
+        "solved_level_m": -384.2552490234375,
+        "t_my": 1210.0
+      },
+      {
+        "land_fraction": 0.3339,
+        "solved_level_m": -404.58819580078125,
+        "t_my": 1220.0
+      },
+      {
+        "land_fraction": 0.3312,
+        "solved_level_m": -453.33087158203125,
+        "t_my": 1230.0
+      },
+      {
+        "land_fraction": 0.3348,
+        "solved_level_m": -439.4991455078125,
+        "t_my": 1240.0
+      },
+      {
+        "land_fraction": 0.3344,
+        "solved_level_m": -461.0332336425781,
+        "t_my": 1250.0
+      },
+      {
+        "land_fraction": 0.3325,
+        "solved_level_m": -485.10247802734375,
+        "t_my": 1260.0
+      },
+      {
+        "land_fraction": 0.3351,
+        "solved_level_m": -475.77520751953125,
+        "t_my": 1270.0
+      },
+      {
+        "land_fraction": 0.3343,
+        "solved_level_m": -483.0351867675781,
+        "t_my": 1280.0
+      },
+      {
+        "land_fraction": 0.3356,
+        "solved_level_m": -495.7315368652344,
+        "t_my": 1290.0
+      },
+      {
+        "land_fraction": 0.333,
+        "solved_level_m": -521.5409545898438,
+        "t_my": 1300.0
+      },
+      {
+        "land_fraction": 0.3349,
+        "solved_level_m": -502.4353332519531,
+        "t_my": 1310.0
+      },
+      {
+        "land_fraction": 0.3322,
+        "solved_level_m": -519.1497192382812,
+        "t_my": 1320.0
+      },
+      {
+        "land_fraction": 0.3326,
+        "solved_level_m": -526.8524169921875,
+        "t_my": 1330.0
+      },
+      {
+        "land_fraction": 0.3319,
+        "solved_level_m": -495.1517028808594,
+        "t_my": 1340.0
+      },
+      {
+        "land_fraction": 0.3289,
+        "solved_level_m": -515.7396850585938,
+        "t_my": 1350.0
+      },
+      {
+        "land_fraction": 0.3294,
+        "solved_level_m": -510.3409729003906,
+        "t_my": 1360.0
+      },
+      {
+        "land_fraction": 0.3275,
+        "solved_level_m": -491.5560302734375,
+        "t_my": 1370.0
+      },
+      {
+        "land_fraction": 0.3286,
+        "solved_level_m": -484.2225341796875,
+        "t_my": 1380.0
+      },
+      {
+        "land_fraction": 0.3258,
+        "solved_level_m": -487.1318664550781,
+        "t_my": 1390.0
+      },
+      {
+        "land_fraction": 0.325,
+        "solved_level_m": -467.3653259277344,
+        "t_my": 1400.0
+      },
+      {
+        "land_fraction": 0.3246,
+        "solved_level_m": -459.7916564941406,
+        "t_my": 1410.0
+      },
+      {
+        "land_fraction": 0.3223,
+        "solved_level_m": -459.1847229003906,
+        "t_my": 1420.0
+      },
+      {
+        "land_fraction": 0.3235,
+        "solved_level_m": -459.33258056640625,
+        "t_my": 1430.0
+      },
+      {
+        "land_fraction": 0.3231,
+        "solved_level_m": -462.59503173828125,
+        "t_my": 1440.0
+      },
+      {
+        "land_fraction": 0.323,
+        "solved_level_m": -451.9703369140625,
+        "t_my": 1450.0
+      },
+      {
+        "land_fraction": 0.3226,
+        "solved_level_m": -448.93115234375,
+        "t_my": 1460.0
+      },
+      {
+        "land_fraction": 0.3228,
+        "solved_level_m": -434.8312072753906,
+        "t_my": 1470.0
+      },
+      {
+        "land_fraction": 0.3194,
+        "solved_level_m": -428.2505798339844,
+        "t_my": 1480.0
+      },
+      {
+        "land_fraction": 0.3216,
+        "solved_level_m": -419.0050048828125,
+        "t_my": 1490.0
+      },
+      {
+        "land_fraction": 0.3212,
+        "solved_level_m": -441.45928955078125,
+        "t_my": 1500.0
+      },
+      {
+        "land_fraction": 0.3221,
+        "solved_level_m": -443.0915832519531,
+        "t_my": 1510.0
+      },
+      {
+        "land_fraction": 0.3192,
+        "solved_level_m": -433.3020935058594,
+        "t_my": 1520.0
+      },
+      {
+        "land_fraction": 0.3208,
+        "solved_level_m": -428.19317626953125,
+        "t_my": 1530.0
+      },
+      {
+        "land_fraction": 0.3199,
+        "solved_level_m": -448.4081726074219,
+        "t_my": 1540.0
+      },
+      {
+        "land_fraction": 0.323,
+        "solved_level_m": -440.6636657714844,
+        "t_my": 1550.0
+      },
+      {
+        "land_fraction": 0.3195,
+        "solved_level_m": -463.8315734863281,
+        "t_my": 1560.0
+      },
+      {
+        "land_fraction": 0.3226,
+        "solved_level_m": -465.4490966796875,
+        "t_my": 1570.0
+      },
+      {
+        "land_fraction": 0.3189,
+        "solved_level_m": -488.4513244628906,
+        "t_my": 1580.0
+      },
+      {
+        "land_fraction": 0.3213,
+        "solved_level_m": -496.9875183105469,
+        "t_my": 1590.0
+      },
+      {
+        "land_fraction": 0.3216,
+        "solved_level_m": -517.0692749023438,
+        "t_my": 1600.0
+      },
+      {
+        "land_fraction": 0.3225,
+        "solved_level_m": -511.0016174316406,
+        "t_my": 1610.0
+      },
+      {
+        "land_fraction": 0.3188,
+        "solved_level_m": -546.54638671875,
+        "t_my": 1620.0
+      },
+      {
+        "land_fraction": 0.3222,
+        "solved_level_m": -520.9229125976562,
+        "t_my": 1630.0
+      },
+      {
+        "land_fraction": 0.3181,
+        "solved_level_m": -529.49755859375,
+        "t_my": 1640.0
+      },
+      {
+        "land_fraction": 0.3197,
+        "solved_level_m": -493.2565612792969,
+        "t_my": 1650.0
+      },
+      {
+        "land_fraction": 0.3158,
+        "solved_level_m": -500.3337707519531,
+        "t_my": 1660.0
+      },
+      {
+        "land_fraction": 0.3178,
+        "solved_level_m": -479.2815246582031,
+        "t_my": 1670.0
+      },
+      {
+        "land_fraction": 0.3154,
+        "solved_level_m": -497.568115234375,
+        "t_my": 1680.0
+      },
+      {
+        "land_fraction": 0.315,
+        "solved_level_m": -476.3157043457031,
+        "t_my": 1690.0
+      },
+      {
+        "land_fraction": 0.3133,
+        "solved_level_m": -471.2065124511719,
+        "t_my": 1700.0
+      },
+      {
+        "land_fraction": 0.3155,
+        "solved_level_m": -439.99554443359375,
+        "t_my": 1710.0
+      },
+      {
+        "land_fraction": 0.3126,
+        "solved_level_m": -456.6590270996094,
+        "t_my": 1720.0
+      },
+      {
+        "land_fraction": 0.3122,
+        "solved_level_m": -446.700439453125,
+        "t_my": 1730.0
+      },
+      {
+        "land_fraction": 0.3113,
+        "solved_level_m": -451.00592041015625,
+        "t_my": 1740.0
+      },
+      {
+        "land_fraction": 0.3138,
+        "solved_level_m": -421.17462158203125,
+        "t_my": 1750.0
+      },
+      {
+        "land_fraction": 0.3111,
+        "solved_level_m": -440.2527770996094,
+        "t_my": 1760.0
+      },
+      {
+        "land_fraction": 0.3109,
+        "solved_level_m": -425.9012451171875,
+        "t_my": 1770.0
+      },
+      {
+        "land_fraction": 0.3101,
+        "solved_level_m": -425.92730712890625,
+        "t_my": 1780.0
+      },
+      {
+        "land_fraction": 0.312,
+        "solved_level_m": -411.9819641113281,
+        "t_my": 1790.0
+      },
+      {
+        "land_fraction": 0.3101,
+        "solved_level_m": -433.5755310058594,
+        "t_my": 1800.0
+      },
+      {
+        "land_fraction": 0.3126,
+        "solved_level_m": -427.1475524902344,
+        "t_my": 1810.0
+      },
+      {
+        "land_fraction": 0.3098,
+        "solved_level_m": -419.929931640625,
+        "t_my": 1820.0
+      },
+      {
+        "land_fraction": 0.31,
+        "solved_level_m": -412.3797302246094,
+        "t_my": 1830.0
+      },
+      {
+        "land_fraction": 0.3091,
+        "solved_level_m": -407.9950256347656,
+        "t_my": 1840.0
+      },
+      {
+        "land_fraction": 0.3096,
+        "solved_level_m": -410.7275390625,
+        "t_my": 1850.0
+      },
+      {
+        "land_fraction": 0.309,
+        "solved_level_m": -412.67138671875,
+        "t_my": 1860.0
+      },
+      {
+        "land_fraction": 0.3081,
+        "solved_level_m": -430.0257873535156,
+        "t_my": 1870.0
+      },
+      {
+        "land_fraction": 0.309,
+        "solved_level_m": -405.6325378417969,
+        "t_my": 1880.0
+      },
+      {
+        "land_fraction": 0.3098,
+        "solved_level_m": -413.21051025390625,
+        "t_my": 1890.0
+      },
+      {
+        "land_fraction": 0.3089,
+        "solved_level_m": -409.34619140625,
+        "t_my": 1900.0
+      },
+      {
+        "land_fraction": 0.3091,
+        "solved_level_m": -420.0798645019531,
+        "t_my": 1910.0
+      },
+      {
+        "land_fraction": 0.3093,
+        "solved_level_m": -421.4315490722656,
+        "t_my": 1920.0
+      },
+      {
+        "land_fraction": 0.309,
+        "solved_level_m": -413.6534423828125,
+        "t_my": 1930.0
+      },
+      {
+        "land_fraction": 0.3095,
+        "solved_level_m": -439.26885986328125,
+        "t_my": 1940.0
+      },
+      {
+        "land_fraction": 0.3092,
+        "solved_level_m": -437.24176025390625,
+        "t_my": 1950.0
+      },
+      {
+        "land_fraction": 0.3087,
+        "solved_level_m": -437.3450012207031,
+        "t_my": 1960.0
+      },
+      {
+        "land_fraction": 0.3095,
+        "solved_level_m": -424.5810241699219,
+        "t_my": 1970.0
+      },
+      {
+        "land_fraction": 0.3078,
+        "solved_level_m": -440.8106384277344,
+        "t_my": 1980.0
+      },
+      {
+        "land_fraction": 0.3077,
+        "solved_level_m": -442.86309814453125,
+        "t_my": 1990.0
+      },
+      {
+        "land_fraction": 0.307,
+        "solved_level_m": -429.994140625,
+        "t_my": 2000.0
+      }
+    ],
+    "shoreline_swing_m": 457.5389709472656,
+    "solved_level_max_m": -89.00741577148438,
+    "solved_level_min_m": -546.54638671875,
+    "solved_level_t0_m": -89.00741577148438,
+    "water_mass_kg": 1.6603148163299675e+21
+  }
+}

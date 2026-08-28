@@ -135,6 +135,10 @@ pub struct Script {
     /// features located in the final keyframe, legends visible. Seed and
     /// preset come from the CLI.
     pub wo8_s2_dir: Option<PathBuf>,
+    /// `--wo9-shots`: the WO-0009 step 7 proof shot — `top-controls.png`
+    /// at 1440 px width, timeline mid-scrub, showing every control in the
+    /// top bar and no bottom panel. Seed and preset come from the CLI.
+    pub wo9_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -201,6 +205,11 @@ enum ScriptState {
     /// WO-0008 S0 setup shot (step 7).
     Wo8Shot {
         stage: usize,
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0009 top-controls proof shot (step 7).
+    Wo9Shot {
         frames: u32,
         requested: bool,
     },
@@ -287,6 +296,15 @@ pub struct WorldApp {
     land_frac_pct: Option<f32>,
     /// Cache key for the readout: (values_gen, viewing_kf, sea-level bits).
     land_frac_key: Option<(u64, usize, u32)>,
+    /// "start NN% -> now MM%" beside the Land fraction slider (WO-0009
+    /// step 5): the viewed keyframe's solved land fraction (cells at or
+    /// above its own 0 = solved sea level), cached like `land_frac_pct`.
+    solved_land_pct: Option<f32>,
+    solved_land_key: Option<(u64, usize)>,
+    /// WO-0009 step 6: render every keyframe against the present era's
+    /// solved sea level. Display-only — it biases the shading/legend sea
+    /// level and never touches sim state or keyframes.
+    hold_shoreline: bool,
     /// Legend content for the viewed keyframe (WO-0007 step 4), rebuilt on
     /// every rebake; the Elevation legend is additionally rebuilt per frame
     /// so its sea marker rides the live slider.
@@ -454,6 +472,9 @@ impl WorldApp {
             sea_level_m: 0.0,
             land_frac_pct: None,
             land_frac_key: None,
+            solved_land_pct: None,
+            solved_land_key: None,
+            hold_shoreline: false,
             legend_spec: None,
             legend_width: 0.0,
             detail,
@@ -522,6 +543,11 @@ impl WorldApp {
             } else if script.wo8_dir.is_some() || script.wo8_s2_dir.is_some() {
                 ScriptState::Wo8Shot {
                     stage: 0,
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo9_dir.is_some() {
+                ScriptState::Wo9Shot {
                     frames: 0,
                     requested: false,
                 }
@@ -704,9 +730,10 @@ impl WorldApp {
         // safe across a grid switch because rebuild_grid publishes a fresh
         // right-sized placeholder bundle first (judgement A4).
         let mut new_legend = None;
+        let display_sea = self.display_sea_level_m();
         let (values, boundaries) = if let Some(history) = &self.history {
             let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
-            new_legend = Some(legend::legend_spec(self.layer, kf, self.sea_level_m));
+            new_legend = Some(legend::legend_spec(self.layer, kf, display_sea));
             self.values_gen += 1;
             // Smoothed boundary polylines are Plates-layer styling (d3a §8):
             // extracted from this keyframe's plate assignment there and on
@@ -782,13 +809,23 @@ impl WorldApp {
         }
     }
 
+    /// The sea level the canvases, legend and readouts actually display:
+    /// the slider offset, plus the hold-shoreline bias (WO-0009 step 6).
+    fn display_sea_level_m(&self) -> f32 {
+        let bias = match (&self.history, self.hold_shoreline) {
+            (Some(h), true) => hold_shoreline_bias(h, self.present_kf, self.viewing_kf),
+            _ => 0.0,
+        };
+        self.sea_level_m + bias
+    }
+
     /// The live shading uniforms for both canvases this frame.
     fn shade_params(&self) -> ShadeParams {
         pack_shade_params(
             self.master_seed,
             layer_flags(self.layer, self.debug_cell_bounds, self.debug_legacy_bands),
             self.detail_octaves,
-            self.sea_level_m,
+            self.display_sea_level_m(),
             self.detail * self.detail_amp_m,
             self.grid.cell_count(),
         )
@@ -1008,9 +1045,10 @@ impl WorldApp {
         // The Elevation legend tracks the live slider (cheap: 64 palette
         // samples); everything else uses the rebake-time cache.
         if self.layer == Layer::Elevation {
+            let display_sea = self.display_sea_level_m();
             if let Some(history) = &self.history {
                 let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
-                self.legend_spec = Some(legend::legend_spec(self.layer, kf, self.sea_level_m));
+                self.legend_spec = Some(legend::legend_spec(self.layer, kf, display_sea));
             }
         }
         let Some(spec) = &self.legend_spec else {
@@ -1040,7 +1078,7 @@ impl WorldApp {
 
     // ----- panels -----
 
-    fn top_bar(&mut self, root: &mut egui::Ui) {
+    fn top_bar(&mut self, root: &mut egui::Ui, frame_dt: f32) {
         egui::Panel::top("controls").show(root, |ui| {
             ui.horizontal_wrapped(|ui| {
                 // Tightened so the full first row — reset buttons included —
@@ -1116,14 +1154,16 @@ impl WorldApp {
                 );
                 // Land-fraction readout (WO-0007 step 3): every 8th cell of
                 // the VIEWED keyframe vs the slider level; refreshed on
-                // slider release and when the viewed world changes.
+                // slider release and when the viewed world changes. Measures
+                // the DISPLAYED level, so it tracks the hold-shoreline bias.
+                let display_sea = self.display_sea_level_m();
                 if let Some(history) = &self.history {
-                    let key = (self.values_gen, self.viewing_kf, self.sea_level_m.to_bits());
+                    let key = (self.values_gen, self.viewing_kf, display_sea.to_bits());
                     if !slider.dragged() && self.land_frac_key != Some(key) {
                         let kf =
                             &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
                         self.land_frac_pct =
-                            Some(legend::land_fraction_pct(&kf.elev_m, self.sea_level_m));
+                            Some(legend::land_fraction_pct(&kf.elev_m, display_sea));
                         self.land_frac_key = Some(key);
                     }
                 }
@@ -1152,6 +1192,17 @@ impl WorldApp {
                 ui.checkbox(&mut self.debug_legacy_bands, "Legacy bands");
                 ui.separator();
 
+                // WO-0009 step 6: display-only — biases the rendered sea
+                // level so every era shows the present shoreline; the
+                // legend cache is stale the moment it flips.
+                if ui
+                    .checkbox(&mut self.hold_shoreline, "Hold shoreline at present level")
+                    .changed()
+                {
+                    self.needs_bake = true;
+                }
+                ui.separator();
+
                 ui.label("Detail:");
                 // Render-detail amplitude, off -> tuned default. Live uniform
                 // like sea level (minimal slider; placement finalized leg 4).
@@ -1160,6 +1211,140 @@ impl WorldApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("{:.0} FPS", self.fps()));
                 });
+            });
+
+            // Third row (WO-0009 step 7): the timeline strip — transport,
+            // speed, scrubber, readouts — plus the cell-inspect status
+            // line, moved up from the deleted bottom panel so nothing
+            // anchors to the bottom window edge.
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let (kf_count, interval) = self
+                    .history
+                    .as_ref()
+                    .map(|h| (h.keyframes.len(), h.keyframe_interval_my))
+                    .unwrap_or((0, 10.0));
+                ui.add_enabled_ui(kf_count > 1 && self.job.is_none(), |ui| {
+                    // Step back / play / step forward / speed (WO-0004
+                    // steps 2–3). Stepping always stops playback.
+                    if ui.button("⏮").clicked() {
+                        let prev = self.viewing_kf.saturating_sub(1);
+                        self.playing = false;
+                        if prev != self.viewing_kf {
+                            self.viewing_kf = prev;
+                            self.needs_bake = true;
+                        }
+                    }
+                    let icon = if self.playing { "⏸" } else { "▶" };
+                    if ui.button(icon).clicked() {
+                        self.playing = !self.playing;
+                        if self.playing && self.viewing_kf + 1 >= kf_count {
+                            self.viewing_kf = 0; // replay from the start
+                        }
+                        self.play_accum = 0.0;
+                    }
+                    if ui.button("⏭").clicked() {
+                        let next = (self.viewing_kf + 1).min(kf_count.saturating_sub(1));
+                        self.playing = false;
+                        if next != self.viewing_kf {
+                            self.viewing_kf = next;
+                            self.needs_bake = true;
+                        }
+                    }
+                    let speed_label = PLAY_SPEEDS
+                        .iter()
+                        .find(|(v, _)| *v == self.play_my_per_s)
+                        .map(|(_, l)| *l)
+                        .unwrap_or("1×");
+                    egui::ComboBox::from_id_salt("play-speed")
+                        .selected_text(speed_label)
+                        .width(52.0)
+                        .show_ui(ui, |ui| {
+                            for (v, l) in PLAY_SPEEDS {
+                                ui.selectable_value(&mut self.play_my_per_s, v, l);
+                            }
+                        });
+
+                    let mut idx = self.viewing_kf.min(kf_count.saturating_sub(1));
+                    // Leave room for the readouts AND the status line that
+                    // shares this row (WO-0009: the bottom panel is gone).
+                    let width = ui.available_width() - 1040.0;
+                    ui.spacing_mut().slider_width = width.max(120.0);
+                    let slider = ui.add(
+                        egui::Slider::new(&mut idx, 0..=kf_count.saturating_sub(1))
+                            .show_value(false),
+                    );
+                    if slider.changed() {
+                        self.playing = false;
+                        if idx != self.viewing_kf {
+                            self.viewing_kf = idx;
+                            self.needs_bake = true;
+                        }
+                    }
+
+                    let t_my = self.viewing_kf as f32 * interval;
+                    let present_my = self.present_kf as f32 * interval;
+                    ui.monospace(format!("t = {t_my:5.0} My"));
+                    if ui
+                        .add_enabled(
+                            self.viewing_kf != self.present_kf,
+                            egui::Button::new("Set as present"),
+                        )
+                        .clicked()
+                    {
+                        self.set_present(self.viewing_kf);
+                    }
+                    ui.weak(format!("present: {present_my:.0} My"));
+                });
+                ui.separator();
+
+                // Cursor readout with the active layer's value.
+                match self.hover {
+                    Some((canvas, cell, lat, lon)) => {
+                        let ns = if lat >= 0.0 { "N" } else { "S" };
+                        let ew = if lon >= 0.0 { "E" } else { "W" };
+                        let value = self
+                            .history
+                            .as_ref()
+                            .map(|h| {
+                                let kf = &h.keyframes[self.viewing_kf.min(h.keyframes.len() - 1)];
+                                let c = cell as usize;
+                                format!(
+                                    "  ·  plate {}  ·  {} m  ·  {} My  ·  {:.1} km",
+                                    kf.plate_id[c],
+                                    kf.elev_m[c],
+                                    kf.crust_age_my[c],
+                                    kf.thickness_ckm[c] as f32 * 0.01,
+                                )
+                            })
+                            .unwrap_or_default();
+                        ui.monospace(format!(
+                            "Cell {cell}  ·  {:.2}°{ns} {:.2}°{ew}  ({canvas}){value}",
+                            lat.abs(),
+                            lon.abs()
+                        ));
+                    }
+                    None => {
+                        ui.monospace("Hover a canvas to inspect a cell");
+                    }
+                }
+
+                // Playback advance.
+                if self.playing && kf_count > 1 {
+                    self.play_accum += frame_dt * self.play_my_per_s / interval;
+                    let steps = self.play_accum as usize;
+                    if steps > 0 {
+                        self.play_accum -= steps as f32;
+                        let next = self.viewing_kf + steps;
+                        if next >= kf_count - 1 {
+                            self.viewing_kf = kf_count - 1;
+                            self.playing = false;
+                        } else {
+                            self.viewing_kf = next;
+                        }
+                        self.needs_bake = true;
+                    }
+                }
             });
         });
     }
@@ -1194,15 +1379,24 @@ impl WorldApp {
                         .text("Land fraction")
                         .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                 );
-                // Whole-plate crust setup quantizes the achieved fraction by
-                // plate sizes (WO-0008 S0); show what this world landed on.
-                // ASCII arrow: egui's default font has no U+2192 glyph.
+                // WO-0009 step 5: what the world started at (the WO-0008 S0
+                // achieved fraction — whole-plate setup quantizes the
+                // target) vs where the conserved-water solve has the viewed
+                // era now. Cached per viewed keyframe, like the sea-level
+                // readout. ASCII arrow: egui's default font has no U+2192.
                 if let Some(h) = &self.history {
-                    ui.label(format!(
-                        "target {:.0}% -> start {:.0}%",
-                        h.land_frac_target * 100.0,
-                        h.achieved_land_frac * 100.0
-                    ));
+                    let key = (self.values_gen, self.viewing_kf);
+                    if self.solved_land_key != Some(key) {
+                        let kf = &h.keyframes[self.viewing_kf.min(h.keyframes.len() - 1)];
+                        self.solved_land_pct = Some(legend::land_fraction_pct(&kf.elev_m, 0.0));
+                        self.solved_land_key = Some(key);
+                    }
+                    if let Some(now) = self.solved_land_pct {
+                        ui.label(format!(
+                            "start {:.0}% -> now {now:.1}%",
+                            h.achieved_land_frac * 100.0,
+                        ));
+                    }
                 }
                 ui.add(
                     egui::Slider::new(&mut self.tectonic_vigor, 0.25..=2.0).text("Tectonic vigor"),
@@ -1340,137 +1534,6 @@ impl WorldApp {
             });
     }
 
-    fn bottom_panel(&mut self, root: &mut egui::Ui, frame_dt: f32) {
-        egui::Panel::bottom("timeline").show(root, |ui| {
-            // Cursor readout with the active layer's value.
-            ui.horizontal(|ui| match self.hover {
-                Some((canvas, cell, lat, lon)) => {
-                    let ns = if lat >= 0.0 { "N" } else { "S" };
-                    let ew = if lon >= 0.0 { "E" } else { "W" };
-                    let value = self
-                        .history
-                        .as_ref()
-                        .map(|h| {
-                            let kf = &h.keyframes[self.viewing_kf.min(h.keyframes.len() - 1)];
-                            let c = cell as usize;
-                            format!(
-                                "  ·  plate {}  ·  {} m  ·  {} My  ·  {:.1} km",
-                                kf.plate_id[c],
-                                kf.elev_m[c],
-                                kf.crust_age_my[c],
-                                kf.thickness_ckm[c] as f32 * 0.01,
-                            )
-                        })
-                        .unwrap_or_default();
-                    ui.monospace(format!(
-                        "Cell {cell}  ·  {:.2}°{ns} {:.2}°{ew}  ({canvas}){value}",
-                        lat.abs(),
-                        lon.abs()
-                    ));
-                }
-                None => {
-                    ui.monospace("Hover a canvas to inspect a cell");
-                }
-            });
-
-            // The era picker.
-            let (kf_count, interval) = self
-                .history
-                .as_ref()
-                .map(|h| (h.keyframes.len(), h.keyframe_interval_my))
-                .unwrap_or((0, 10.0));
-            ui.add_enabled_ui(kf_count > 1 && self.job.is_none(), |ui| {
-                ui.horizontal(|ui| {
-                    // Step back / play / step forward / speed (WO-0004
-                    // steps 2–3). Stepping always stops playback.
-                    if ui.button("⏮").clicked() {
-                        let prev = self.viewing_kf.saturating_sub(1);
-                        self.playing = false;
-                        if prev != self.viewing_kf {
-                            self.viewing_kf = prev;
-                            self.needs_bake = true;
-                        }
-                    }
-                    let icon = if self.playing { "⏸" } else { "▶" };
-                    if ui.button(icon).clicked() {
-                        self.playing = !self.playing;
-                        if self.playing && self.viewing_kf + 1 >= kf_count {
-                            self.viewing_kf = 0; // replay from the start
-                        }
-                        self.play_accum = 0.0;
-                    }
-                    if ui.button("⏭").clicked() {
-                        let next = (self.viewing_kf + 1).min(kf_count.saturating_sub(1));
-                        self.playing = false;
-                        if next != self.viewing_kf {
-                            self.viewing_kf = next;
-                            self.needs_bake = true;
-                        }
-                    }
-                    let speed_label = PLAY_SPEEDS
-                        .iter()
-                        .find(|(v, _)| *v == self.play_my_per_s)
-                        .map(|(_, l)| *l)
-                        .unwrap_or("1×");
-                    egui::ComboBox::from_id_salt("play-speed")
-                        .selected_text(speed_label)
-                        .width(52.0)
-                        .show_ui(ui, |ui| {
-                            for (v, l) in PLAY_SPEEDS {
-                                ui.selectable_value(&mut self.play_my_per_s, v, l);
-                            }
-                        });
-
-                    let mut idx = self.viewing_kf.min(kf_count.saturating_sub(1));
-                    let width = ui.available_width() - 330.0;
-                    ui.spacing_mut().slider_width = width.max(120.0);
-                    let slider = ui.add(
-                        egui::Slider::new(&mut idx, 0..=kf_count.saturating_sub(1))
-                            .show_value(false),
-                    );
-                    if slider.changed() {
-                        self.playing = false;
-                        if idx != self.viewing_kf {
-                            self.viewing_kf = idx;
-                            self.needs_bake = true;
-                        }
-                    }
-
-                    let t_my = self.viewing_kf as f32 * interval;
-                    let present_my = self.present_kf as f32 * interval;
-                    ui.monospace(format!("t = {t_my:5.0} My"));
-                    if ui
-                        .add_enabled(
-                            self.viewing_kf != self.present_kf,
-                            egui::Button::new("Set as present"),
-                        )
-                        .clicked()
-                    {
-                        self.set_present(self.viewing_kf);
-                    }
-                    ui.weak(format!("present: {present_my:.0} My"));
-                });
-            });
-
-            // Playback advance.
-            if self.playing && kf_count > 1 {
-                self.play_accum += frame_dt * self.play_my_per_s / interval;
-                let steps = self.play_accum as usize;
-                if steps > 0 {
-                    self.play_accum -= steps as f32;
-                    let next = self.viewing_kf + steps;
-                    if next >= kf_count - 1 {
-                        self.viewing_kf = kf_count - 1;
-                        self.playing = false;
-                    } else {
-                        self.viewing_kf = next;
-                    }
-                    self.needs_bake = true;
-                }
-            }
-        });
-    }
-
     // ----- scripted modes -----
 
     /// Screenshot stages: the Phase 0 trio plus the Phase 1 documentation
@@ -1566,6 +1629,7 @@ impl WorldApp {
             ScriptState::Wo6Shot { .. } => self.drive_wo6(ctx),
             ScriptState::Wo7Shot { .. } => self.drive_wo7(ctx),
             ScriptState::Wo8Shot { .. } => self.drive_wo8(ctx),
+            ScriptState::Wo9Shot { .. } => self.drive_wo9(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -2025,6 +2089,48 @@ impl WorldApp {
         }
     }
 
+    /// WO-0009 step 7 proof shot: a 1440 px window, timeline scrubbed to
+    /// mid-history so the strip shows real state, one `top-controls.png` —
+    /// every relocated control in the top bar, no bottom panel.
+    fn drive_wo9(&mut self, ctx: &egui::Context) {
+        let (frames, requested) = match &self.script_state {
+            ScriptState::Wo9Shot { frames, requested } => (*frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1440.0, 900.0)));
+            if let Some(h) = &self.history {
+                self.viewing_kf = h.keyframes.len() / 2;
+                self.needs_bake = true;
+            }
+            log::info!("wo9 screenshot: top-controls");
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo9_dir.clone().unwrap();
+            if let Err(e) = save_color_image(&image, &dir.join("top-controls.png")) {
+                log::error!("failed to save top-controls.png: {e:#}");
+            } else {
+                log::info!("saved top-controls.png");
+            }
+            self.script_state = ScriptState::Closing;
+        } else {
+            self.script_state = ScriptState::Wo9Shot { frames, requested };
+        }
+    }
+
     fn drive_shot(&mut self, ctx: &egui::Context) {
         const NAMES: [&str; 7] = [
             "globe",
@@ -2359,6 +2465,19 @@ fn save_stacked_images(
     Ok(())
 }
 
+/// WO-0009 step 6: the display-only sea-level bias that renders the viewed
+/// keyframe against the PRESENT era's solved level. Keyframe elevations are
+/// stored relative to their own solved level (0 = sea level), so holding
+/// the present shoreline means comparing against
+/// `present_offset − viewed_offset`. Pure read of the history — the
+/// hash-equality test below proves the toggle changes no sim state.
+fn hold_shoreline_bias(history: &TectonicsHistory, present_kf: usize, viewing_kf: usize) -> f32 {
+    let last = history.keyframes.len().saturating_sub(1);
+    let present = &history.keyframes[present_kf.min(last)];
+    let viewed = &history.keyframes[viewing_kf.min(last)];
+    present.sea_offset_m - viewed.sea_offset_m
+}
+
 fn save_color_image(image: &egui::ColorImage, path: &std::path::Path) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -2400,12 +2519,11 @@ impl eframe::App for WorldApp {
             self.needs_bake = true;
         }
 
-        self.top_bar(root);
+        // The top bar's status line consumes the hover the canvases wrote
+        // LAST frame (the canvases render after the panels); clear it only
+        // afterwards, or the Some arm is unreachable (review finding).
+        self.top_bar(root, dt);
         self.side_panel(root);
-        // The readout consumes the hover the canvases wrote LAST frame (the
-        // canvases render after the panels); clear it only afterwards, or the
-        // Some arm is unreachable (review finding).
-        self.bottom_panel(root, dt);
         self.hover = None;
 
         // ----- canvases -----
@@ -2458,5 +2576,52 @@ mod tests {
         // matches (and no comment in this file may quote it).
         let needle = ["self.start", "_job()"].concat();
         assert_eq!(src.matches(&needle).count(), 3);
+    }
+
+    /// WO-0009 step 6: the hold-shoreline toggle is display-only. Reading
+    /// the bias for every (present, viewing) pair leaves every keyframe —
+    /// elevations, offsets, the water inventory — hash-identical.
+    #[test]
+    fn hold_shoreline_toggle_changes_no_sim_state() {
+        use std::sync::Arc;
+        use worldmaker_core::hash::{fnv1a_continue, FNV_OFFSET};
+
+        let grid = Arc::new(worldmaker_core::Grid::build(4));
+        let world = worldmaker_sim::WorldState::new(grid);
+        let params = worldmaker_sim::tectonics::TectonicsParams {
+            span_my: 200.0,
+            ..Default::default()
+        };
+        let hist = worldmaker_sim::tectonics::run_history(
+            &worldmaker_sim::StageContext::new(42),
+            &world,
+            &params,
+            None,
+        )
+        .unwrap();
+
+        let state_hash = |h: &worldmaker_sim::tectonics::TectonicsHistory| {
+            let mut acc = FNV_OFFSET;
+            for kf in &h.keyframes {
+                acc = fnv1a_continue(acc, &kf.sea_offset_m.to_le_bytes());
+                acc = fnv1a_continue(acc, &kf.water_mass_kg.to_le_bytes());
+                for &e in &kf.elev_m {
+                    acc = fnv1a_continue(acc, &e.to_le_bytes());
+                }
+            }
+            acc
+        };
+        let before = state_hash(&hist);
+        let n = hist.keyframes.len();
+        for present in 0..n {
+            for viewing in 0..n {
+                let _bias = super::hold_shoreline_bias(&hist, present, viewing);
+            }
+        }
+        assert_eq!(
+            state_hash(&hist),
+            before,
+            "hold-shoreline bias mutated sim state"
+        );
     }
 }

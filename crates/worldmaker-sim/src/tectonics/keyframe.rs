@@ -227,6 +227,10 @@ pub struct Keyframe {
     pub t_my: f32,
     /// Sea-level offset (m) that was subtracted so 0 = solved sea level.
     pub sea_offset_m: f32,
+    /// The run's water inventory (kg), banked at the t = 0 anchor and
+    /// conserved (WO-0009). f64, never quantized — resume re-solves sea
+    /// level against exactly this mass.
+    pub water_mass_kg: f64,
     pub elev_m: Vec<i16>,
     pub plate_id: Vec<u16>,
     pub crust_age_my: Vec<u16>,
@@ -311,6 +315,7 @@ impl Keyframe {
     pub fn encode(
         t_my: f32,
         sea_offset_m: f32,
+        water_mass_kg: f64,
         elev: &[f32],
         plate: &[u32],
         crust_age: &[f32],
@@ -332,6 +337,7 @@ impl Keyframe {
         let mut kf = Keyframe {
             t_my,
             sea_offset_m,
+            water_mass_kg,
             elev_m: Vec::with_capacity(n),
             plate_id: Vec::with_capacity(n),
             crust_age_my: Vec::with_capacity(n),
@@ -515,6 +521,7 @@ mod tests {
         let kf = Keyframe::encode(
             120.0,
             -230.0,
+            1.234e21,
             &elev,
             &plate,
             &age,
@@ -548,6 +555,8 @@ mod tests {
         // Hotspot residence clocks and the rift ledger survive the trip.
         assert_eq!(kf.hotspot_cont_my, &[0u16, 24, 8]);
         assert_eq!(kf.rifts, rifts);
+        // The water inventory rides along as raw f64, bit-exact (WO-0009).
+        assert_eq!(kf.water_mass_kg, 1.234e21);
 
         let mut fields = FieldStore::new(n);
         kf.write_fields(&mut fields);
@@ -577,6 +586,7 @@ mod tests {
                 .map(|i| Keyframe {
                     t_my: i as f32 * 10.0,
                     sea_offset_m: 0.0,
+                    water_mass_kg: 0.0,
                     elev_m: vec![],
                     plate_id: vec![],
                     crust_age_my: vec![],

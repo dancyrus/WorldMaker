@@ -23,6 +23,9 @@ pub mod metrics;
 mod plate_gen;
 mod setup;
 mod step;
+/// WO-0009 water-inventory CI gates (conservation + highstand sign).
+#[cfg(test)]
+mod water_gates;
 
 pub use keyframe::{
     ActiveRift, Keyframe, MicroplateOrigin, PairTimer, PlateState, RiftDriverKind, RunDiagnostics,
