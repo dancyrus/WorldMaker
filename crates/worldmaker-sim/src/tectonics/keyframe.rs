@@ -133,6 +133,12 @@ pub enum MicroplateOrigin {
     /// A rift re-nucleated on the far side of a microcontinent and
     /// transferred it (Jan Mayen style).
     RidgeJump,
+    /// A plate-scale piece severed from its plate by consumption (the
+    /// general Farallon case, WO-0008 S1): the connecting lithosphere was
+    /// consumed and the piece is now mechanically independent, whatever
+    /// its crust content. Sub-plate-scale pieces are never severed — the
+    /// advection repair pass keeps them attached (seam rule, half 3).
+    Severed,
 }
 
 /// One entry of the run's event log (WO-0006 S2): every suture and split
@@ -178,6 +184,11 @@ pub struct PairTimer {
     pub a: u32,
     pub b: u32,
     pub slow_collision_my: f32,
+    /// How long §3 conditions 1 + 2 (contact extent + locked kinematics)
+    /// have held continuously (WO-0008 S1): the lock age that drives
+    /// relic-basin closure and its gate. Unlike `slow_collision_my` it
+    /// keeps accumulating while enclosed ocean still blocks condition 3.
+    pub locked_my: f32,
 }
 
 /// Bit 15 of the packed keyframe flags stores crust_type (1 = continent).
@@ -402,6 +413,9 @@ pub struct RunDiagnostics {
     pub cont_lost_to_rift: u64,
     pub cont_gained_by_advection: u64,
     pub cont_gained_by_arc: u64,
+    /// Ocean consumed into continental margin by relic-basin closure
+    /// (WO-0008 S1).
+    pub cont_gained_by_closure: u64,
     pub suture_count: u64,
     /// Rift-to-oceanization plate splits (WO-0006 S2: the only breakup path).
     pub breakup_count: u64,
