@@ -321,6 +321,58 @@ knobs are the §1 coefficients.
    sutured — now as an emergent property, since no clamp can hide a
    violation.
 
+## Addendum 2026-08-28 (WO-0008 S1: closure, linkage, seams, balance)
+
+Dan's rulings after the WO-0006-S3 report. Sections amended:
+
+**§3 relic-basin closure.** The S3 probe autopsy found every large locked
+contact blocked forever by 15–25 cells of ancient enclosed ocean —
+condition 3 could never pass because no mechanic consumed a basin once
+convergence stopped. New terminal-closure mechanic: a plate pair is
+*locked* when conditions 1 and 2 hold (contact ≥ 30% of the smaller
+perimeter, mean relative speed < `SUTURE_LOCK_CMYR`); each `PairTimer`
+now carries `locked_my`, the sustained lock age. While a pair is locked,
+every **enclosed oceanic basin** near the contact — a connected oceanic
+region whose bordering continental cells belong ≥ 80% to the two
+colliding plates — is consumed at its margin cells (basin cells touching
+continent, ascending id order) at the pair's convergence-equivalent rate
+(mean contact relative speed, floored at the classification dead band so
+a fully locked pair still closes), as internal subduction: each consumed
+cell becomes continental margin crust of its own plate (fresh crust and
+orogeny age, thickness copied from its lowest-id continental neighbor)
+and the consumed ocean feeds that plate's slab ledger. A basin consumed
+down to `RELIC_BASIN_KEEP_CELLS = 12` cells survives as a relic sea
+(Caspian, Black Sea) and stops blocking the weld: condition 3 now reads
+*no oceanic region larger than `RELIC_BASIN_KEEP_CELLS` within 2 rings
+of the contact*. Basis: Mediterranean-style terminal closure — enclosed
+basins underthrust and vanish while the collision is locked.
+
+**§5 rift linkage.** When two active rift systems on the same plate (a
+plate can hold two after inheriting a suture partner's rift) bring tips
+within 3 cells of each other, they connect along the least-strength path
+between the tips and merge into one system — the merged rift keeps the
+far tips, the stronger driver's stress, and the earlier start time.
+Basis: East Africa–Red Sea–Gulf of Aden triple-junction linkage; rift
+segments propagate toward and capture each other.
+
+**§7 seam rule (advection tie-breaking).** Ownership flips at plate
+seams must be decided by one rule both advection passes agree on, so the
+backstop consumes ≤ 10 cells per 100 My instead of thousands (the exact
+rule is recorded in the S1 work order and in `advect()`).
+
+**§9 continental-area balance (note).** Continental crust thicker than
+`SUBDUCTIBLE_CONT_KM` must never be destroyed at a consuming margin:
+where advection would overwrite hard continent with a foreign plate's
+crust, the cell's continental content survives and transfers to the
+winning plate (terrane accretion), never deleted. Arc creation vs margin
+consumption is diagnosed per 100 My by the probe; the acceptance target
+is net continental-area change over 2 Gy within ±15% of t = 0.
+
+**Marked S2** (session 2 of WO-0008): distributed orogen width
+(`W = W_BASE / strength`, craton-stopped), gravitational spreading,
+underthrusting transfer, and discrete island-arc sites replacing the
+continuous arc wall. §9 metric 6's honest number is re-measured there.
+
 ## Open questions for Dan (before implementation)
 
 1. **Slab-pull memory on plate death**: when a plate is fully consumed,
