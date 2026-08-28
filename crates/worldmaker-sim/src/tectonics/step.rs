@@ -1911,10 +1911,11 @@ impl SimState {
     ///   consuming its plate. Transfers that survive the step anyway are
     ///   counted in `craton_transfer_violations` (S3 arms it at zero).
     /// * Sliver capture (S1 addition, see the in-body comment): static
-    ///   sliver debris — cells holding to their plate by at most one edge —
-    ///   is captured by the surrounding plate, eroding strips from their
-    ///   tips; without it the anti-fray gates cannot be met because the
-    ///   strips are never candidates (their owner never changes).
+    ///   sliver debris — cells holding to their plate by at most one edge,
+    ///   or two mutually-adjacent ones — is captured by the surrounding
+    ///   plate, eroding strips from their tips and flanks; without it the
+    ///   anti-fray gates cannot be met because the strips are never
+    ///   candidates (their owner never changes).
     ///
     /// Serial, cell-id order, iterated to a fixed point with a pass cap of
     /// 8 (seam-repair convention); reverts only ever un-do this step's
@@ -2107,27 +2108,55 @@ impl SimState {
             // change and so is never a candidate; measured at L6 seed
             // cyrus it persists for Gy (~70–85% of finger cells survive
             // each 100 My window) and alone holds fingers at ~1%. The
-            // capture rule: a cell attached to its plate by AT MOST ONE
-            // edge, with a single foreign plate holding the local
-            // majority around it, is mechanically part of that plate —
+            // capture rule: a cell attached to its plate by at most one
+            // edge — or exactly two edges in consecutive ring slots —
+            // with a foreign plate holding the clear local majority
+            // around it, is mechanically part of that plate:
             // transferring it only removes boundary (no new failure
-            // surface, the same physics as the tests above), and a leaf
-            // cell can never disconnect its plate, so chains erode from
-            // their tips one cell per pass. The cell's column transfers
-            // with it (terrane-style); the craton floor and the energy
+            // surface, the same physics as the tests above), and neither
+            // a leaf nor a cell whose two anchors are mutually adjacent
+            // can disconnect its plate, so strips erode from their tips
+            // and flanks. The cell's column transfers with it
+            // (terrane-style — crust never moves, so margin shape in
+            // crust terms is untouched); the craton floor and the energy
             // test still apply.
             for c in 0..n {
                 if captured[c] {
                     continue;
                 }
                 let p = self.plate_id[c];
+                if self.plate_cells[p as usize] <= 1 {
+                    // Never capture a plate's last cell: a one-cell plate
+                    // still owns its slab ledger, and emptying it here
+                    // would orphan those segments on a dead plate (advect's
+                    // retirement transfers them; this path has no consumer
+                    // to transfer to). Consumption or fossil capture
+                    // retires it properly.
+                    continue;
+                }
                 let nbs = grid.neighbors_of(c as u32);
                 let same = nbs
                     .iter()
                     .filter(|&&nb| self.plate_id[nb as usize] == p)
                     .count();
-                if same > 1 {
+                if same > 2 {
                     continue;
+                }
+                if same == 2 {
+                    // Two same-plate neighbors: capturable only when they
+                    // sit in CONSECUTIVE ring slots — consecutive ring
+                    // neighbors are mutually adjacent on this grid, so
+                    // removing the cell cannot disconnect them (it is
+                    // provably not a bridge). Non-consecutive pairs may be
+                    // a neck; those stay (S2's welding rework owns necks).
+                    let k = nbs.len();
+                    let consecutive = (0..k).any(|i| {
+                        self.plate_id[nbs[i] as usize] == p
+                            && self.plate_id[nbs[(i + 1) % k] as usize] == p
+                    });
+                    if !consecutive {
+                        continue;
+                    }
                 }
                 let cont = self.crust_type[c] == 1;
                 let age_ref = if cont {
@@ -2272,11 +2301,13 @@ impl SimState {
                 }
             }
         }
-        // Reverse the scatter's inventory flow for this cell.
+        // Reverse the scatter's inventory flow for this cell. The (0, 1)
+        // gain case cannot reach here: continental-gain flips are exempt
+        // from reverts (the guard in the candidate scan), which is also
+        // what makes these u64 decrements underflow-safe.
         match (self.prev.ctype[c], self.crust_type[c]) {
             (1, 0) if self.features[c] & F_RIDGE != 0 => self.cont_lost_to_ridge_gap -= 1,
             (1, 0) => self.cont_lost_to_consumption -= 1,
-            (0, 1) => self.cont_gained_by_advection -= 1,
             _ => {}
         }
         self.plate_cells[cur] -= 1;
