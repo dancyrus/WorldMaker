@@ -473,11 +473,11 @@ fn whole_plate_crust_setup_at_t0() {
             }
         }
         assert!(
-            kind.iter().any(|&k| k == Some(1)),
+            kind.contains(&Some(1)),
             "no continental plate at seed {seed:#x}"
         );
         assert!(
-            kind.iter().any(|&k| k == Some(0)),
+            kind.contains(&Some(0)),
             "no oceanic plate at seed {seed:#x}"
         );
 

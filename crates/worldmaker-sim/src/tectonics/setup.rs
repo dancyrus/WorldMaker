@@ -229,8 +229,8 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         // Platform crust: every continental cell of this plate the craton
         // BFS did not reach (cd untouched) keeps base thickness and gets
         // the younger age.
-        for c in 0..n {
-            if s.plate_id[c] == pid as u32 && cd[c] == u32::MAX {
+        for (c, &craton_depth) in cd.iter().enumerate() {
+            if s.plate_id[c] == pid as u32 && craton_depth == u32::MAX {
                 s.crust_age[c] = platform_age;
                 s.orogeny_age[c] = platform_age;
             }
