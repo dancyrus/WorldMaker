@@ -512,7 +512,11 @@ impl WorldApp {
             // (24 plates, land 0.40, vigor 1.0) — the world of the
             // original plate-shape report.
             plate_count: if script.wo11_dir.is_some() { 24 } else { 12 },
-            land_fraction: if script.wo11_dir.is_some() { 0.40 } else { 0.29 },
+            land_fraction: if script.wo11_dir.is_some() {
+                0.40
+            } else {
+                0.29
+            },
             tectonic_vigor: 1.0,
             // The WO-0004 shot set views t = 600 My, past the default
             // span; the WO-0006 and WO-0011 sets span the full 2 Gy

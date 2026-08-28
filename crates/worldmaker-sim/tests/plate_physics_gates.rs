@@ -161,8 +161,7 @@ fn assert_armed(rep: &PhysicsReport, label: &str) {
     // inside the band at 2.5/2.5). The condition audit stays ARMED in
     // full.
     assert!(
-        rep.sutures_per_gy >= M2_SUTURES_PER_GY_MIN
-            && rep.sutures_per_gy <= M2_SUTURES_PER_GY_MAX,
+        rep.sutures_per_gy >= M2_SUTURES_PER_GY_MIN && rep.sutures_per_gy <= M2_SUTURES_PER_GY_MAX,
         "{label}: m2 weld frequency outside Dan's band — {}",
         detail("m2_suture_frequency")
     );

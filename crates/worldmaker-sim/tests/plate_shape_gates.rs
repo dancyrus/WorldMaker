@@ -212,7 +212,10 @@ fn report_shape_values() {
             "ARMED    bdens ratio 2Gy/100My = {:.3} (ruled max {COMPACT_RATIO_MAX})",
             last.compact_weighted / first.compact_weighted
         );
-        let finger_max = run.samples[1..].iter().map(|s| s.finger).fold(0.0, f64::max);
+        let finger_max = run.samples[1..]
+            .iter()
+            .map(|s| s.finger)
+            .fold(0.0, f64::max);
         println!(
             "ARMED    finger max after 100 My = {:.3}% (ruled max {:.1}%)",
             finger_max * 100.0,

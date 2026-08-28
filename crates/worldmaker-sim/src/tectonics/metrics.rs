@@ -135,9 +135,7 @@ pub fn holds_narrow_neck(
     let mut keep: Vec<bool> = plate_id.iter().map(|&p| p == plate).collect();
     for _ in 0..rings {
         let interior: Vec<bool> = (0..n as u32)
-            .map(|c| {
-                keep[c as usize] && grid.neighbors_of(c).iter().all(|&nb| keep[nb as usize])
-            })
+            .map(|c| keep[c as usize] && grid.neighbors_of(c).iter().all(|&nb| keep[nb as usize]))
             .collect();
         keep = interior;
     }
