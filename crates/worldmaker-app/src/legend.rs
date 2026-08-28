@@ -387,6 +387,7 @@ mod tests {
             rift_age_my: vec![0; n],
             buildup_ckm: vec![0; n],
             flags: vec![0; n],
+            lithology: vec![worldmaker_sim::tectonics::lithology::SM; n],
             slab_plate: vec![u16::MAX; n],
             slab_since_my: vec![0; n],
             suture_at_my: vec![u16::MAX; n],

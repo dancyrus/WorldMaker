@@ -359,6 +359,8 @@ struct CellOut {
     orog: f32,
     rift: f32,
     build: f32,
+    /// GLiM lithology class (WO-0009 S2), advected with the crust.
+    lith: u8,
     /// Plate whose crust was consumed at this cell, or NONE.
     subducted: u32,
     /// Crust age of the consumed cell (slab-ledger input; 0 if none).
@@ -387,6 +389,7 @@ struct PrevCells {
     orog: Vec<f32>,
     rift: Vec<f32>,
     build: Vec<f32>,
+    lith: Vec<u8>,
     slab_plate: Vec<u16>,
     slab_since: Vec<f32>,
     suture_at: Vec<f32>,
@@ -450,6 +453,10 @@ pub struct SimState {
     pub rift_age: Vec<f32>,
     pub buildup: Vec<f32>,
     pub features: Vec<u32>,
+    /// GLiM lithology class per cell (WO-0009 S2, [`super::lithology`]).
+    /// A passive tracer: advected with crust, stamped at recorded crust
+    /// events, never read by the dynamics.
+    pub lithology: Vec<u8>,
     pub elev: Vec<f32>,
     pub sea_offset_m: f32,
     /// The world's water inventory (kg), banked once at the t = 0 sea-level
@@ -630,6 +637,8 @@ impl SimState {
             rift_age: vec![0.0; n],
             buildup: vec![0.0; n],
             features: vec![0; n],
+            // Ocean floor is ridge-made basalt; setup re-stamps continents.
+            lithology: vec![super::lithology::VB; n],
             elev: vec![0.0; n],
             sea_offset_m: 0.0,
             water_mass_kg: 0.0,
@@ -762,6 +771,7 @@ impl SimState {
             s.rift_age[i] = kf.rift_age_my[i] as f32;
             s.buildup[i] = kf.buildup_ckm[i] as f32 * 0.01;
             s.features[i] = (kf.flags[i] & 0xff) as u32;
+            s.lithology[i] = kf.lithology[i];
             s.elev[i] = kf.elev_m[i] as f32;
             s.slab_plate[i] = kf.slab_plate[i];
             s.slab_since_my[i] = kf.slab_since_my[i] as f32;
@@ -1050,6 +1060,7 @@ impl SimState {
         self.prev.orog.clone_from(&self.orogeny_age);
         self.prev.rift.clone_from(&self.rift_age);
         self.prev.build.clone_from(&self.buildup);
+        self.prev.lith.clone_from(&self.lithology);
         self.prev.slab_plate.clone_from(&self.slab_plate);
         self.prev.slab_since.clone_from(&self.slab_since_my);
         self.prev.suture_at.clone_from(&self.suture_at_my);
@@ -1172,6 +1183,7 @@ impl SimState {
         let prev_orog = &self.orogeny_age;
         let prev_rift = &self.rift_age;
         let prev_build = &self.buildup;
+        let prev_lith = &self.lithology;
         let prev_feat = &self.features;
         let prev_slab_plate = &self.slab_plate;
         let prev_slab_since = &self.slab_since_my;
@@ -1194,6 +1206,7 @@ impl SimState {
             orog: prev_orog[c],
             rift: prev_rift[c],
             build: prev_build[c],
+            lith: prev_lith[c],
             subducted: NONE,
             subducted_age: 0.0,
             collided,
@@ -1282,6 +1295,7 @@ impl SimState {
                                 orog: 0.0,
                                 rift: 0.0,
                                 build: 0.0,
+                                lith: super::lithology::VB, // ridge fill
                                 subducted: NONE,
                                 subducted_age: 0.0,
                                 collided: NONE,
@@ -1302,6 +1316,7 @@ impl SimState {
                             orog: prev_orog[s],
                             rift: prev_rift[s],
                             build: prev_build[s],
+                            lith: prev_lith[s],
                             subducted: NONE,
                             subducted_age: 0.0,
                             collided: NONE,
@@ -1356,6 +1371,7 @@ impl SimState {
                                 orog: prev_orog[s],
                                 rift: prev_rift[s],
                                 build: prev_build[s],
+                                lith: prev_lith[s],
                                 subducted: NONE,
                                 subducted_age: 0.0,
                                 collided: other,
@@ -1417,6 +1433,7 @@ impl SimState {
                                 orog: prev_orog[s],
                                 rift: prev_rift[s],
                                 build: prev_build[s],
+                                lith: prev_lith[s],
                                 subducted,
                                 subducted_age,
                                 collided: NONE,
@@ -1654,6 +1671,7 @@ impl SimState {
             self.rift_age[c] = o.rift;
             self.buildup[c] = o.build;
             self.features[c] = o.features;
+            self.lithology[c] = o.lith;
             self.suture_at_my[c] = o.suture_at;
             self.plate_cells[o.plate as usize] += 1;
             if o.subducted != NONE {
@@ -2398,6 +2416,7 @@ impl SimState {
         self.orogeny_age[c] = self.prev.orog[c];
         self.rift_age[c] = self.prev.rift[c];
         self.buildup[c] = self.prev.build[c];
+        self.lithology[c] = self.prev.lith[c];
         self.features[c] = 0;
         self.slab_plate[c] = self.prev.slab_plate[c];
         self.slab_since_my[c] = self.prev.slab_since[c];
@@ -2695,6 +2714,8 @@ impl SimState {
                 if self.crust_type[c] == 0 && t >= ISLAND_ARC_CONVERT_KM && !beside_young_island {
                     self.crust_type[c] = 1; // island arc: young continental crust
                     self.crust_age[c] = 0.0;
+                    // Arc conversion: andesitic edifice (WO-0009 S2).
+                    self.lithology[c] = super::lithology::VI;
                     self.cont_gained_by_arc += 1;
                 }
             }
@@ -2885,6 +2906,8 @@ impl SimState {
                     remaining -= got;
                     self.underthrust_deposited_q += got;
                     if got > 0 {
+                        // Collision-thickened belt (WO-0009 S2).
+                        self.lithology[cu] = super::lithology::MT;
                         deposited_any = true;
                     }
                 }
@@ -3026,6 +3049,9 @@ impl SimState {
             }
             if self.rift_age[c] > RIFT_ONSET_MY {
                 self.thickness[c] -= RIFT_THIN_KM_MY * DT_MY;
+                // Rift-shoulder exposure (WO-0009 S2): active thinning
+                // exhumes deep basement along the flank.
+                self.lithology[c] = super::lithology::PB;
                 if self.thickness[c] < RIFT_OCEANIZE_KM {
                     // The continent has rifted: new ocean floor.
                     self.cont_lost_to_rift += 1;
@@ -3037,6 +3063,7 @@ impl SimState {
                     self.buildup[c] = 0.0;
                     self.suture_at_my[c] = NEVER_SUTURED; // the scar reopened
                     self.features[c] = (self.features[c] & !F_RIFT) | F_RIDGE;
+                    self.lithology[c] = super::lithology::VB; // ridge fill
                 }
             }
         }
@@ -4443,6 +4470,9 @@ impl SimState {
         for c in 0..self.buildup.len() {
             if self.buildup[c] > HOTSPOT_FLAG_KM {
                 self.features[c] |= F_HOTSPOT;
+                // Hotspot buildup: basalt shield (WO-0009 S2) — flood
+                // basalts also resurface continental tracks (Deccan).
+                self.lithology[c] = super::lithology::VB;
             }
         }
     }
@@ -4519,6 +4549,7 @@ impl SimState {
             &self.buildup,
             &self.crust_type,
             &self.features,
+            &self.lithology,
             &self.slab_plate,
             &self.slab_since_my,
             &self.suture_at_my,
