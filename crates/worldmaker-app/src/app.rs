@@ -1216,8 +1216,11 @@ impl WorldApp {
             // Third row (WO-0009 step 7): the timeline strip — transport,
             // speed, scrubber, readouts — plus the cell-inspect status
             // line, moved up from the deleted bottom panel so nothing
-            // anchors to the bottom window edge.
-            ui.horizontal_wrapped(|ui| {
+            // anchors to the bottom window edge. NON-wrapping: a long
+            // status line must truncate, never grow a second row — that
+            // would resize the panel every hover and bounce the viewport
+            // (Dan, 2026-08-28).
+            ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 let (kf_count, interval) = self
                     .history
@@ -1266,9 +1269,11 @@ impl WorldApp {
                         });
 
                     let mut idx = self.viewing_kf.min(kf_count.saturating_sub(1));
-                    // Leave room for the readouts AND the status line that
-                    // shares this row (WO-0009: the bottom panel is gone).
-                    let width = ui.available_width() - 1040.0;
+                    // Leave room for the readouts AND the worst-case cell
+                    // inspect line that shares this row (WO-0009: the
+                    // bottom panel is gone) — sized so the full status fits
+                    // at 1440 px without truncating.
+                    let width = ui.available_width() - 1100.0;
                     ui.spacing_mut().slider_width = width.max(120.0);
                     let slider = ui.add(
                         egui::Slider::new(&mut idx, 0..=kf_count.saturating_sub(1))
@@ -1298,8 +1303,9 @@ impl WorldApp {
                 });
                 ui.separator();
 
-                // Cursor readout with the active layer's value.
-                match self.hover {
+                // Cursor readout with the active layer's value. Truncated
+                // to the row's remaining width — never wrapped.
+                let status = match self.hover {
                     Some((canvas, cell, lat, lon)) => {
                         let ns = if lat >= 0.0 { "N" } else { "S" };
                         let ew = if lon >= 0.0 { "E" } else { "W" };
@@ -1318,16 +1324,15 @@ impl WorldApp {
                                 )
                             })
                             .unwrap_or_default();
-                        ui.monospace(format!(
+                        format!(
                             "Cell {cell}  ·  {:.2}°{ns} {:.2}°{ew}  ({canvas}){value}",
                             lat.abs(),
                             lon.abs()
-                        ));
+                        )
                     }
-                    None => {
-                        ui.monospace("Hover a canvas to inspect a cell");
-                    }
-                }
+                    None => "Hover a canvas to inspect a cell".to_string(),
+                };
+                ui.add(egui::Label::new(egui::RichText::new(status).monospace()).truncate());
 
                 // Playback advance.
                 if self.playing && kf_count > 1 {
@@ -2107,6 +2112,17 @@ impl WorldApp {
             }
             log::info!("wo9 screenshot: top-controls");
         }
+        // Synthetic hover on a real cell, re-armed every frame (the top bar
+        // consumes and clears it): the shot must show the LONGEST status
+        // line on one row — the hover-grows-a-second-row regression is what
+        // it guards against (Dan, 2026-08-28).
+        let c = (self.grid.cell_count() / 3) as usize;
+        self.hover = Some((
+            "flat",
+            c as u32,
+            self.grid.lat[c].to_degrees(),
+            self.grid.lon[c].to_degrees(),
+        ));
         // 45 frames gives the viewport resize time to land before capture.
         if frames >= 45 && !requested {
             requested = true;
