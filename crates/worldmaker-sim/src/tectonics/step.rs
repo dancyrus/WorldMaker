@@ -395,6 +395,11 @@ pub struct SimState {
     pub features: Vec<u32>,
     pub elev: Vec<f32>,
     pub sea_offset_m: f32,
+    /// The world's water inventory (kg), banked once at the t = 0 sea-level
+    /// anchor and conserved for the whole run (WO-0009): every later
+    /// keyframe solves the sea level at which the flooded mass equals this
+    /// minus [`Self::mass_in_ice`]. f64, never quantized.
+    pub water_mass_kg: f64,
     /// Plate whose slab lies beneath this cell (SLAB_NONE = none); rides
     /// with the overriding plate's cells.
     pub slab_plate: Vec<u16>,
@@ -544,6 +549,7 @@ impl SimState {
             features: vec![0; n],
             elev: vec![0.0; n],
             sea_offset_m: 0.0,
+            water_mass_kg: 0.0,
             slab_plate: vec![SLAB_NONE; n],
             slab_since_my: vec![0.0; n],
             suture_at_my: vec![NEVER_SUTURED; n],
@@ -657,6 +663,7 @@ impl SimState {
         assert_eq!(kf.elev_m.len(), n, "keyframe/grid mismatch");
         s.t_my = kf.t_my;
         s.sea_offset_m = kf.sea_offset_m;
+        s.water_mass_kg = kf.water_mass_kg;
         for i in 0..n {
             s.plate_id[i] = kf.plate_id[i] as u32;
             s.crust_type[i] = u32::from(kf.flags[i] & (1 << 15) != 0);
@@ -3661,6 +3668,7 @@ impl SimState {
         Keyframe::encode(
             self.t_my,
             self.sea_offset_m,
+            self.water_mass_kg,
             &self.elev,
             &self.plate_id,
             &self.crust_age,
@@ -3678,6 +3686,14 @@ impl SimState {
             plates,
             self.collisions.clone(),
         )
+    }
+
+    /// Water mass (kg) locked out of the ocean in ice sheets. Phase 3+
+    /// hook (glaciation; thermal expansion gets its own term there): the
+    /// sea-level solve subtracts this from the inventory, so climate only
+    /// has to fill it in. Always 0.0 in Phase 2.
+    pub fn mass_in_ice(&self) -> f64 {
+        0.0
     }
 
     /// Count of alive plates.
