@@ -1,8 +1,10 @@
 //! WO-0005 dev probe, extended in WO-0006 (S1: connectivity counter and
 //! per-plate attached slab area; S2: the tectonic event log — every suture
-//! and split carries its §3 condition record or §5 driver). Runs the
-//! tectonic sim at seed "cyrus" and seed 42 (L6, 2 Gy, default params) and
-//! writes docs/results/plate-physics-probe-s2-<seed>.json.
+//! and split carries its §3 condition record or §5 driver) and WO-0008 S1
+//! (S4 probe: continental-inventory flows per window, relic-basin closure,
+//! rift linkage, fossil captures, suture-condition failure counters). Runs
+//! the tectonic sim at seed "cyrus" and seed 42 (L6, 2 Gy, default params)
+//! and writes docs/results/plate-physics-probe-s4-<seed>.json.
 //!
 //! The probe drives `SimState::step` directly with the same stepping and
 //! keyframe-quantization cadence as `run_history` (the quantize round-trip
@@ -73,13 +75,19 @@ fn event_json(e: &TectonicEvent) -> serde_json::Value {
             b,
             t,
             contact_fraction,
+            contact_cells,
         } => json!({
             "event": "suture", "t_my": t, "winner_plate": a, "loser_plate": b,
             "contact_fraction_of_smaller_perimeter": contact_fraction,
+            "contact_cells_smaller_side": contact_cells,
         }),
         TectonicEvent::RiftStart { plate, driver, t } => json!({
             "event": "rift_start", "t_my": t, "plate": plate,
             "driver": driver_str(*driver),
+        }),
+        TectonicEvent::Capture { winner, loser, t } => json!({
+            "event": "capture", "t_my": t, "winner_plate": winner,
+            "loser_plate": loser,
         }),
         TectonicEvent::RiftFailed { plate, t } => json!({
             "event": "rift_failed", "t_my": t, "plate": plate,
@@ -99,6 +107,7 @@ fn event_json(e: &TectonicEvent) -> serde_json::Value {
                 MicroplateOrigin::TrenchTrapped => "trench_trapped",
                 MicroplateOrigin::BackArcBasin => "back_arc_basin",
                 MicroplateOrigin::RidgeJump => "ridge_jump",
+                MicroplateOrigin::Severed => "severed",
             },
         }),
     }
@@ -149,10 +158,10 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
 
     let mut samples: Vec<serde_json::Value> = Vec::new();
     let mut prev_events = 0usize;
-    let mut window_events = [0u64; 5]; // suture, rift_start, rift_failed, split, microplate
+    let mut window_events = [0u64; 6]; // suture, rift_start, rift_failed, split, microplate, capture
 
     let sample =
-        |sim: &SimState, window_events: &[u64; 5], samples: &mut Vec<serde_json::Value>| {
+        |sim: &SimState, window_events: &[u64; 6], samples: &mut Vec<serde_json::Value>| {
             let comps = plate_components(grid, &sim.plate_id, sim.plates.len());
             let mut multi: Vec<serde_json::Value> = Vec::new();
             for (pid, sizes) in comps.iter().enumerate() {
@@ -191,6 +200,12 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
             for &p in &sim.plate_id {
                 cells[p as usize] += 1;
             }
+            // WO-0008 S1: continental-inventory census (step 6 diagnosis).
+            let cont_cells = sim.crust_type.iter().filter(|&&t| t == 1).count();
+            let hard_cells = (0..sim.crust_type.len())
+                .filter(|&c| sim.crust_type[c] == 1 && sim.thickness[c] >= 30.0)
+                .count();
+            let locked_pairs = sim.collisions.iter().filter(|t| t.locked_my > 0.0).count();
             let largest_share =
                 cells.iter().copied().max().unwrap_or(0) as f64 / sim.plate_id.len() as f64;
             samples.push(json!({
@@ -206,6 +221,20 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
                 "rift_failures_in_window_count": window_events[2],
                 "splits_in_window_count": window_events[3],
                 "microplates_in_window_count": window_events[4],
+                "captures_in_window_count": window_events[5],
+                "continental_cells": cont_cells,
+                "continental_cells_hard": hard_cells,
+                "locked_pair_count": locked_pairs,
+                "cont_lost_to_ridge_gap_cum": sim.cont_lost_to_ridge_gap,
+                "cont_lost_to_consumption_cum": sim.cont_lost_to_consumption,
+                "cont_lost_to_rift_cum": sim.cont_lost_to_rift,
+                "cont_gained_by_advection_cum": sim.cont_gained_by_advection,
+                "cont_gained_by_arc_cum": sim.cont_gained_by_arc,
+                "cont_gained_by_closure_cum": sim.cont_gained_by_closure,
+                "rift_link_count_cum": sim.rift_link_count,
+                "suture_fail_extent_cum": sim.suture_fail_extent,
+                "suture_fail_lock_cum": sim.suture_fail_lock,
+                "suture_fail_ocean_cum": sim.suture_fail_ocean,
                 "pair_timer_count": sim.collisions.len(),
                 "active_rift_count": sim.rifts.len(),
                 "multi_component_plate_count": multi.len(),
@@ -231,6 +260,7 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
                 TectonicEvent::RiftFailed { .. } => 2,
                 TectonicEvent::Split { .. } => 3,
                 TectonicEvent::Microplate { .. } => 4,
+                TectonicEvent::Capture { .. } => 5,
             };
             window_events[slot] += 1;
         }
@@ -241,7 +271,7 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
         }
         if (step_idx + 1) % SAMPLE_EVERY_STEPS == 0 {
             sample(&sim, &window_events, &mut samples);
-            window_events = [0; 5];
+            window_events = [0; 6];
         }
     }
 
@@ -297,6 +327,9 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
             "rift_starts_per_gy": per_gy(sim.rift_start_count),
             "rift_failures_per_gy": per_gy(sim.rift_failed_count),
             "microplates_per_gy": per_gy(sim.microplate_count),
+            "continental_cells_final": sim.crust_type.iter().filter(|&&t| t == 1).count(),
+            "cont_gained_by_closure_total": sim.cont_gained_by_closure,
+            "rift_link_count_total": sim.rift_link_count,
             "events_recorded": events.len(),
             "events_total": sim.events.len(),
             "max_multi_component_plates_in_sample": max_multi,
@@ -309,9 +342,10 @@ fn run_probe(seed_label: &str, seed: u64, grid: &Arc<Grid>) -> serde_json::Value
     })
 }
 
-/// WO-0006 S2 step 10. Ignored: dev probe, ~2×2 Gy L6 runs (minutes).
+/// WO-0006 S2 step 10 / WO-0008 S1 step 9. Ignored: dev probe, ~2×2 Gy
+/// L6 runs (minutes).
 #[test]
-#[ignore = "dev probe: writes docs/results/plate-physics-probe-s2-<seed>.json"]
+#[ignore = "dev probe: writes docs/results/plate-physics-probe-s4-<seed>.json"]
 fn plate_physics_probe() {
     let grid = Arc::new(Grid::build(6));
     let date = today_utc_iso();
@@ -323,7 +357,7 @@ fn plate_physics_probe() {
             serde_json::to_string_pretty(&metrics["headline"]).unwrap()
         );
         let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/results"))
-            .join(format!("plate-physics-probe-s2-{label}.json"));
+            .join(format!("plate-physics-probe-s4-{label}.json"));
         ResultsFile::new(&date, metrics).write(&path).unwrap();
         eprintln!("wrote {}", path.display());
     }

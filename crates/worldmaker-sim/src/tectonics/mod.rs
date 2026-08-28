@@ -256,6 +256,7 @@ pub fn run_history(
             cont_lost_to_rift: sim.cont_lost_to_rift,
             cont_gained_by_advection: sim.cont_gained_by_advection,
             cont_gained_by_arc: sim.cont_gained_by_arc,
+            cont_gained_by_closure: sim.cont_gained_by_closure,
             suture_count: sim.suture_count,
             breakup_count: sim.breakup_count,
             rift_start_count: sim.rift_start_count,

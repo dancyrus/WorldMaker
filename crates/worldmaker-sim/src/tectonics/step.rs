@@ -57,7 +57,7 @@ const K_SLAB: f32 = 0.66;
 const K_RIDGE: f32 = 0.25;
 /// Residual mantle traction per plate cell; K_MANTLE / C_DRAG is the
 /// residual drift of a slab-free, ridge-free plate (~0.8 cm/yr).
-const K_MANTLE: f32 = 0.09;
+const K_MANTLE: f32 = 0.10;
 /// Basal drag per plate cell (the normalization of the balance).
 const C_DRAG: f32 = 1.25;
 /// Continent-continent contact resistance per contact cell (strength = 1.0
@@ -119,14 +119,35 @@ pub(super) const SUTURE_AFTER_MY: f32 = 30.0;
 /// smaller plate's perimeter (Dan's ruling, WO-0005) — a pinprick contact
 /// must never weld two plates.
 pub(super) const SUTURE_CONTACT_FRACTION: f32 = 0.3;
+/// Condition 1's absolute alternative (WO-0008 S1): a contact spanning at
+/// least this many km of front is a substantial margin regardless of the
+/// perimeter ratio. The 30%-of-perimeter test structurally vetoed welds
+/// between GIANT plates — a locked 90-cell (~10,000 km) front ground for
+/// 800 My at seed cyrus because both plates had ~400-cell perimeters —
+/// while the §3 intent is only that a pinprick must never weld. 5,500 km
+/// (~50 cells at L6) is far above any pinprick and in the range of real
+/// terminal-collision fronts (the Himalayan front plus its syntaxes;
+/// central Asian composite sutures).
+pub(super) const SUTURE_ABS_CONTACT_KM: f32 = 5500.0;
 /// Condition 2: mean relative speed across the contact (cm/yr) below the
 /// classification dead band — the contact is kinematically indistinguishable
 /// from plate interior (Gordon 1998).
 const SUTURE_LOCK_CMYR: f32 = 0.4;
-/// Condition 3: every cell within this many rings of the contact on both
-/// sides must be continental — suturing is the terminal act of the Wilson
-/// cycle, after the intervening ocean is consumed (Wilson 1966).
-const SUTURE_OCEAN_RINGS: u16 = 2;
+/// Condition 3 (amended WO-0008 S1): no oceanic region larger than
+/// `RELIC_BASIN_KEEP_CELLS` within this many rings of the contact on both
+/// sides — suturing is the terminal act of the Wilson cycle, after the
+/// intervening ocean is consumed (Wilson 1966), but a consumed-down relic
+/// sea no longer blocks the weld.
+pub(super) const SUTURE_OCEAN_RINGS: u16 = 2;
+
+// ----- relic-basin closure (WO-0008 S1, model §3 addendum) -----
+/// A basin consumed down to this many cells survives as a relic sea
+/// (Caspian / Black Sea) and stops blocking suture condition 3.
+pub const RELIC_BASIN_KEEP_CELLS: u32 = 12;
+/// A connected oceanic region counts as enclosed by a colliding pair when
+/// at least this fraction of its bordering continental cells belong to
+/// the two plates.
+const RELIC_ENCLOSED_FRACTION: f32 = 0.8;
 
 // ----- lithosphere strength (WO-0006 S2, model §4) -----
 // S(c) = S_type · g_age · g_suture · thickness penalties · g_insulation.
@@ -155,8 +176,8 @@ const HOT_OROGEN_FACTOR: f32 = 1.0;
 // ramping in over 100–300 My since that plate last sutured (Gurnis 1988:
 // trapped heat softens the lithosphere above).
 const INSULATION_CONT_FRACTION: f32 = 1.0 / 3.0;
-const INSULATION_START_MY: f32 = 100.0;
-const INSULATION_FULL_MY: f32 = 300.0;
+const INSULATION_START_MY: f32 = 55.0;
+const INSULATION_FULL_MY: f32 = 165.0;
 const INSULATION_FLOOR: f32 = 0.18;
 
 // ----- rifting (WO-0006 S2, model §5 + amendment A) -----
@@ -189,13 +210,17 @@ const RIFT_PROP_KM_MY: f32 = 75.0;
 /// breakup recurs on ~2×10⁸ yr per plate). Without this, every plume
 /// re-fires the step after each failure or split and the census runs away
 /// (measured: 12 → 28 plates in 200 My at L5).
-const RIFT_REFRACTORY_MY: f32 = 200.0;
+const RIFT_REFRACTORY_MY: f32 = 180.0;
+/// Two active rift tips on the same plate within this many cells connect
+/// along the least-strength path and merge their systems (WO-0008 S1:
+/// East Africa–Red Sea–Gulf of Aden linkage).
+const RIFT_LINK_CELLS: u16 = 3;
 /// A rift needs a plate interior to cut: plates below this fraction of the
 /// sphere deform instead of splitting (no nucleation, no split). Without
 /// it, splits of splinters feed a runaway froth (measured: the census
 /// railed at the 60-plate mask cap by 800 My at L5 and continents ground
 /// away to 1% of the sphere by 2 Gy).
-const MIN_RIFT_PLATE_FRACTION: f32 = 1.0 / 50.0;
+const MIN_RIFT_PLATE_FRACTION: f32 = 1.0 / 15.0;
 /// Completed rifts whose split never materialized leave the ledger after
 /// this long (attribution bookkeeping only; the scar cells stay).
 const RIFT_ENTRY_PRUNE_MY: f32 = 400.0;
@@ -223,6 +248,13 @@ const MICRO_MAX_FRACTION: f32 = 0.02;
 /// Alive-plate headroom guard: the advection candidate mask is a u64, so
 /// fragment promotion falls back to reassignment near the limit.
 const MAX_ALIVE_PLATES: usize = 60;
+/// Fossil-boundary capture (WO-0008 S1): a plate below
+/// MICRO_MAX_FRACTION of the sphere whose ENTIRE boundary stays below the
+/// classification dead band for this long has fossilized and merges into
+/// the neighbor sharing the longest border (Kula-style capture). This is
+/// the death path for split debris: without it, split births outran
+/// deaths and the census inflated through every active Wilson cycle.
+const CAPTURE_AFTER_MY: f32 = 60.0;
 /// Hotspot shield-building rate at the center cell / its ring, km/My, and
 /// the buildup cap (km). Sized so 5–10 My of residence builds a shield that
 /// can breach sea level over mature (−5,600 m) ocean floor.
@@ -383,6 +415,12 @@ pub struct SimState {
 
     // Reused scratch.
     cand_mask: Vec<AtomicU64>,
+    /// Direct forward claims only (no ring dilation): bit d set when some
+    /// cell of dense plate d mapped exactly onto this cell in the scatter
+    /// pass. The seam rule (WO-0008 S1) unions this with the back-rotated
+    /// coverage sample so both rasterizations of the same rigid motion
+    /// agree on ownership.
+    direct_mask: Vec<AtomicU64>,
     outs: Vec<CellOut>,
     class: Vec<ClassOut>,
     bfs_depth: Vec<u16>,
@@ -395,6 +433,9 @@ pub struct SimState {
     pub cont_lost_to_rift: u64,
     pub cont_gained_by_advection: u64,
     pub cont_gained_by_arc: u64,
+    /// Ocean consumed into continental margin by relic-basin closure
+    /// (WO-0008 S1).
+    pub cont_gained_by_closure: u64,
     pub suture_count: u64,
     /// Suture-condition diagnostics (WO-0006 S3 calibration): pair-steps
     /// where a continent-continent contact existed but §3 condition 1
@@ -407,6 +448,8 @@ pub struct SimState {
     pub breakup_count: u64,
     pub rift_start_count: u64,
     pub rift_failed_count: u64,
+    /// Same-plate rift systems merged by tip linkage (WO-0008 S1).
+    pub rift_link_count: u64,
     pub microplate_count: u64,
     /// Cells reassigned by the connectivity backstop (cumulative). The §7
     /// invariant target: this fires only for advection seam noise.
@@ -454,6 +497,7 @@ impl SimState {
             cont_total_cells: 0,
             rift_prop_cells: ((RIFT_PROP_KM_MY * DT_MY / cell_spacing_km).round() as u32).max(1),
             cand_mask: (0..n).map(|_| AtomicU64::new(0)).collect(),
+            direct_mask: (0..n).map(|_| AtomicU64::new(0)).collect(),
             outs: Vec::new(),
             class: vec![ClassOut::default(); n],
             bfs_depth: vec![u16::MAX; n],
@@ -463,6 +507,7 @@ impl SimState {
             cont_lost_to_rift: 0,
             cont_gained_by_advection: 0,
             cont_gained_by_arc: 0,
+            cont_gained_by_closure: 0,
             suture_count: 0,
             suture_fail_extent: 0,
             suture_fail_lock: 0,
@@ -470,6 +515,7 @@ impl SimState {
             breakup_count: 0,
             rift_start_count: 0,
             rift_failed_count: 0,
+            rift_link_count: 0,
             microplate_count: 0,
             connectivity_reassigned: 0,
         }
@@ -617,6 +663,7 @@ impl SimState {
         // construction (a weld is a contact union; split halves are built
         // connected).
         self.update_pair_timers_and_sutures();
+        self.capture_fossilized_plates();
         self.check_rift_splits();
         self.grow_rifts();
         self.apply_hotspots();
@@ -667,7 +714,17 @@ impl SimState {
                 && self.cont_cells_per_plate[pid] as f32
                     > self.cont_total_cells as f32 * INSULATION_CONT_FRACTION
             {
-                let dt = self.t_my - self.plates[pid].youngest_suture_my;
+                // Venting (WO-0008 S1): breakup releases the trapped heat
+                // through the new ridge, so the insulation ramp restarts
+                // from the plate's last actual BREAKUP as well as its last
+                // suture — without this, a supercontinental plate stayed
+                // at the insulation floor through every split in a runaway
+                // cascade (measured: 29.5 splits/Gy and a census of 64).
+                // Failed nucleation attempts vent nothing.
+                let anchor = self.plates[pid]
+                    .youngest_suture_my
+                    .max(self.plates[pid].youngest_breakup_my);
+                let dt = self.t_my - anchor;
                 let ramp = ((dt - INSULATION_START_MY)
                     / (INSULATION_FULL_MY - INSULATION_START_MY))
                     .clamp(0.0, 1.0);
@@ -771,17 +828,73 @@ impl SimState {
             fwd.push(m);
         }
 
+        // Per-pair subduction polarity (WO-0008 S1 seam rule, half 2):
+        // between two soft crusts, WHICH side subducts is decided once per
+        // unordered plate pair per step — the side with the older (denser)
+        // mean crust age along the shared boundary goes under; tie → the
+        // higher plate id subducts (matching classify_boundaries' tie).
+        // Under the old per-cell source-age comparison the polarity
+        // flip-flopped along a single front (ages vary along it), the
+        // fronts interpenetrated, and the interlocking bites pinched cells
+        // off both plates — the probe measured pairs consuming each other
+        // BOTH ways in the same step, thousands of backstop cells per
+        // 100 My. Serial, cell-id order, f64 sums — deterministic.
+        let pair_override: Vec<(u32, u32, u32)> = {
+            let mut acc: Vec<(u32, u32, f64, u32, f64, u32)> = Vec::new();
+            for c in 0..n {
+                let a = self.plate_id[c];
+                for &nb in self.grid.neighbors_of(c as u32) {
+                    let b = self.plate_id[nb as usize];
+                    if b == a {
+                        continue;
+                    }
+                    let (lo, hi) = (a.min(b), a.max(b));
+                    let e = match acc.iter_mut().find(|e| e.0 == lo && e.1 == hi) {
+                        Some(e) => e,
+                        None => {
+                            acc.push((lo, hi, 0.0, 0, 0.0, 0));
+                            acc.last_mut().unwrap()
+                        }
+                    };
+                    if a == lo {
+                        e.2 += self.crust_age[c] as f64;
+                        e.3 += 1;
+                    } else {
+                        e.4 += self.crust_age[c] as f64;
+                        e.5 += 1;
+                    }
+                }
+            }
+            acc.iter()
+                .map(|&(lo, hi, s_lo, n_lo, s_hi, n_hi)| {
+                    let m_lo = s_lo / n_lo.max(1) as f64;
+                    let m_hi = s_hi / n_hi.max(1) as f64;
+                    // Older mean subducts; tie → higher id subducts, so the
+                    // lower id overrides.
+                    let winner = if m_lo > m_hi { hi } else { lo };
+                    (lo, hi, winner)
+                })
+                .collect()
+        };
+        let pair_override_ref = &pair_override;
+
         // Zero the candidate masks.
         self.cand_mask
+            .par_iter()
+            .for_each(|m| m.store(0, Ordering::Relaxed));
+        self.direct_mask
             .par_iter()
             .for_each(|m| m.store(0, Ordering::Relaxed));
 
         let grid = &self.grid;
         let plate_id = &self.plate_id;
         let cand = &self.cand_mask;
+        let direct = &self.direct_mask;
 
         // Forward scatter: each cell claims its destination and that cell's
-        // ring for its plate. Atomic OR is commutative — deterministic.
+        // ring for its plate. Atomic OR is commutative — deterministic. The
+        // exact destination is also recorded ring-free: it is the forward
+        // half of the seam rule below.
         (0..n).into_par_iter().for_each(|c| {
             let d = dense_of_id[plate_id[c] as usize];
             if !committing[d as usize] {
@@ -790,6 +903,7 @@ impl SimState {
             let dst_pos = mat3_mul(&fwd[d as usize], grid.positions[c]);
             let dst = grid.nearest_cell(dst_pos, Some(c as u32));
             let bit = 1u64 << d;
+            direct[dst as usize].fetch_or(bit, Ordering::Relaxed);
             cand[dst as usize].fetch_or(bit, Ordering::Relaxed);
             for &nb in grid.neighbors_of(dst) {
                 cand[nb as usize].fetch_or(bit, Ordering::Relaxed);
@@ -845,6 +959,16 @@ impl SimState {
                 }
 
                 // Coverage tests in ascending dense order (deterministic).
+                // The seam rule (WO-0008 S1): a plate covers this cell when
+                // EITHER rasterization of its rigid motion says so — its
+                // back-rotated sample lands on its own crust (gather half),
+                // OR one of its cells mapped exactly here in the forward
+                // scatter (direct claim). The two half-tests rasterize the
+                // same motion from opposite ends; requiring only their union
+                // removes the aliasing flicker that severed seam cells from
+                // their plates (the backstop ate thousands of cells per
+                // 100 My under the gather-only test).
+                let direct_bits = direct[c].load(Ordering::Relaxed);
                 let mut cover_plate = [0u32; 8];
                 let mut cover_src = [0u32; 8];
                 let mut covers = 0usize;
@@ -859,6 +983,23 @@ impl SimState {
                         cover_plate[covers] = pid;
                         cover_src[covers] = src;
                         covers += 1;
+                    } else if direct_bits & (1u64 << d) != 0 {
+                        // Forward-claimed but the back sample rounded off the
+                        // plate: source the crust from the first plate-owned
+                        // cell in the back sample's ring (fixed CCW ring
+                        // order — deterministic; the sample sits within one
+                        // cell of the plate edge, so a neighbor almost
+                        // always matches; give up otherwise).
+                        let nb_src = grid
+                            .neighbors_of(src)
+                            .iter()
+                            .copied()
+                            .find(|&nb| plate_id[nb as usize] == pid);
+                        if let Some(sc) = nb_src {
+                            cover_plate[covers] = pid;
+                            cover_src[covers] = sc;
+                            covers += 1;
+                        }
                     }
                 }
 
@@ -869,7 +1010,7 @@ impl SimState {
                     && prev_feat[c] & F_BND_DIVERGENT == 0
                     && prev_feat[c] & F_BND_CONVERGENT == 0;
 
-                match covers {
+                let out = match covers {
                     0 => {
                         if was_transform_only {
                             // Transform jitter, not spreading: keep the cell.
@@ -969,18 +1110,32 @@ impl SimState {
                             }
                         } else {
                             // At most one hard plate: it overrides; otherwise
-                            // the youngest (least dense) soft crust overrides.
+                            // the soft winner comes from the per-pair
+                            // polarity (seam rule): one verdict per plate
+                            // pair per step, so the whole front agrees. The
+                            // per-cell source-age comparison remains only as
+                            // the fallback for a pair with no shared
+                            // boundary last step (fresh contact).
                             let mut win = 0usize;
                             if hard_count == 1 {
                                 win = (0..covers).find(|&i| is_hard(i)).unwrap();
                             } else {
                                 for ch in 1..covers {
-                                    let (ws, cs) =
-                                        (cover_src[win] as usize, cover_src[ch] as usize);
-                                    if prev_age[cs] < prev_age[ws]
-                                        || (prev_age[cs] == prev_age[ws]
-                                            && cover_plate[ch] < cover_plate[win])
+                                    let (pw, pc2) = (cover_plate[win], cover_plate[ch]);
+                                    let (lo, hi) = (pw.min(pc2), pw.max(pc2));
+                                    let ch_wins = match pair_override_ref
+                                        .iter()
+                                        .find(|e| e.0 == lo && e.1 == hi)
                                     {
+                                        Some(&(_, _, w)) => w == pc2,
+                                        None => {
+                                            let (ws, cs) =
+                                                (cover_src[win] as usize, cover_src[ch] as usize);
+                                            prev_age[cs] < prev_age[ws]
+                                                || (prev_age[cs] == prev_age[ws] && pc2 < pw)
+                                        }
+                                    };
+                                    if ch_wins {
                                         win = ch;
                                     }
                                 }
@@ -1016,9 +1171,175 @@ impl SimState {
                             }
                         }
                     }
+                };
+                // Continental balance (WO-0008 S1 step 6): continental
+                // crust at or above SUBDUCTIBLE_CONT_KM is never erased at
+                // a consuming margin. Where another plate would replace it
+                // with oceanic crust, the cell's continental content
+                // survives and transfers to the winner instead — terrane
+                // accretion (Wrangellia-style docking): buoyant continent
+                // does not go down the slab.
+                if out.ctype == 0
+                    && out.plate != plate_id[c]
+                    && prev_ctype[c] == 1
+                    && prev_thick[c] >= SUBDUCTIBLE_CONT_KM
+                {
+                    CellOut {
+                        plate: out.plate,
+                        ..keep_cell(c, 0, out.collided)
+                    }
+                } else {
+                    out
                 }
             })
             .collect_into_vec(&mut outs);
+
+        // Seam rule, half 3 (WO-0008 S1): connectivity-preserving
+        // consumption. A per-cell gather can pinch off pieces of a plate —
+        // a ragged bite encloses a bay, or a front severs a neck — and the
+        // §7 backstop then teleports the piece to a neighbor plate
+        // (measured: 25–60k cells per 2 Gy at L6, most of the backstop
+        // budget). Rigid lithosphere does not do that: the bridge holds
+        // until the piece is consumed face-first. So: while any plate's
+        // NEW ownership has a fragment, revert the ownership flips that
+        // caused it — every changed cell inside the fragment, and every
+        // cell adjacent to it that changed away from the fragment's
+        // plate. Reverting only ever un-does this step's changes, so the
+        // loop strictly shrinks the changed set and terminates. NO
+        // severed piece becomes a plate here — promoting them was tried
+        // two ways during WO-0008 S1 and both railed the census (every
+        // plate-scale piece: 60-plate cap in 2 Gy; Farallon-signature
+        // slices only: 42 alive and climbing, because the old
+        // fragment-absorption that silently killed microplates is gone).
+        // A severed piece instead stays attached through the reverted
+        // neck and is consumed face-first over the following steps.
+        // Serial and id-ordered — deterministic.
+        {
+            let mut comp_of = vec![u32::MAX; n];
+            let mut queue: VecDeque<u32> = VecDeque::new();
+            for pass in 0.. {
+                for v in comp_of.iter_mut() {
+                    *v = u32::MAX;
+                }
+                let mut comp_plate: Vec<u32> = Vec::new();
+                let mut comp_cells: Vec<Vec<u32>> = Vec::new();
+                for c0 in 0..n {
+                    if comp_of[c0] != u32::MAX {
+                        continue;
+                    }
+                    let p = outs[c0].plate;
+                    let ci = comp_plate.len() as u32;
+                    comp_plate.push(p);
+                    comp_cells.push(Vec::new());
+                    comp_of[c0] = ci;
+                    queue.push_back(c0 as u32);
+                    while let Some(c) = queue.pop_front() {
+                        comp_cells[ci as usize].push(c);
+                        for &nb in grid.neighbors_of(c) {
+                            let nbu = nb as usize;
+                            if comp_of[nbu] == u32::MAX && outs[nbu].plate == p {
+                                comp_of[nbu] = ci;
+                                queue.push_back(nb);
+                            }
+                        }
+                    }
+                }
+                let mut keep = vec![u32::MAX; self.plates.len()];
+                for ci in 0..comp_plate.len() {
+                    let p = comp_plate[ci] as usize;
+                    if keep[p] == u32::MAX
+                        || comp_cells[ci].len() > comp_cells[keep[p] as usize].len()
+                    {
+                        keep[p] = ci as u32;
+                    }
+                }
+                let mut reverted = false;
+                for ci in 0..comp_plate.len() {
+                    let p = comp_plate[ci];
+                    if keep[p as usize] == ci as u32 {
+                        continue;
+                    }
+                    for &c in &comp_cells[ci] {
+                        let cu = c as usize;
+                        if outs[cu].plate != plate_id[cu] {
+                            outs[cu] = keep_cell(cu, 0, NONE);
+                            reverted = true;
+                        }
+                        for &nb in grid.neighbors_of(c) {
+                            let nbu = nb as usize;
+                            if plate_id[nbu] == p && outs[nbu].plate != p {
+                                outs[nbu] = keep_cell(nbu, 0, NONE);
+                                reverted = true;
+                            }
+                        }
+                    }
+                }
+                if !reverted {
+                    break;
+                }
+                if pass >= 63 {
+                    log::warn!(
+                        "t={} My: seam connectivity repair did not converge",
+                        self.t_my
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Continental inventory guard (WO-0008 S1 step 6): a jammed plate
+        // keeps rotating (the commit already happened) but its front is
+        // denied, so each committed step its trailing edge sheds hard
+        // continental cells that nothing replaces — the jam grind that
+        // drained continents (measured: −59% to −97% of continental area
+        // over 2 Gy). Physically the pinned material stays put and the
+        // convergence shortens the crust (S2's ledger turns that into
+        // thickness). So, per committed plate: when this step destroyed
+        // more of the plate's hard continental cells (same-plate
+        // continent → ocean) than the plate gained in new continental
+        // cells, revert the excess losses in ascending id order — the
+        // block backs up instead of vanishing. A freely moving continent
+        // is untouched (gains balance losses); rasterization drift is
+        // healed as a side effect. Serial, id-ordered — deterministic.
+        {
+            let np = self.plates.len();
+            let mut gains = vec![0u32; np];
+            let mut losses: Vec<Vec<u32>> = vec![Vec::new(); np];
+            for (c, o) in outs.iter().enumerate() {
+                let p = o.plate as usize;
+                // A gain is ocean turning into the plate's HARD continent —
+                // the block genuinely advancing. Accretion transfers
+                // (foreign continent docking onto p) are NOT gains: they
+                // move area between plates, so letting them offset p's own
+                // trailing losses would let jams keep grinding globally.
+                // Soft gains (thin arc fringe advancing) do not offset hard
+                // losses either — the ledger is hard-for-hard.
+                if o.ctype == 1 && prev_ctype[c] == 0 {
+                    gains[p] += 1;
+                } else if o.ctype == 0 && plate_id[c] == o.plate && prev_ctype[c] == 1 {
+                    losses[p].push(c as u32);
+                }
+            }
+            for p in 0..np {
+                let excess = losses[p].len().saturating_sub(gains[p] as usize);
+                if excess == 0 {
+                    continue;
+                }
+                // Revert gap-ridge losses FIRST (stable partition, id order
+                // within each half): the jam grind on a whole-continent
+                // plate shows up as trailing gap-ridge cells, while an
+                // in-plate rift corridor translating with its plate makes
+                // paired single-cover losses and gains — reverting those
+                // would re-fill the corridor with continent and no split
+                // could ever complete (measured: splits went to zero).
+                let (gap, other): (Vec<u32>, Vec<u32>) = losses[p]
+                    .iter()
+                    .partition(|&&c| outs[c as usize].features & F_RIDGE != 0);
+                for &c in gap.iter().chain(other.iter()).take(excess) {
+                    outs[c as usize] = keep_cell(c as usize, 0, NONE);
+                }
+            }
+        }
 
         // Scatter into the SoA arrays and refresh plate cell counts. Slab
         // ledger: consumption this step is merged into one segment per
@@ -1118,6 +1439,7 @@ impl SimState {
         speed: f32,
         youngest_suture_my: f32,
         youngest_rift_my: f32,
+        youngest_breakup_my: f32,
     ) -> u32 {
         let id = self.plates.len() as u32;
         self.plates.push(PlateState {
@@ -1127,6 +1449,8 @@ impl SimState {
             speed_deg_my: speed,
             youngest_suture_my,
             youngest_rift_my,
+            youngest_breakup_my,
+            quiet_my: 0.0,
             pending_rot: IDENTITY3,
             pending_deg: 0.0,
             slab: Vec::new(),
@@ -1233,19 +1557,21 @@ impl SimState {
                 continue;
             }
             let p = comp_plate[ci];
-            // §6 trench-trapped slice: a big, purely oceanic fragment
-            // against an active trench becomes its own plate (inheriting
-            // the parent's motion; the force balance owns it from the next
-            // step). Continental fragments are collision debris and get
-            // reassigned like any orphan.
+            // §6 severed slice (widened WO-0008 S1): a plate-scale piece
+            // cut off by consumption becomes its own plate (inheriting the
+            // parent's motion; the force balance owns it from the next
+            // step), whatever its crust content — the connecting
+            // lithosphere is gone, so it IS mechanically independent.
+            // Origin is labeled TrenchTrapped when it carries the classic
+            // Farallon signature (pure young ocean against the trench that
+            // cut it), Severed otherwise. Sub-plate-scale pieces no longer
+            // reach this pass at all: advect's repair half of the seam
+            // rule keeps them attached, so what remains here is seam
+            // noise for the backstop below.
             let micro_min =
                 MICRO_MIN_CELLS.max((self.plate_id.len() as f32 * MICRO_MIN_FRACTION) as u32);
             if cells.len() as u32 >= micro_min && alive < MAX_ALIVE_PLATES {
                 let oceanic = cells.iter().all(|&c| self.crust_type[c as usize] == 0);
-                // The Farallon signature: the slice still holds young crust
-                // from the ridge the trench just consumed. Old interior
-                // ocean shorn off a plate is ordinary debris, not a
-                // Juan de Fuca remnant.
                 let had_ridge = cells
                     .iter()
                     .any(|&c| self.crust_age[c as usize] < CORRIDOR_MAX_AGE_MY);
@@ -1259,15 +1585,16 @@ impl SimState {
                                 .iter()
                                 .any(|&nb| self.features[nb as usize] & F_TRENCH != 0)
                     });
-                if against_trench {
+                {
                     let parent = &self.plates[p as usize];
-                    let (pole, speed, ys, yr) = (
+                    let (pole, speed, ys, yr, yb) = (
                         parent.pole,
                         parent.speed_deg_my,
                         parent.youngest_suture_my,
                         parent.youngest_rift_my,
+                        parent.youngest_breakup_my,
                     );
-                    let id = self.spawn_plate(pole, speed, ys, yr);
+                    let id = self.spawn_plate(pole, speed, ys, yr, yb);
                     for &c in &frag_cells[ci] {
                         self.plate_cells[self.plate_id[c as usize] as usize] -= 1;
                         self.plate_cells[id as usize] += 1;
@@ -1275,13 +1602,17 @@ impl SimState {
                     }
                     self.events.push(TectonicEvent::Microplate {
                         id,
-                        origin: MicroplateOrigin::TrenchTrapped,
+                        origin: if against_trench {
+                            MicroplateOrigin::TrenchTrapped
+                        } else {
+                            MicroplateOrigin::Severed
+                        },
                         t: self.t_my,
                     });
                     self.microplate_count += 1;
                     alive += 1;
                     log::debug!(
-                        "t={} My: trench-trapped microplate {id} off plate {p} ({} cells)",
+                        "t={} My: severed microplate {id} off plate {p} ({} cells)",
                         self.t_my,
                         frag_cells[ci].len()
                     );
@@ -1685,10 +2016,23 @@ impl SimState {
                     (e.b, e.cells_b)
                 };
             let perimeter = self.boundary_cells[small as usize].max(1);
-            let extent_ok = small_contact as f32 >= SUTURE_CONTACT_FRACTION * perimeter as f32;
+            let abs_cells = SUTURE_ABS_CONTACT_KM / self.cell_spacing_km;
+            let extent_ok = small_contact as f32 >= SUTURE_CONTACT_FRACTION * perimeter as f32
+                || small_contact as f32 >= abs_cells;
             // Condition 2: kinematically locked.
-            let locked = (e.rel_sum / e.rel_n.max(1) as f32) < SUTURE_LOCK_CMYR;
-            // Condition 3 (checked last — it walks rings): ocean closed.
+            let mean_rel = e.rel_sum / e.rel_n.max(1) as f32;
+            let locked = mean_rel < SUTURE_LOCK_CMYR;
+            // Relic-basin closure (WO-0008 S1, model §3 addendum): while
+            // the pair is locked (conditions 1 + 2), enclosed basins near
+            // the contact are consumed at their margins — the terminal
+            // closure that lets condition 3 eventually pass. Runs BEFORE
+            // condition 3 so this step's consumption counts.
+            if extent_ok && locked {
+                let rate_cmyr = mean_rel.max(CLASSIFY_CMYR);
+                self.consume_relic_basins(&e.contact_cells, e.a, e.b, rate_cmyr);
+            }
+            // Condition 3 (checked last — it walks rings): ocean closed up
+            // to relic seas.
             let holds = extent_ok && locked && self.ocean_closed(&e.contact_cells, e.a, e.b);
             // Which condition binds (calibration diagnostics; ocean is only
             // known when 1 and 2 hold, matching the short-circuit).
@@ -1701,13 +2045,23 @@ impl SimState {
             if extent_ok && locked && !holds {
                 self.suture_fail_ocean += 1;
             }
-            let old = self
-                .collisions
-                .iter()
-                .find(|t| t.a == e.a && t.b == e.b)
-                .map(|t| t.slow_collision_my)
-                .unwrap_or(0.0);
-            let t = if holds { old + DT_MY } else { 0.0 };
+            let old = self.collisions.iter().find(|t| t.a == e.a && t.b == e.b);
+            let old_slow = old.map(|t| t.slow_collision_my).unwrap_or(0.0);
+            let old_locked = old.map(|t| t.locked_my).unwrap_or(0.0);
+            // Both pair clocks decay at 2x instead of hard-resetting on a
+            // lapse (WO-0008 S1): the zigzag hex boundary sprays one-step
+            // classification flickers (the documented advection problem
+            // the rift-onset clock already guards against with the same
+            // 2x hysteresis), and a hard reset let a single flicker erase
+            // 28 My of accumulated lock — welds structurally undershot the
+            // 2/Gy floor at seed cyrus in every calibration. A real unlock
+            // still drains the clock in half the time it took to build.
+            let decay = |v: f32| (v - RIFT_DECAY_MULT * DT_MY).max(0.0);
+            let t = if holds {
+                old_slow + DT_MY
+            } else {
+                decay(old_slow)
+            };
             if t >= SUTURE_AFTER_MY && matured.is_none() {
                 matured = Some(i);
             }
@@ -1715,6 +2069,11 @@ impl SimState {
                 a: e.a,
                 b: e.b,
                 slow_collision_my: t,
+                locked_my: if extent_ok && locked {
+                    old_locked + DT_MY
+                } else {
+                    decay(old_locked)
+                },
             });
         }
         self.collisions = next;
@@ -1741,6 +2100,7 @@ impl SimState {
             b: loser,
             t: self.t_my,
             contact_fraction,
+            contact_cells: small_contact,
         });
         log::debug!("t={} My: suturing plate {loser} into {winner}", self.t_my);
         // The scar is data: every contact cell (both sides) records the weld.
@@ -1771,18 +2131,23 @@ impl SimState {
         self.collisions.retain(|t| t.a != loser && t.b != loser);
     }
 
-    /// §3 condition 3: no ocean within SUTURE_OCEAN_RINGS rings of the
-    /// contact on either plate. Serial BFS seeded in cell-id order.
-    fn ocean_closed(&self, contact_cells: &[u32], a: u32, b: u32) -> bool {
+    /// Oceanic cells within SUTURE_OCEAN_RINGS rings of the contact on
+    /// either plate (serial BFS seeded in contact order): the shared
+    /// window of condition 3 and relic-basin closure.
+    fn ocean_near_contact(&self, contact_cells: &[u32], a: u32, b: u32) -> Vec<u32> {
         let n = self.grid.cell_count() as usize;
         let mut depth = vec![u16::MAX; n];
         let mut queue: VecDeque<u32> = VecDeque::new();
+        let mut window_ocean: Vec<u32> = Vec::new();
         for &c in contact_cells {
-            if self.crust_type[c as usize] == 0 {
-                return false;
+            if depth[c as usize] != u16::MAX {
+                continue;
             }
             depth[c as usize] = 0;
             queue.push_back(c);
+            if self.crust_type[c as usize] == 0 {
+                window_ocean.push(c);
+            }
         }
         while let Some(c) = queue.pop_front() {
             let dc = depth[c as usize];
@@ -1793,15 +2158,192 @@ impl SimState {
                 let nbu = nb as usize;
                 let p = self.plate_id[nbu];
                 if depth[nbu] == u16::MAX && (p == a || p == b) {
-                    if self.crust_type[nbu] == 0 {
-                        return false;
-                    }
                     depth[nbu] = dc + 1;
+                    queue.push_back(nb);
+                    if self.crust_type[nbu] == 0 {
+                        window_ocean.push(nb);
+                    }
+                }
+            }
+        }
+        window_ocean
+    }
+
+    /// The connected oceanic region containing `seed` (any plate), plus
+    /// its enclosure stats for pair (a, b): bordering-continental edge
+    /// count and the share of those on the pair. Serial BFS, fixed order.
+    fn oceanic_region(
+        &self,
+        seed: u32,
+        a: u32,
+        b: u32,
+        visited: &mut [bool],
+        queue: &mut VecDeque<u32>,
+    ) -> (Vec<u32>, u32, u32) {
+        let mut region: Vec<u32> = Vec::new();
+        visited[seed as usize] = true;
+        queue.push_back(seed);
+        while let Some(c) = queue.pop_front() {
+            region.push(c);
+            for &nb in self.grid.neighbors_of(c) {
+                let nbu = nb as usize;
+                if !visited[nbu] && self.crust_type[nbu] == 0 {
+                    visited[nbu] = true;
                     queue.push_back(nb);
                 }
             }
         }
+        let (mut border, mut border_ab) = (0u32, 0u32);
+        for &c in &region {
+            for &nb in self.grid.neighbors_of(c) {
+                let nbu = nb as usize;
+                if self.crust_type[nbu] == 1 {
+                    border += 1;
+                    let p = self.plate_id[nbu];
+                    if p == a || p == b {
+                        border_ab += 1;
+                    }
+                }
+            }
+        }
+        (region, border, border_ab)
+    }
+
+    /// §3 condition 3 (amended WO-0008 S1): no ENCLOSED oceanic region —
+    /// bordering continent ≥ `RELIC_ENCLOSED_FRACTION` on the pair —
+    /// larger than `RELIC_BASIN_KEEP_CELLS` within SUTURE_OCEAN_RINGS
+    /// rings of the contact on either plate. Relic seas no longer block
+    /// the weld, and neither does open ocean off the contact's flanks:
+    /// suturing is about the intervening ocean between the two margins
+    /// (India–Asia welded with the Indian Ocean right beside the front),
+    /// and "intervening" is exactly what the enclosure test measures —
+    /// the same test relic-basin closure uses, so whatever blocks here is
+    /// what closure is consuming. Serial BFS in fixed order.
+    fn ocean_closed(&self, contact_cells: &[u32], a: u32, b: u32) -> bool {
+        let window_ocean = self.ocean_near_contact(contact_cells, a, b);
+        let n = self.grid.cell_count() as usize;
+        let mut visited = vec![false; n];
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for &c0 in &window_ocean {
+            if visited[c0 as usize] {
+                continue;
+            }
+            let (region, border, border_ab) =
+                self.oceanic_region(c0, a, b, &mut visited, &mut queue);
+            if region.len() as u32 > RELIC_BASIN_KEEP_CELLS
+                && border > 0
+                && border_ab as f32 >= RELIC_ENCLOSED_FRACTION * border as f32
+            {
+                return false;
+            }
+        }
         true
+    }
+
+    /// Relic-basin closure (WO-0008 S1, model §3 addendum). For a locked
+    /// pair (conditions 1 + 2): every ENCLOSED oceanic basin near the
+    /// contact — a connected oceanic region whose bordering continental
+    /// cells belong ≥ `RELIC_ENCLOSED_FRACTION` to the two plates — is
+    /// consumed at its margin cells (basin cells of the pair touching
+    /// continent, ascending id) at the pair's convergence-equivalent rate:
+    /// margin advance of `rate_cmyr` per step across the whole margin,
+    /// floored at one cell per basin per step. Each consumed cell becomes
+    /// young continental margin crust of its own plate (thickness copied
+    /// from its lowest-id continental neighbor) and the consumed ocean
+    /// feeds that plate's slab ledger — internal subduction under the
+    /// plate's own margin (Mediterranean-style terminal closure). A basin
+    /// is never consumed below `RELIC_BASIN_KEEP_CELLS`: what remains is a
+    /// relic sea (Caspian / Black Sea). Serial and id-ordered.
+    fn consume_relic_basins(&mut self, contact_cells: &[u32], a: u32, b: u32, rate_cmyr: f32) {
+        let window_ocean = self.ocean_near_contact(contact_cells, a, b);
+        if window_ocean.is_empty() {
+            return;
+        }
+        let n = self.grid.cell_count() as usize;
+        // cm/yr → km/My is ×10; margin cells consumed per margin cell per
+        // step at this level.
+        let frac = rate_cmyr * 10.0 * DT_MY / self.cell_spacing_km;
+        let mut visited = vec![false; n];
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for &seed in &window_ocean {
+            if visited[seed as usize] {
+                continue;
+            }
+            // The seed's full connected oceanic region (any plate), with
+            // the enclosure stats counted per basin-edge (deterministic; a
+            // border cell shared by several basin cells simply weighs
+            // more, which is fine).
+            let (region, border, border_ab) =
+                self.oceanic_region(seed, a, b, &mut visited, &mut queue);
+            let size = region.len() as u32;
+            if size <= RELIC_BASIN_KEEP_CELLS {
+                continue; // already a relic sea
+            }
+            if border == 0 || (border_ab as f32) < RELIC_ENCLOSED_FRACTION * border as f32 {
+                continue; // open ocean or another pair's basin
+            }
+            // Margin cells of the pair's own crust, ascending id.
+            let mut margin: Vec<u32> = region
+                .iter()
+                .copied()
+                .filter(|&c| {
+                    let p = self.plate_id[c as usize];
+                    (p == a || p == b)
+                        && self
+                            .grid
+                            .neighbors_of(c)
+                            .iter()
+                            .any(|&nb| self.crust_type[nb as usize] == 1)
+                })
+                .collect();
+            margin.sort_unstable();
+            if margin.is_empty() {
+                continue;
+            }
+            let want = ((margin.len() as f32 * frac).round() as u32).max(2);
+            let n_consume = want.min(size - RELIC_BASIN_KEEP_CELLS) as usize;
+            // (plate, cells, age sum) for the slab segments, id-ordered.
+            let mut consumed: Vec<(u32, u32, f32)> = Vec::new();
+            for &c in margin.iter().take(n_consume) {
+                let cu = c as usize;
+                let own = self.plate_id[cu];
+                // Thickness template: lowest-id continental neighbor (the
+                // margin the basin underthrusts).
+                let mut nbs: Vec<u32> = self.grid.neighbors_of(c).to_vec();
+                nbs.sort_unstable();
+                let Some(donor) = nbs
+                    .iter()
+                    .copied()
+                    .find(|&nb| self.crust_type[nb as usize] == 1)
+                else {
+                    continue;
+                };
+                match consumed.iter_mut().find(|e| e.0 == own) {
+                    Some(e) => {
+                        e.1 += 1;
+                        e.2 += self.crust_age[cu];
+                    }
+                    None => consumed.push((own, 1, self.crust_age[cu])),
+                }
+                self.cont_gained_by_closure += 1;
+                self.crust_type[cu] = 1;
+                self.thickness[cu] = self.thickness[donor as usize];
+                self.crust_age[cu] = 0.0;
+                self.orogeny_age[cu] = 0.0;
+                self.rift_age[cu] = 0.0;
+                self.slab_plate[cu] = own as u16;
+                self.slab_since_my[cu] = self.t_my;
+            }
+            consumed.sort_unstable_by_key(|e| e.0);
+            for (pid, cnt, age_sum) in consumed {
+                self.plates[pid as usize].slab.push(SlabSegment {
+                    area_cells: cnt,
+                    age_at_subduction_my: age_sum / cnt as f32,
+                    subducted_at_my: self.t_my,
+                    attached: true,
+                });
+            }
+        }
     }
 
     // ----- rifting (model §5 + amendment A) and splits -----
@@ -1944,18 +2486,18 @@ impl SimState {
                 if failed || (!tip_b && r.done_a) || (tip_b && r.done_b) {
                     continue;
                 }
-                let tip = if tip_b { &mut r.tip_b } else { &mut r.tip_a };
-                let done = if tip_b { &mut r.done_b } else { &mut r.done_a };
+                let mut tip = if tip_b { r.tip_b } else { r.tip_a };
+                let mut done = if tip_b { r.done_b } else { r.done_a };
                 for _ in 0..self.rift_prop_cells {
                     // Re-anchor: the plate may have advected out from under
                     // the stored tip id — follow the scar to a plate cell.
-                    if self.plate_id[*tip as usize] != r.plate {
-                        let anchor = self.grid.neighbors_of(*tip).iter().copied().find(|&nb| {
+                    if self.plate_id[tip as usize] != r.plate {
+                        let anchor = self.grid.neighbors_of(tip).iter().copied().find(|&nb| {
                             self.plate_id[nb as usize] == r.plate
                                 && self.rift_age[nb as usize] >= RIFT_ONSET_MY
                         });
                         match anchor {
-                            Some(nb) => *tip = nb,
+                            Some(nb) => tip = nb,
                             None => {
                                 failed = true;
                                 break;
@@ -1965,19 +2507,37 @@ impl SimState {
                     // Reached the plate boundary: this tip is finished.
                     if self
                         .grid
-                        .neighbors_of(*tip)
+                        .neighbors_of(tip)
                         .iter()
                         .any(|&nb| self.plate_id[nb as usize] != r.plate)
                     {
-                        *done = true;
+                        done = true;
                         break;
                     }
-                    // Walk to the weakest unclaimed neighbor (tie → lowest
-                    // id via strict <; neighbors come in fixed CCW order,
-                    // so sort candidates by id first).
-                    let mut nbs: Vec<u32> = self.grid.neighbors_of(*tip).to_vec();
+                    // Walk on: weakness GATES (amendment A: only cells the
+                    // driver stress can break are walkable), the stress
+                    // axis STEERS (WO-0008 S1): each tip advances into the
+                    // walkable neighbor most aligned with the direction
+                    // away from the OTHER tip, so the rift crosses the
+                    // plate instead of curling out through the nearest
+                    // margin — the m4 sliver problem: least-strength
+                    // steering never dropped the supercontinent below the
+                    // 1/3 insulation threshold and the breakup engine
+                    // stayed permanently armed. Cracks propagate along the
+                    // stress axis, deflecting into weak zones only through
+                    // the gate. Ties → weaker cell → lower id.
+                    let other_tip = if tip_b { r.tip_a } else { r.tip_b };
+                    let axis = if tip != other_tip {
+                        Some(normalize3(sub3(
+                            self.grid.positions[tip as usize],
+                            self.grid.positions[other_tip as usize],
+                        )))
+                    } else {
+                        None // first advance: pure least strength
+                    };
+                    let mut nbs: Vec<u32> = self.grid.neighbors_of(tip).to_vec();
                     nbs.sort_unstable();
-                    let mut best: Option<(u32, f32)> = None;
+                    let mut best: Option<(u32, f32, f32)> = None; // (cell, align, strength)
                     for &nb in &nbs {
                         let nbu = nb as usize;
                         let claimed_cont =
@@ -1988,18 +2548,31 @@ impl SimState {
                             continue;
                         }
                         let s = self.strength(nbu);
-                        if best.is_none_or(|(_, bs)| s < bs) {
-                            best = Some((nb, s));
+                        if r.stress <= s {
+                            continue; // the gate: stress cannot break it
+                        }
+                        let a = match axis {
+                            Some(ax) => dot3(
+                                ax,
+                                normalize3(sub3(
+                                    self.grid.positions[nbu],
+                                    self.grid.positions[tip as usize],
+                                )),
+                            ),
+                            None => 0.0,
+                        };
+                        let better = match best {
+                            None => true,
+                            Some((_, ba, bs)) => a > ba || (a == ba && s < bs),
+                        };
+                        if better {
+                            best = Some((nb, a, s));
                         }
                     }
-                    let Some((nb, s_next)) = best else {
-                        failed = true;
-                        break;
-                    };
-                    if r.stress <= s_next {
+                    let Some((nb, _, _)) = best else {
                         failed = true; // amendment A: stalled = failed
                         break;
-                    }
+                    };
                     let nbu = nb as usize;
                     if self.crust_type[nbu] == 1 {
                         // Claim continental path: jump-start maturation.
@@ -2011,7 +2584,15 @@ impl SimState {
                         self.crust_age[nbu] = 0.0;
                         self.features[nbu] |= F_RIDGE;
                     }
-                    *tip = nb;
+                    r.cells.push(nb);
+                    tip = nb;
+                }
+                if tip_b {
+                    r.tip_b = tip;
+                    r.done_b = done;
+                } else {
+                    r.tip_a = tip;
+                    r.done_a = done;
                 }
             }
             if failed {
@@ -2028,15 +2609,52 @@ impl SimState {
         rifts.retain(|_| *it.next().unwrap());
         self.rifts = rifts;
 
+        // Rift linkage (WO-0008 S1, model §5 addendum): two rift systems
+        // on the same plate (possible after a suture transfers the
+        // loser's rift) whose active tips come within LINK range connect
+        // along the least-strength path and merge into one system —
+        // East Africa–Red Sea–Gulf of Aden style.
+        self.link_rifts();
+
         // Nucleation: fixed driver order, one live rift per plate, a
         // refractory period after the plate's last rifting, and only where
         // driver stress beats the local strength (amendment A).
         let min_rift_cells = (self.plate_id.len() as f32 * MIN_RIFT_PLATE_FRACTION) as u32;
         for d in self.rift_drivers() {
+            // One live rift per plate — except a supercontinental plate
+            // (the amendment-B insulation case: > 1/3 of the world's
+            // continental crust) may host a second arm (WO-0008 S1):
+            // insulation-driven extension nucleates multiple arms, and
+            // tip linkage can join them so a split halves the landmass
+            // instead of shaving a sliver (the m4 sliver problem).
+            let rift_cap = if self.cont_total_cells > 0
+                && self.cont_cells_per_plate[d.plate as usize] as f32
+                    > self.cont_total_cells as f32 * INSULATION_CONT_FRACTION
+            {
+                2
+            } else {
+                1
+            };
+            let live = self.rifts.iter().filter(|r| r.plate == d.plate).count();
+            // The refractory models stress relief; while an arm is still
+            // GROWING no split or failure has spent the plate's stress, so
+            // the plate keeps probing for its second arm through the
+            // growth phase (~30–80 My). Once every arm is complete and
+            // waiting for oceanization the extension is localized at the
+            // corridor and the refractory applies again — probing through
+            // the whole 400 My waiting window cascaded the census to 39
+            // at seed cyrus, while gating the second arm at all froze that
+            // world at 0 splits.
+            let growing = self
+                .rifts
+                .iter()
+                .any(|r| r.plate == d.plate && !(r.done_a && r.done_b));
+            let refractory = !growing
+                && self.t_my - self.plates[d.plate as usize].youngest_rift_my < RIFT_REFRACTORY_MY;
             if !self.plates[d.plate as usize].alive
-                || self.rifts.iter().any(|r| r.plate == d.plate)
+                || live >= rift_cap
                 || self.plate_cells[d.plate as usize] < min_rift_cells
-                || self.t_my - self.plates[d.plate as usize].youngest_rift_my < RIFT_REFRACTORY_MY
+                || refractory
             {
                 continue;
             }
@@ -2061,6 +2679,7 @@ impl SimState {
                 done_a: false,
                 done_b: false,
                 started_my: self.t_my,
+                cells: vec![d.cell],
             });
             self.events.push(TectonicEvent::RiftStart {
                 plate: d.plate,
@@ -2077,6 +2696,242 @@ impl SimState {
         }
     }
 
+    /// Rift linkage (WO-0008 S1): merge same-plate rift systems whose
+    /// active (not-done) tips lie within `RIFT_LINK_CELLS` of each other,
+    /// connecting the tips along the least-strength path — BFS depth from
+    /// one tip, then a walk from the other through the least-strength
+    /// neighbor one ring closer each hop (ties → lowest cell id). The
+    /// merged system keeps the two FAR tips with their done flags, the
+    /// stronger driver's stress, the earlier start time, and the first
+    /// rift's kind; path cells are claimed like tip-walk cells. Restarts
+    /// until no pair links — deterministic, id-ordered throughout.
+    fn link_rifts(&mut self) {
+        'again: loop {
+            for i in 0..self.rifts.len() {
+                for j in i + 1..self.rifts.len() {
+                    if self.rifts[i].plate != self.rifts[j].plate
+                        || !self.plates[self.rifts[i].plate as usize].alive
+                    {
+                        continue;
+                    }
+                    let (ri, rj) = (self.rifts[i].clone(), self.rifts[j].clone());
+                    let tips_i = [(ri.tip_a, ri.done_a, false), (ri.tip_b, ri.done_b, true)];
+                    let tips_j = [(rj.tip_a, rj.done_a, false), (rj.tip_b, rj.done_b, true)];
+                    for (ti, done_i, i_is_b) in tips_i {
+                        for (tj, done_j, j_is_b) in tips_j {
+                            if done_i || done_j || ti == tj {
+                                continue;
+                            }
+                            let Some(path) = self.link_path(ti, tj, ri.plate) else {
+                                continue;
+                            };
+                            // Claim the connecting cells like tip-walk
+                            // cells: continent jump-starts maturation,
+                            // ocean gets a fresh ridge line.
+                            let jump_start = RIFT_ONSET_MY + DT_MY;
+                            for &c in &path {
+                                let cu = c as usize;
+                                if self.crust_type[cu] == 1 {
+                                    self.rift_age[cu] = self.rift_age[cu].max(jump_start);
+                                    self.features[cu] |= F_RIFT;
+                                } else {
+                                    self.crust_age[cu] = 0.0;
+                                    self.features[cu] |= F_RIDGE;
+                                }
+                            }
+                            // Merge j into i: i's linked tip is replaced
+                            // by j's far tip.
+                            let (far_tip, far_done) = if j_is_b {
+                                (rj.tip_a, rj.done_a)
+                            } else {
+                                (rj.tip_b, rj.done_b)
+                            };
+                            let r = &mut self.rifts[i];
+                            if i_is_b {
+                                r.tip_b = far_tip;
+                                r.done_b = far_done;
+                            } else {
+                                r.tip_a = far_tip;
+                                r.done_a = far_done;
+                            }
+                            r.stress = r.stress.max(rj.stress);
+                            r.started_my = r.started_my.min(rj.started_my);
+                            r.cells.extend_from_slice(&path);
+                            r.cells.extend_from_slice(&rj.cells);
+                            let plate = r.plate;
+                            self.rifts.remove(j);
+                            self.rift_link_count += 1;
+                            log::debug!("t={} My: linked two rifts on plate {plate}", self.t_my);
+                            continue 'again;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    /// The least-strength connecting path between two rift tips within
+    /// `RIFT_LINK_CELLS`, excluding the endpoints; None when they are
+    /// farther apart than that on the plate. Cells already claimed by a
+    /// rift or fresh corridor may be walked through (they cost nothing to
+    /// re-claim).
+    fn link_path(&self, from: u32, to: u32, plate: u32) -> Option<Vec<u32>> {
+        let n = self.grid.cell_count() as usize;
+        let mut depth = vec![u16::MAX; n];
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        depth[to as usize] = 0;
+        queue.push_back(to);
+        while let Some(c) = queue.pop_front() {
+            let dc = depth[c as usize];
+            if dc >= RIFT_LINK_CELLS {
+                continue;
+            }
+            for &nb in self.grid.neighbors_of(c) {
+                let nbu = nb as usize;
+                if depth[nbu] == u16::MAX && self.plate_id[nbu] == plate {
+                    depth[nbu] = dc + 1;
+                    queue.push_back(nb);
+                }
+            }
+        }
+        let d0 = depth[from as usize];
+        if d0 == u16::MAX || d0 > RIFT_LINK_CELLS {
+            return None;
+        }
+        let mut path = Vec::new();
+        let mut cur = from;
+        for d in (1..d0).rev() {
+            let mut nbs: Vec<u32> = self.grid.neighbors_of(cur).to_vec();
+            nbs.sort_unstable();
+            let mut best: Option<(u32, f32)> = None;
+            for &nb in &nbs {
+                if depth[nb as usize] == d {
+                    let s = self.strength(nb as usize);
+                    if best.is_none_or(|(_, bs)| s < bs) {
+                        best = Some((nb, s));
+                    }
+                }
+            }
+            let (nb, _) = best?;
+            path.push(nb);
+            cur = nb;
+        }
+        Some(path)
+    }
+
+    /// Fossil-boundary capture (WO-0008 S1): each plate below
+    /// MICRO_MAX_FRACTION of the sphere accumulates a quiet clock while
+    /// the mean relative speed over its entire boundary stays below the
+    /// classification dead band; at `CAPTURE_AFTER_MY` its boundary has
+    /// fossilized and it merges into the neighbor sharing the longest
+    /// border. Kula-style capture: not a suture — no scar, no suture
+    /// clock; ledger and rifts transfer like any merge. Serial, id-order.
+    fn capture_fossilized_plates(&mut self) {
+        let n = self.grid.cell_count() as usize;
+        let small_max = (n as f32 * MICRO_MAX_FRACTION) as u32;
+        let omegas: Vec<[f32; 3]> = (0..self.plates.len())
+            .map(|pid| {
+                if self.plates[pid].alive {
+                    self.omega(pid as u32)
+                } else {
+                    [0.0; 3]
+                }
+            })
+            .collect();
+        // Mean boundary relative speed and border census per small plate.
+        let np = self.plates.len();
+        let mut rel_sum = vec![0.0f64; np];
+        let mut rel_n = vec![0u32; np];
+        let mut border: Vec<Vec<u32>> = vec![Vec::new(); np];
+        let mut any_small = false;
+        for (pid, b) in border.iter_mut().enumerate() {
+            if self.plates[pid].alive && self.plate_cells[pid] <= small_max {
+                any_small = true;
+                *b = vec![0; np];
+            }
+        }
+        if !any_small {
+            return;
+        }
+        for c in 0..n {
+            let a = self.plate_id[c];
+            let au = a as usize;
+            if border[au].is_empty() {
+                continue; // not a small plate
+            }
+            let xa = self.grid.positions[c];
+            for &nb in self.grid.neighbors_of(c as u32) {
+                let b = self.plate_id[nb as usize];
+                if b == a {
+                    continue;
+                }
+                let mid = normalize3(add3(xa, self.grid.positions[nb as usize]));
+                let rel = sub3(cross3(omegas[b as usize], mid), cross3(omegas[au], mid));
+                rel_sum[au] += (dot3(rel, rel).sqrt() * RADMY_TO_CMYR) as f64;
+                rel_n[au] += 1;
+                border[au][b as usize] += 1;
+            }
+        }
+        for pid in 0..np {
+            if border[pid].is_empty() || rel_n[pid] == 0 {
+                continue;
+            }
+            let quiet = (rel_sum[pid] / rel_n[pid] as f64) < CLASSIFY_CMYR as f64;
+            if !quiet {
+                self.plates[pid].quiet_my = 0.0;
+                continue;
+            }
+            self.plates[pid].quiet_my += DT_MY;
+            if self.plates[pid].quiet_my < CAPTURE_AFTER_MY {
+                continue;
+            }
+            // Fossilized: merge into the longest-border neighbor (tie →
+            // lowest plate id via strict >).
+            let mut winner = u32::MAX;
+            for (q, &cnt) in border[pid].iter().enumerate() {
+                if cnt > 0
+                    && self.plates[q].alive
+                    && (winner == u32::MAX || cnt > border[pid][winner as usize])
+                {
+                    winner = q as u32;
+                }
+            }
+            if winner == u32::MAX {
+                continue;
+            }
+            let loser = pid as u32;
+            let wu = winner as usize;
+            for id in self.plate_id.iter_mut() {
+                if *id == loser {
+                    *id = winner;
+                }
+            }
+            self.plate_cells[wu] += self.plate_cells[pid];
+            self.plate_cells[pid] = 0;
+            self.cont_cells_per_plate[wu] += self.cont_cells_per_plate[pid];
+            self.cont_cells_per_plate[pid] = 0;
+            self.plates[pid].alive = false;
+            let segs = std::mem::take(&mut self.plates[pid].slab);
+            self.plates[wu].slab.extend(segs);
+            for r in self.rifts.iter_mut() {
+                if r.plate == loser {
+                    r.plate = winner;
+                }
+            }
+            self.collisions.retain(|t| t.a != loser && t.b != loser);
+            self.events.push(TectonicEvent::Capture {
+                winner,
+                loser,
+                t: self.t_my,
+            });
+            log::debug!(
+                "t={} My: fossilized plate {loser} captured by {winner}",
+                self.t_my
+            );
+        }
+    }
+
     /// Model §5 split: when a completed rift's corridor (young plate-
     /// interior ocean) cuts the plate's remaining cells into disconnected
     /// regions, the plate splits along it. The halves keep the parent's
@@ -2089,7 +2944,7 @@ impl SimState {
         let micro_max = (n as f32 * MICRO_MAX_FRACTION) as u32;
         let mut ri = 0;
         while ri < self.rifts.len() {
-            let r = self.rifts[ri];
+            let r = self.rifts[ri].clone();
             if !(r.done_a && r.done_b)
                 || !self.plates[r.plate as usize].alive
                 // A splinter deforms rather than splitting further.
@@ -2153,9 +3008,12 @@ impl SimState {
             let parent = &self.plates[pid as usize];
             let (pole, speed, ys) = (parent.pole, parent.speed_deg_my, parent.youngest_suture_my);
             self.plates[pid as usize].youngest_rift_my = self.t_my;
+            // The split vents the parent's trapped mantle heat through the
+            // fresh corridor (insulation anchor, WO-0008 S1).
+            self.plates[pid as usize].youngest_breakup_my = self.t_my;
             let mut new_of_comp = vec![u32::MAX; comp_cells.len()];
             for &ci in &big {
-                let child = self.spawn_plate(pole, speed, ys, self.t_my);
+                let child = self.spawn_plate(pole, speed, ys, self.t_my, self.t_my);
                 new_of_comp[ci as usize] = child;
                 let cells = &comp_cells[ci as usize];
                 let cont = cells
@@ -2370,6 +3228,8 @@ mod tests {
             speed_deg_my: speed,
             youngest_suture_my: super::super::keyframe::NEVER_SUTURED,
             youngest_rift_my: super::super::keyframe::NEVER_SUTURED,
+            youngest_breakup_my: super::super::keyframe::NEVER_SUTURED,
+            quiet_my: 0.0,
             pending_rot: IDENTITY3,
             pending_deg: 0.0,
             slab: Vec::new(),
@@ -2605,12 +3465,8 @@ mod tests {
         assert!(s.collisions.iter().all(|t| t.slow_collision_my == 0.0));
     }
 
-    /// §3 condition 3: a locked full-perimeter contact with ocean two rings
-    /// from the weld does not suture...
-    #[test]
-    fn locked_contact_with_nearby_ocean_does_not_suture() {
-        let mut s = two_plate_cont_state();
-        // Find a cell exactly 2 rings from the contact and flood it.
+    /// BFS depth from the two-plate contact, for placing test basins.
+    fn contact_depth(s: &SimState) -> Vec<u16> {
         let n = s.grid.cell_count() as usize;
         let mut depth = vec![u16::MAX; n];
         let mut queue: VecDeque<u32> = VecDeque::new();
@@ -2634,15 +3490,105 @@ mod tests {
                 }
             }
         }
-        let wet = depth.iter().position(|&d| d == 2).unwrap();
-        s.crust_type[wet] = 0;
-        s.thickness[wet] = OCEAN_THICKNESS_KM;
-        s.crust_age[wet] = 80.0;
+        depth
+    }
+
+    fn grow_disc(s: &SimState, seed: u32, rings: u32) -> Vec<u32> {
+        let mut cells = vec![seed];
+        for _ in 0..rings {
+            let mut next = cells.clone();
+            for &c in &cells {
+                next.extend_from_slice(s.grid.neighbors_of(c));
+            }
+            next.sort_unstable();
+            next.dedup();
+            cells = next;
+        }
+        cells
+    }
+
+    /// §3 condition 3 (amended WO-0008 S1) + relic-basin closure on a
+    /// hand-built enclosed basin: a locked full-perimeter contact with a
+    /// LARGE enclosed basin reaching the 2-ring window does not suture
+    /// while the basin stays above the relic cap — and closure consumes
+    /// its margins at the convergence-equivalent rate meanwhile, feeding
+    /// the slab ledger.
+    #[test]
+    fn enclosed_basin_blocks_weld_while_closure_consumes_it() {
+        let mut s = two_plate_cont_state();
+        let depth = contact_depth(&s);
+        // A 4-ring ocean disc around a center 6 rings in: ~61 cells,
+        // reaching depth 2 (inside the condition-3 window), enclosed
+        // entirely by the two colliding plates.
+        let center = depth.iter().position(|&d| d == 6).unwrap() as u32;
+        let disc = grow_disc(&s, center, 4);
+        for &c in &disc {
+            let cu = c as usize;
+            s.crust_type[cu] = 0;
+            s.thickness[cu] = OCEAN_THICKNESS_KM;
+            s.crust_age[cu] = 80.0;
+        }
+        assert!(disc.len() as u32 > 3 * RELIC_BASIN_KEEP_CELLS);
+        s.init_stats();
+
+        // While the basin still reaches the 2-ring window, condition 3
+        // blocks: no weld can fire inside the suture timer's first
+        // SUTURE_AFTER_MY even though conditions 1+2 hold from step one.
+        suture_steps(&mut s, 10);
+        assert_eq!(
+            s.alive_plates(),
+            2,
+            "an in-window enclosed basin above the relic cap must block"
+        );
+        assert_eq!(s.suture_count, 0);
+        // The pair reads locked (conditions 1+2) even though 3 blocks...
+        assert!(s
+            .collisions
+            .iter()
+            .any(|t| t.a == 0 && t.b == 1 && t.locked_my > 0.0));
+        // ...and closure has been eating the basin's margins meanwhile...
+        let eaten_early = s.cont_gained_by_closure;
+        assert!(eaten_early > 0, "closure must consume the enclosed basin");
+        // ...as internal subduction: the consumed ocean is on the ledger.
+        assert!(
+            s.plates.iter().any(|p| !p.slab.is_empty()),
+            "internal subduction must feed the slab ledger"
+        );
+        // Left locked long enough, the margin keeps retreating (and once
+        // the basin is consumed below the cap or out of the window, the
+        // weld resolves the collision — terminal closure).
+        suture_steps(&mut s, 30);
+        assert!(s.cont_gained_by_closure > eaten_early);
+    }
+
+    /// A basin small enough to be consumed down to the relic cap stops
+    /// blocking: the weld fires and the relic sea survives at exactly
+    /// `RELIC_BASIN_KEEP_CELLS` cells (Caspian-style).
+    #[test]
+    fn small_basin_becomes_relic_sea_and_weld_fires() {
+        let mut s = two_plate_cont_state();
+        let depth = contact_depth(&s);
+        let center = depth.iter().position(|&d| d == 4).unwrap() as u32;
+        // ~19-cell basin: closure trims it to the relic cap, then the
+        // pair welds over it.
+        let disc = grow_disc(&s, center, 2);
+        for &c in &disc {
+            let cu = c as usize;
+            s.crust_type[cu] = 0;
+            s.thickness[cu] = OCEAN_THICKNESS_KM;
+            s.crust_age[cu] = 80.0;
+        }
+        assert!(disc.len() as u32 > RELIC_BASIN_KEEP_CELLS);
+        s.init_stats();
 
         suture_steps(&mut s, 40);
-        assert_eq!(s.alive_plates(), 2, "open ocean near the contact: no weld");
-        assert_eq!(s.suture_count, 0);
-        assert!(s.collisions.iter().all(|t| t.slow_collision_my == 0.0));
+        assert_eq!(s.alive_plates(), 1, "the relic sea must not block the weld");
+        assert_eq!(s.suture_count, 1);
+        let ocean_left = s.crust_type.iter().filter(|&&t| t == 0).count() as u32;
+        assert_eq!(
+            ocean_left, RELIC_BASIN_KEEP_CELLS,
+            "the relic sea survives at the cap"
+        );
     }
 
     /// ...and the same contact with the ocean closed sutures at 30 My,
@@ -2672,6 +3618,131 @@ mod tests {
         // suture_at_my = fire time.
         let scarred = s.suture_at_my.iter().filter(|&&v| v == *t).count();
         assert!(scarred > 10, "suture scar missing ({scarred} cells)");
+    }
+
+    /// Rift linkage (WO-0008 S1): two rift systems on one plate whose
+    /// active tips sit within `RIFT_LINK_CELLS` merge into one system,
+    /// claiming the least-strength connecting path.
+    #[test]
+    fn converging_rift_tips_link_and_merge() {
+        let grid = Arc::new(Grid::build(3));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.0));
+        // One weak young continental plate: every cell walkable by a
+        // plume-strength rift (strength << STRESS_PLUME).
+        for c in 0..n {
+            s.plate_id[c] = 0;
+            s.crust_type[c] = 1;
+            s.thickness[c] = 32.0;
+            s.crust_age[c] = 40.0;
+            s.orogeny_age[c] = 40.0;
+        }
+        s.t_my = 100.0;
+        s.init_stats();
+        // Two fresh single-cell rifts two hops apart.
+        let tip_1 = 100u32;
+        let mid = s.grid.neighbors_of(tip_1)[0];
+        let tip_2 = *s
+            .grid
+            .neighbors_of(mid)
+            .iter()
+            .find(|&&nb| nb != tip_1 && !s.grid.neighbors_of(tip_1).contains(&nb))
+            .unwrap();
+        for &tip in &[tip_1, tip_2] {
+            s.rift_age[tip as usize] = RIFT_ONSET_MY + DT_MY;
+            s.rifts.push(ActiveRift {
+                plate: 0,
+                kind: if tip == tip_1 {
+                    RiftDriverKind::Plume
+                } else {
+                    RiftDriverKind::BackArc
+                },
+                stress: if tip == tip_1 {
+                    STRESS_PLUME
+                } else {
+                    STRESS_BACKARC
+                },
+                tip_a: tip,
+                tip_b: tip,
+                done_a: false,
+                done_b: false,
+                started_my: if tip == tip_1 { 90.0 } else { 95.0 },
+                cells: vec![tip],
+            });
+        }
+
+        s.link_rifts();
+
+        assert_eq!(s.rifts.len(), 1, "the two systems must merge");
+        let r = &s.rifts[0];
+        // The merged system keeps the two FAR tips (both rifts were
+        // single-cell, so those are the original nucleation cells)...
+        let tips = [r.tip_a, r.tip_b];
+        assert!(tips.contains(&tip_1) && tips.contains(&tip_2), "{tips:?}");
+        // ...the stronger driver's stress, and the earlier start.
+        assert_eq!(r.stress, STRESS_PLUME);
+        assert_eq!(r.started_my, 90.0);
+        assert_eq!(s.rift_link_count, 1);
+        // The connecting cell was claimed like a tip-walk cell.
+        assert!(
+            s.rift_age[mid as usize] > RIFT_ONSET_MY,
+            "the least-strength path between the tips must be claimed"
+        );
+        assert!(s.features[mid as usize] & F_RIFT != 0);
+    }
+
+    /// The WO-0008 S1 seam rule on a two-plate synthetic world: a moving
+    /// cap sweeping over a stationary plate for 60 My leaves the backstop
+    /// idle — ownership resolves connectedly inside advect itself.
+    #[test]
+    fn seam_rule_keeps_backstop_idle_on_two_plate_world() {
+        let grid = Arc::new(Grid::build(4));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.0));
+        s.plates.push(test_plate(1, 0.5)); // fast enough to commit often
+        s.plates[1].pole = [0.0, 0.0, 1.0];
+        for c in 0..n {
+            // Plate 1: a cap around +x; plate 0 the rest. All ocean, with
+            // an age contrast so the pair polarity is deterministic.
+            let cap = grid.positions[c][0] > 0.6;
+            s.plate_id[c] = u32::from(cap);
+            s.crust_type[c] = 0;
+            s.thickness[c] = OCEAN_THICKNESS_KM;
+            s.crust_age[c] = if cap { 40.0 } else { 120.0 };
+        }
+        s.t_my = 200.0;
+        s.init_stats();
+        for _ in 0..30 {
+            s.step(0, 0);
+        }
+        assert_eq!(
+            s.connectivity_reassigned, 0,
+            "the seam rule must keep the backstop idle"
+        );
+        // Both plates one connected region each (nothing severed).
+        for pid in 0..2u32 {
+            if !s.plates[pid as usize].alive {
+                continue; // fully consumed is fine; severed is not
+            }
+            let census = s.plate_id.iter().filter(|&&p| p == pid).count();
+            let start = s.plate_id.iter().position(|&p| p == pid).unwrap();
+            let mut seen = vec![false; n];
+            seen[start] = true;
+            let mut queue = VecDeque::from([start as u32]);
+            let mut count = 0;
+            while let Some(c) = queue.pop_front() {
+                count += 1;
+                for &nb in grid.neighbors_of(c) {
+                    if !seen[nb as usize] && s.plate_id[nb as usize] == pid {
+                        seen[nb as usize] = true;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+            assert_eq!(count, census, "plate {pid} must stay one component");
+        }
     }
 
     /// Amendment A: a plume driver under a craton (strength ≥ 1.5) does not
@@ -2771,6 +3842,7 @@ mod tests {
             done_a: true,
             done_b: true,
             started_my: 450.0,
+            cells: vec![0],
         });
         s.init_stats();
 

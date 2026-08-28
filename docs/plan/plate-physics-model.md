@@ -321,6 +321,104 @@ knobs are the §1 coefficients.
    sutured — now as an emergent property, since no clamp can hide a
    violation.
 
+## Addendum 2026-08-28 (WO-0008 S1: closure, linkage, seams, balance)
+
+Dan's rulings after the WO-0006-S3 report. Sections amended:
+
+**§3 relic-basin closure.** The S3 probe autopsy found every large locked
+contact blocked forever by 15–25 cells of ancient enclosed ocean —
+condition 3 could never pass because no mechanic consumed a basin once
+convergence stopped. New terminal-closure mechanic: a plate pair is
+*locked* when conditions 1 and 2 hold (contact ≥ 30% of the smaller
+perimeter, mean relative speed < `SUTURE_LOCK_CMYR`); each `PairTimer`
+now carries `locked_my`, the sustained lock age. While a pair is locked,
+every **enclosed oceanic basin** near the contact — a connected oceanic
+region whose bordering continental cells belong ≥ 80% to the two
+colliding plates — is consumed at its margin cells (basin cells touching
+continent, ascending id order) at the pair's convergence-equivalent rate
+(mean contact relative speed, floored at the classification dead band so
+a fully locked pair still closes), as internal subduction: each consumed
+cell becomes continental margin crust of its own plate (fresh crust and
+orogeny age, thickness copied from its lowest-id continental neighbor)
+and the consumed ocean feeds that plate's slab ledger. A basin consumed
+down to `RELIC_BASIN_KEEP_CELLS = 12` cells survives as a relic sea
+(Caspian, Black Sea) and stops blocking the weld: condition 3 now reads
+*no oceanic region larger than `RELIC_BASIN_KEEP_CELLS` within 2 rings
+of the contact*. Basis: Mediterranean-style terminal closure — enclosed
+basins underthrust and vanish while the collision is locked.
+
+**§5 rift linkage.** When two active rift systems on the same plate (a
+plate can hold two after inheriting a suture partner's rift) bring tips
+within 3 cells of each other, they connect along the least-strength path
+between the tips and merge into one system — the merged rift keeps the
+far tips, the stronger driver's stress, and the earlier start time.
+Basis: East Africa–Red Sea–Gulf of Aden triple-junction linkage; rift
+segments propagate toward and capture each other.
+
+**§7 seam rule (advection tie-breaking).** Ownership flips at plate
+seams must be decided by one rule both advection passes agree on, so the
+backstop consumes ≤ 10 cells per 100 My instead of thousands (the exact
+rule is recorded in the S1 work order and in `advect()`).
+
+**§9 continental-area balance (note).** Continental crust thicker than
+`SUBDUCTIBLE_CONT_KM` must never be destroyed at a consuming margin:
+where advection would overwrite hard continent with a foreign plate's
+crust, the cell's continental content survives and transfers to the
+winning plate (terrane accretion), never deleted. Arc creation vs margin
+consumption is diagnosed per 100 My by the probe; the acceptance target
+is net continental-area change over 2 Gy within ±15% of t = 0.
+
+**Implementation findings (added at S1 close).** Getting the four S1
+gates green at both seeds surfaced five more defects, each fixed with a
+mechanism grounded the same way as the rest of this model:
+
+- **§3 condition 1 — absolute margin-span floor.** The 30 %-of-perimeter
+  test structurally vetoed welds between GIANT plates: a locked
+  ~10,000 km front ground for 800 My at seed cyrus because both plates
+  had ~400-cell perimeters. The §3 intent is only that a pinprick never
+  welds, so condition 1 now also passes when the contact spans
+  ≥ 5,500 km of front (`SUTURE_ABS_CONTACT_KM`) — far above any pinprick,
+  in the range of composite terminal-collision fronts.
+- **§3 pair-clock hysteresis.** The suture and lock clocks decay at 2×
+  on a lapse instead of hard-resetting: the zigzag hex boundary sprays
+  one-step classification flickers (the same documented noise the
+  rift-onset clock already guards against with 2× decay), and a hard
+  reset let one flicker erase 28 My of accumulated lock.
+- **§4 insulation venting.** The amendment-B ramp now anchors on
+  max(last suture, last actual breakup — a new `youngest_breakup_my`):
+  a split vents the trapped heat through the fresh corridor (Gurnis's
+  own mechanism), where before a supercontinental plate sat at the
+  insulation floor through every split and cascaded (29.5 splits/Gy,
+  census railed at the 64-plate mask). Failed nucleation attempts vent
+  nothing. Ramp recalibrated to 55/165 My; refractory 180 My.
+- **§5 stress-axis rift steering + supercontinent second arm.** Each tip
+  advances into the walkable neighbor most aligned with the direction
+  away from the other tip — weakness still GATES every advance
+  (amendment A), the stress axis STEERS — so rifts cross the plate
+  instead of curling out the nearest margin (the m4 sliver problem;
+  cracks propagate along the stress axis). A plate holding > 1/3 of
+  continental crust may host a second arm while its first is still
+  growing (insulation-driven multi-arm extension, East Africa style).
+- **§6 fossil-boundary capture.** A plate below the microplate scale
+  (2 % of the sphere) whose ENTIRE boundary stays below the
+  classification dead band for `CAPTURE_AFTER_MY = 60` has fossilized
+  and merges into the neighbor sharing the longest border (Kula-style
+  capture) — not a suture: no scar, no suture clock. This is the death
+  path for split debris; without it, split births outran deaths and the
+  census inflated through every active Wilson cycle.
+- **Continental inventory guard (§9 note, implementation).** Beyond the
+  terrane-accretion eligibility rule: a committed plate that destroyed
+  more of its own continental cells (same-plate continent → ocean) than
+  it gained in new continental cells this step reverts the excess losses
+  (gap-ridge cells first) — the jammed block backs up instead of
+  vanishing into the grid. The convergence that "should" have shortened
+  it becomes S2's crust-volume ledger.
+
+**Marked S2** (session 2 of WO-0008): distributed orogen width
+(`W = W_BASE / strength`, craton-stopped), gravitational spreading,
+underthrusting transfer, and discrete island-arc sites replacing the
+continuous arc wall. §9 metric 6's honest number is re-measured there.
+
 ## Open questions for Dan (before implementation)
 
 1. **Slab-pull memory on plate death**: when a plate is fully consumed,

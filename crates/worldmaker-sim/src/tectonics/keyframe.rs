@@ -38,6 +38,17 @@ pub struct PlateState {
     /// needs, so nucleation observes a refractory period from here
     /// (WO-0006 S2).
     pub youngest_rift_my: f32,
+    /// When this plate last actually broke up — split a child off or was
+    /// itself born of a split ([`NEVER_SUTURED`] = never). WO-0008 S1:
+    /// the mantle-insulation venting anchor — trapped heat escapes
+    /// through real new ocean, not through a failed nucleation attempt.
+    pub youngest_breakup_my: f32,
+    /// How long this plate's entire boundary has stayed below the
+    /// classification dead band (WO-0008 S1): the fossil-boundary capture
+    /// clock. A sub-§6-scale plate whose boundary is kinematically dead
+    /// for `CAPTURE_AFTER_MY` has fossilized and merges into its dominant
+    /// neighbor (Kula-style capture) — the death path for split debris.
+    pub quiet_my: f32,
     /// Accumulated rotation not yet applied by advection (row-major). Slow
     /// plates bank sub-cell motion here and commit it once it reaches about
     /// one cell, so they never freeze to the grid.
@@ -107,7 +118,7 @@ pub enum RiftDriverKind {
 /// stays in the ledger until its corridor oceanizes and splits the plate —
 /// the split event is attributed to `kind`. Part of the keyframe: rift
 /// growth is sim state, so resume must replay it bit-exactly.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ActiveRift {
     pub plate: u32,
     pub kind: RiftDriverKind,
@@ -120,6 +131,12 @@ pub struct ActiveRift {
     /// Nucleation time (My): completed rifts are pruned from the ledger a
     /// long time after starting if their split never materializes.
     pub started_my: f32,
+    /// Cells this rift has claimed (nucleation site + every tip-walk and
+    /// linkage claim), WO-0008 S1: the rift's own path, recorded for
+    /// linkage bookkeeping and for later sessions that need to attribute
+    /// a corridor to the rift that cut it. Note the ids are grid
+    /// positions from claim time — the plate drifts under them.
+    pub cells: Vec<u32>,
 }
 
 /// How a microplate came to exist (model §6).
@@ -133,6 +150,12 @@ pub enum MicroplateOrigin {
     /// A rift re-nucleated on the far side of a microcontinent and
     /// transferred it (Jan Mayen style).
     RidgeJump,
+    /// A plate-scale piece severed from its plate by consumption (the
+    /// general Farallon case, WO-0008 S1): the connecting lithosphere was
+    /// consumed and the piece is now mechanically independent, whatever
+    /// its crust content. Sub-plate-scale pieces are never severed — the
+    /// advection repair pass keeps them attached (seam rule, half 3).
+    Severed,
 }
 
 /// One entry of the run's event log (WO-0006 S2): every suture and split
@@ -148,12 +171,21 @@ pub enum TectonicEvent {
         b: u32,
         t: f32,
         contact_fraction: f32,
+        /// Contact cells on the smaller plate's side when the weld fired
+        /// (WO-0008 S1): the §3 condition-1 audit accepts either the
+        /// fraction threshold or the absolute margin-span floor.
+        contact_cells: u32,
     },
     RiftStart {
         plate: u32,
         driver: RiftDriverKind,
         t: f32,
     },
+    /// A small plate's boundary fossilized (below the dead band for
+    /// `CAPTURE_AFTER_MY`) and it merged into its dominant neighbor
+    /// (WO-0008 S1; Kula-style capture). Not a suture: no scar, no
+    /// suture clock.
+    Capture { winner: u32, loser: u32, t: f32 },
     /// The rift stalled (stress no longer exceeded strength ahead of a tip);
     /// its cells keep maturing as a failed-rift scar.
     RiftFailed { plate: u32, t: f32 },
@@ -178,6 +210,11 @@ pub struct PairTimer {
     pub a: u32,
     pub b: u32,
     pub slow_collision_my: f32,
+    /// How long §3 conditions 1 + 2 (contact extent + locked kinematics)
+    /// have held continuously (WO-0008 S1): the lock age that drives
+    /// relic-basin closure and its gate. Unlike `slow_collision_my` it
+    /// keeps accumulating while enclosed ocean still blocks condition 3.
+    pub locked_my: f32,
 }
 
 /// Bit 15 of the packed keyframe flags stores crust_type (1 = continent).
@@ -402,6 +439,9 @@ pub struct RunDiagnostics {
     pub cont_lost_to_rift: u64,
     pub cont_gained_by_advection: u64,
     pub cont_gained_by_arc: u64,
+    /// Ocean consumed into continental margin by relic-basin closure
+    /// (WO-0008 S1).
+    pub cont_gained_by_closure: u64,
     pub suture_count: u64,
     /// Rift-to-oceanization plate splits (WO-0006 S2: the only breakup path).
     pub breakup_count: u64,
@@ -462,6 +502,7 @@ mod tests {
         let suture_at = vec![NEVER_SUTURED, 118.0, NEVER_SUTURED, 0.0, 90_000.0, 30.4];
         let hotspot_cont = vec![0.0f32, 24.0, 7.6];
         let rifts = vec![ActiveRift {
+            cells: vec![1, 2, 3],
             plate: 2,
             kind: RiftDriverKind::BackArc,
             stress: 0.5,

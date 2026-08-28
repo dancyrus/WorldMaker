@@ -362,6 +362,8 @@ mod tests {
             speed_deg_my: speed,
             youngest_suture_my: f32::MAX,
             youngest_rift_my: f32::MAX,
+            youngest_breakup_my: f32::MAX,
+            quiet_my: 0.0,
             pending_rot: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             pending_deg: 0.0,
             slab: Vec::new(),
