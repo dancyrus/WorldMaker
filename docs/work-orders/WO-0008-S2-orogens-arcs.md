@@ -47,8 +47,8 @@ W_BASE 260 km.
 - [x] Step 10: tests (craton stop, spreading conserves, islands-not-wall)
 - [x] Step 11: workspace suite + probe s5; screenshots pending screen
       unlock (macOS cannot composite a locked session)
-- [ ] Step 12: PR, merge, tag v0.2.3
-- [ ] Step 13: report
+- [x] Step 12: PR #26 merged; tag v0.2.3
+- [x] Step 13: report (session close)
 
 DONE WHEN. Tag `v0.2.3` exists; all gates green in CI; goldens regenerated once; screenshots committed.
 

@@ -54,8 +54,8 @@ Measured at L6 (both seeds, 2 Gy): `connectivity_reassigned` fell from
       band/stddev kept armed; m3 band + m1 pin recorded with backstops)
 - [x] Step 8: tests (basin closure, relic sea, rift linkage, seam rule)
 - [x] Step 9: probe s4 committed (both seeds)
-- [ ] Step 10: PR merged
-- [ ] Step 11: report
+- [x] Step 10: PR #25 merged
+- [x] Step 11: report (session close)
 
 DONE WHEN. PR merged; the four updated gates pass at both seeds; probe JSON committed; workspace green except ignored goldens.
 

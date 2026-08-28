@@ -2,7 +2,7 @@
 
 CONTEXT. Dan runs this overnight. It chains two work orders in one session.
 
-STATUS. S1 done (PR #25 merged 2026-08-28; all four S1 gates + armed set green at both seeds).
+STATUS. S1 done (PR #25 merged 2026-08-28; all four S1 gates + armed set green at both seeds). S2 done (PR #26 merged 2026-08-28; tag v0.2.3; goldens regenerated — fourth sanctioned move; screenshots committed). BOTH ORDERS COMPLETE.
 
 STEPS.
 
