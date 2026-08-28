@@ -107,7 +107,7 @@ pub enum RiftDriverKind {
 /// stays in the ledger until its corridor oceanizes and splits the plate —
 /// the split event is attributed to `kind`. Part of the keyframe: rift
 /// growth is sim state, so resume must replay it bit-exactly.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ActiveRift {
     pub plate: u32,
     pub kind: RiftDriverKind,
@@ -120,6 +120,12 @@ pub struct ActiveRift {
     /// Nucleation time (My): completed rifts are pruned from the ledger a
     /// long time after starting if their split never materializes.
     pub started_my: f32,
+    /// Cells this rift has claimed (nucleation site + every tip-walk and
+    /// linkage claim), WO-0008 S1: when the rift FAILS, these cells' scar
+    /// maturation is capped at the onset threshold so a failed rift thins
+    /// but never oceanizes — an aulacogen (North Sea, Midcontinent Rift),
+    /// not new ocean floor.
+    pub cells: Vec<u32>,
 }
 
 /// How a microplate came to exist (model §6).
@@ -476,6 +482,7 @@ mod tests {
         let suture_at = vec![NEVER_SUTURED, 118.0, NEVER_SUTURED, 0.0, 90_000.0, 30.4];
         let hotspot_cont = vec![0.0f32, 24.0, 7.6];
         let rifts = vec![ActiveRift {
+            cells: vec![1, 2, 3],
             plate: 2,
             kind: RiftDriverKind::BackArc,
             stress: 0.5,

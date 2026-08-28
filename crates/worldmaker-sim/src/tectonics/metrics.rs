@@ -576,10 +576,19 @@ pub const M1_ALIVE_MAX: u32 = 25;
 pub const M1_STDDEV_MIN: f64 = 1.5;
 /// ...and never pinned at one value longer than this.
 pub const M1_PINNED_MAX_MY: f32 = 500.0;
-/// Metric 2: sutures per Gy (a handful of major welds per few hundred My).
+/// Metric 2: sutures per Gy (a handful of major welds per few hundred My;
+/// band tightened to Dan's 2–6 target in WO-0008 S1 with the relic-basin
+/// closure that unblocked condition 3).
 pub const M2_SUTURES_PER_GY_MIN: f64 = 2.0;
 /// See [`M2_SUTURES_PER_GY_MIN`].
-pub const M2_SUTURES_PER_GY_MAX: f64 = 10.0;
+pub const M2_SUTURES_PER_GY_MAX: f64 = 6.0;
+/// WO-0008 S1 relic-basin gate: a locked collision older than this must
+/// hold zero enclosed oceanic regions larger than the relic cap within
+/// the suture window (closure has had time to finish its work).
+pub const RELIC_LOCKED_GATE_MY: f32 = 60.0;
+/// WO-0008 S1 continental-area gate: total continental cell count at the
+/// end of a 2 Gy run within this fraction of its t = 0 value.
+pub const CONT_AREA_TOLERANCE: f64 = 0.15;
 /// Metric 3: rift-to-oceanization splits per Gy, each §5-attributed.
 pub const M3_SPLITS_PER_GY_MIN: f64 = 2.0;
 /// See [`M3_SPLITS_PER_GY_MIN`].
@@ -716,6 +725,11 @@ pub struct PhysicsTracker {
     slow_my: Vec<f32>,
     slow_flagged: Vec<bool>,
     slow_violations: Vec<String>,
+    // WO-0008 S1 gates: relic basins inside old locked collisions, and
+    // the continental-area balance.
+    relic_violations: Vec<String>,
+    cont_cells_first: Option<u64>,
+    cont_cells_last: u64,
     // Scratch.
     comp_seen: Vec<bool>,
 }
@@ -753,12 +767,20 @@ pub struct PhysicsReport {
     pub slow_violations: Vec<String>,
     /// (t, largest plate's continental-crust share) per sample.
     pub cont_share_series: Vec<(f32, f64)>,
+    /// WO-0008 S1: samples where a locked collision older than
+    /// `RELIC_LOCKED_GATE_MY` still held an enclosed oceanic region larger
+    /// than the relic cap in its suture window.
+    pub relic_basin_violations: Vec<String>,
+    /// WO-0008 S1: continental cell count at the first and last sample.
+    pub cont_cells_start: u64,
+    pub cont_cells_end: u64,
 }
 
 impl PhysicsReport {
-    /// The §9 verdicts as nine named gates (see the module note on the
-    /// 8-item → 9-gate mapping), in §9 order.
-    pub fn gates(&self) -> [(&'static str, bool, String); 9] {
+    /// The §9 verdicts as named gates (see the module note on the 8-item →
+    /// 9-gate mapping), in §9 order, followed by the two WO-0008 S1 gates
+    /// (relic basins, continental-area balance).
+    pub fn gates(&self) -> Vec<(&'static str, bool, String)> {
         let relief_fraction = if self.relief_episodes == 0 {
             1.0
         } else {
@@ -781,7 +803,12 @@ impl PhysicsReport {
         let drift_ok = !drift_measurable
             || (self.slab_free_cont_mean_cmyr >= M7_SLABFREE_CONT_CMYR_MIN
                 && self.slab_free_cont_mean_cmyr <= M7_SLABFREE_CONT_CMYR_MAX);
-        [
+        let cont_ratio = if self.cont_cells_start == 0 {
+            1.0
+        } else {
+            self.cont_cells_end as f64 / self.cont_cells_start as f64
+        };
+        vec![
             (
                 "m1_plate_count",
                 self.alive_min >= M1_ALIVE_MIN
@@ -899,6 +926,29 @@ impl PhysicsReport {
                     self.slow_violations.join("; ")
                 },
             ),
+            (
+                "s1_relic_basins",
+                self.relic_basin_violations.is_empty(),
+                if self.relic_basin_violations.is_empty() {
+                    format!(
+                        "no enclosed basin > {} cells in a collision locked > {} My",
+                        super::step::RELIC_BASIN_KEEP_CELLS,
+                        RELIC_LOCKED_GATE_MY
+                    )
+                } else {
+                    self.relic_basin_violations.join("; ")
+                },
+            ),
+            (
+                "s1_cont_area",
+                (cont_ratio - 1.0).abs() <= CONT_AREA_TOLERANCE,
+                format!(
+                    "continental cells {} -> {} ({:+.1}% over the run)",
+                    self.cont_cells_start,
+                    self.cont_cells_end,
+                    (cont_ratio - 1.0) * 100.0
+                ),
+            ),
         ]
     }
 
@@ -945,6 +995,9 @@ impl PhysicsTracker {
             slow_my: Vec::new(),
             slow_flagged: Vec::new(),
             slow_violations: Vec::new(),
+            relic_violations: Vec::new(),
+            cont_cells_first: None,
+            cont_cells_last: 0,
             comp_seen: vec![false; sim.grid.cell_count() as usize],
         }
     }
@@ -968,6 +1021,32 @@ impl PhysicsTracker {
             if sim.crust_type[c] == 1 {
                 cont_cells[p as usize] += 1;
                 cont_total += 1;
+            }
+        }
+
+        // WO-0008 S1: continental-area balance endpoints.
+        if self.cont_cells_first.is_none() {
+            self.cont_cells_first = Some(cont_total);
+        }
+        self.cont_cells_last = cont_total;
+
+        // WO-0008 S1 relic-basin gate: a pair locked past the gate age
+        // must hold no enclosed oceanic region larger than the relic cap
+        // in its suture window (closure has had time to finish).
+        for t in &sim.collisions {
+            if t.locked_my > RELIC_LOCKED_GATE_MY && self.relic_violations.len() < 20 {
+                if let Some((size, frac)) = oversized_enclosed_basin(sim, t.a, t.b) {
+                    self.relic_violations.push(format!(
+                        "t={} My: pair ({},{}) locked {} My holds an enclosed \
+                         basin of {} cells ({:.0}% pair border)",
+                        sim.t_my,
+                        t.a,
+                        t.b,
+                        t.locked_my,
+                        size,
+                        frac * 100.0
+                    ));
+                }
             }
         }
 
@@ -1352,8 +1431,105 @@ impl PhysicsTracker {
             slab_free_cont_plate_samples: self.free_cont_n,
             slow_violations: self.slow_violations,
             cont_share_series: self.cont_share_series,
+            relic_basin_violations: self.relic_violations,
+            cont_cells_start: self.cont_cells_first.unwrap_or(0),
+            cont_cells_end: self.cont_cells_last,
         }
     }
+}
+
+/// WO-0008 S1 relic-basin audit: the largest ENCLOSED oceanic region
+/// (bordering continental cells ≥ 80% on the pair, counted per basin
+/// edge — the same test the closure mechanic applies) larger than the
+/// relic cap within `SUTURE_OCEAN_RINGS` of the pair's contact. Returns
+/// (region cells, pair-border fraction) for the first such region in
+/// cell-id order, or None. Serial, id-ordered.
+fn oversized_enclosed_basin(sim: &SimState, a: u32, b: u32) -> Option<(u32, f64)> {
+    use std::collections::VecDeque as Dq;
+    let n = sim.plate_id.len();
+    // Contact cells: continental cells of either plate touching the other
+    // plate's continent (both sides, id order).
+    let mut depth = vec![u16::MAX; n];
+    let mut queue: Dq<u32> = Dq::new();
+    for c in 0..n {
+        if sim.crust_type[c] != 1 {
+            continue;
+        }
+        let p = sim.plate_id[c];
+        let other = if p == a {
+            b
+        } else if p == b {
+            a
+        } else {
+            continue;
+        };
+        let touches = sim.grid.neighbors_of(c as u32).iter().any(|&nb| {
+            sim.plate_id[nb as usize] == other && sim.crust_type[nb as usize] == 1
+        });
+        if touches {
+            depth[c] = 0;
+            queue.push_back(c as u32);
+        }
+    }
+    // Suture window: rings on the two plates.
+    let mut window_ocean: Vec<u32> = Vec::new();
+    while let Some(c) = queue.pop_front() {
+        let dc = depth[c as usize];
+        if dc >= super::step::SUTURE_OCEAN_RINGS {
+            continue;
+        }
+        for &nb in sim.grid.neighbors_of(c) {
+            let nbu = nb as usize;
+            let p = sim.plate_id[nbu];
+            if depth[nbu] == u16::MAX && (p == a || p == b) {
+                depth[nbu] = dc + 1;
+                queue.push_back(nb);
+                if sim.crust_type[nbu] == 0 {
+                    window_ocean.push(nb);
+                }
+            }
+        }
+    }
+    // Ocean regions touching the window, with the enclosure test.
+    let mut visited = vec![false; n];
+    for &c0 in &window_ocean {
+        if visited[c0 as usize] {
+            continue;
+        }
+        let mut region: Vec<u32> = Vec::new();
+        visited[c0 as usize] = true;
+        queue.push_back(c0);
+        while let Some(c) = queue.pop_front() {
+            region.push(c);
+            for &nb in sim.grid.neighbors_of(c) {
+                let nbu = nb as usize;
+                if !visited[nbu] && sim.crust_type[nbu] == 0 {
+                    visited[nbu] = true;
+                    queue.push_back(nb);
+                }
+            }
+        }
+        if region.len() as u32 <= super::step::RELIC_BASIN_KEEP_CELLS {
+            continue;
+        }
+        let (mut border, mut border_ab) = (0u64, 0u64);
+        for &c in &region {
+            for &nb in sim.grid.neighbors_of(c) {
+                let nbu = nb as usize;
+                if sim.crust_type[nbu] == 1 {
+                    border += 1;
+                    let p = sim.plate_id[nbu];
+                    if p == a || p == b {
+                        border_ab += 1;
+                    }
+                }
+            }
+        }
+        if border > 0 && border_ab as f64 >= 0.8 * border as f64 {
+            return Some((region.len() as u32, border_ab as f64 / border as f64));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
