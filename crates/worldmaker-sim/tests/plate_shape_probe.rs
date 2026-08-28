@@ -74,7 +74,7 @@ fn plate_shape_probe() {
     let mut sim = SimState::setup(seed, &grid, &params);
     quantize(&mut sim);
 
-    println!("t_My  alive  largest%  compact  finger%  intFlip%");
+    println!("t_My  alive  largest%  compact  finger%  intFlip%  revs  slivers  cratonViol");
 
     // The three shape series live in tectonics::metrics since WO-0011 S1
     // (same implementations, lifted so S3 can arm gates on them).
@@ -117,13 +117,16 @@ fn plate_shape_probe() {
         if (step_idx + 1) % SAMPLE_EVERY_STEPS == 0 {
             let (alive, largest, compact, finger, intflip) = sample(&sim, &prev_plate);
             println!(
-                "{:>5} {:>5} {:>7.1}% {:>7.3} {:>6.1}% {:>7.1}%",
+                "{:>5} {:>5} {:>7.1}% {:>7.3} {:>6.1}% {:>7.1}% {:>6} {:>6} {:>6}",
                 sim.t_my,
                 alive,
                 largest * 100.0,
                 compact,
                 finger * 100.0,
-                intflip * 100.0
+                intflip * 100.0,
+                sim.regularize_reverted,
+                sim.sliver_captured,
+                sim.craton_transfer_violations
             );
         }
     }

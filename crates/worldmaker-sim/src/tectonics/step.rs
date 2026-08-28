@@ -220,11 +220,11 @@ const INSULATION_FLOOR: f32 = 0.18;
 /// platform (mature pre-craton continent, S ≈ 1.1–1.5): ordinary oceanic
 /// lithosphere and young margins can fail, platforms and cratons cannot.
 /// Calibrated at L6, seed cyrus (WO-0011 S1 step 6).
-const STRENGTH_FAIL_MEAN: f32 = 1.0;
+const STRENGTH_FAIL_MEAN: f32 = 1.05;
 /// Sub-grid strength heterogeneity: sigma of the per-(cell, step) normal
 /// jitter on the failure threshold (~15% of MEAN), so the cutoff is a
 /// band, not a knife edge.
-const STRENGTH_FAIL_SIGMA: f32 = 0.15;
+const STRENGTH_FAIL_SIGMA: f32 = 0.05;
 
 // ----- rifting (WO-0006 S2, model §5 + amendment A) -----
 /// A plume qualifies as a rift driver once it has sat under continental
@@ -367,14 +367,13 @@ struct CellOut {
 
 /// Pre-advect snapshot of the mutable per-cell fields, refreshed at the
 /// top of `advect` each step. `regularize_boundaries` (WO-0011 S1) reads
-/// it three ways: previous owners define this step's flip candidates,
-/// previous features carry the process-edge exemptions, and the previous
-/// columns are the revert source (a rejected flip means the boundary did
-/// not move here, so the cell keeps its old owner AND its old crust).
+/// it two ways: previous owners define this step's flip candidates, and
+/// the previous columns are the revert source (a rejected flip means the
+/// boundary did not move here, so the cell keeps its old owner AND its
+/// old crust).
 #[derive(Default)]
 struct PrevCells {
     plate: Vec<u32>,
-    features: Vec<u32>,
     ctype: Vec<u32>,
     age: Vec<f32>,
     thick: Vec<f32>,
@@ -551,6 +550,9 @@ pub struct SimState {
     /// cells that still ended a step transferred with no active trench
     /// consuming their plate. Instrumentation here; S3 arms it at zero.
     pub craton_transfer_violations: u64,
+    /// Sliver-debris cells captured by their surrounding plate
+    /// (cumulative, WO-0011 S1 diagnostic).
+    pub sliver_captured: u64,
 
     // ----- crust-volume ledger (WO-0008 S2) -----
     // Continental crustal volume in exact quantized units of
@@ -658,6 +660,7 @@ impl SimState {
             connectivity_reassigned: 0,
             regularize_reverted: 0,
             craton_transfer_violations: 0,
+            sliver_captured: 0,
             vol_advect_q: 0,
             vol_closure_q: 0,
             vol_arc_q: 0,
@@ -981,7 +984,6 @@ impl SimState {
         // Snapshot the pre-advect cell state for regularize_boundaries
         // (WO-0011 S1). clone_from reuses the buffers after the first step.
         self.prev.plate.clone_from(&self.plate_id);
-        self.prev.features.clone_from(&self.features);
         self.prev.ctype.clone_from(&self.crust_type);
         self.prev.age.clone_from(&self.crust_age);
         self.prev.thick.clone_from(&self.thickness);
@@ -1886,15 +1888,14 @@ impl SimState {
     /// supply (Vauchez et al. 1997). So a re-sampling flip stands only
     /// where the lithosphere can actually fail:
     ///
-    /// * Candidates: cells whose owner changed this step. EXEMPT any cell
-    ///   whose PREVIOUS-step features carry a process-edge bit (divergent /
-    ///   convergent / transform) — real ridges, trenches and transforms are
-    ///   never straightened. One-step-old classes are the correct input by
-    ///   construction: `classify_boundaries()` runs after this pass, the
-    ///   same convention advect's `was_transform_only` uses. A consumption
-    ///   flip (`outs.subducted` set: a trench ate the cell under the
-    ///   per-pair polarity rule) also stands — that is a process edge whose
-    ///   slab segment is already banked in the ledger.
+    /// * Candidates: cells whose owner changed this step. EXEMPT any flip
+    ///   carried by a real recorded process — consumption at the cell
+    ///   (`outs.subducted` set: its slab segment is already banked), a
+    ///   continent-continent jam transfer (`outs.collided` set), or an
+    ///   active trench consuming the cell's previous plate on its ring
+    ///   (terrane docking) — real trenches are never straightened. See the
+    ///   comment at the body's head for why the exemption keys on events
+    ///   rather than the WO's F_BND feature bits.
     /// * Failure test (Dan's ruling: normal distribution): the flip keeps
     ///   its new owner only when `strength(c) < STRENGTH_FAIL_MEAN + eps`,
     ///   with `eps` a per-(cell, step) draw from N(0, STRENGTH_FAIL_SIGMA²)
@@ -1909,6 +1910,11 @@ impl SimState {
     ///   `strength()` branch) never transfers, except at an active trench
     ///   consuming its plate. Transfers that survive the step anyway are
     ///   counted in `craton_transfer_violations` (S3 arms it at zero).
+    /// * Sliver capture (S1 addition, see the in-body comment): static
+    ///   sliver debris — cells holding to their plate by at most one edge —
+    ///   is captured by the surrounding plate, eroding strips from their
+    ///   tips; without it the anti-fray gates cannot be met because the
+    ///   strips are never candidates (their owner never changes).
     ///
     /// Serial, cell-id order, iterated to a fixed point with a pass cap of
     /// 8 (seam-repair convention); reverts only ever un-do this step's
@@ -1923,7 +1929,31 @@ impl SimState {
     /// resumed from a keyframe replays bit-for-bit.
     fn regularize_boundaries(&mut self, master_seed: u64, step_idx: u32) {
         let n = self.grid.cell_count() as usize;
-        let process_bits = F_BND_DIVERGENT | F_BND_CONVERGENT | F_BND_TRANSFORM;
+        // Process exemption by EVENT EVIDENCE, not by class bit — a
+        // deviation from the WO-0011 S1 letter (which exempts the three
+        // F_BND feature bits), reported to Dan; S3 reviews. Measured at L6
+        // seed cyrus, the class bits cannot express the intent:
+        // * F_BND_TRANSFORM is classify's dead-band DEFAULT — every quiet
+        //   boundary cell carries it, so exempting it exempts every
+        //   boundary and the pass never fires (10 reverts in 2 Gy).
+        // * The interleaved strips this pass exists to kill touch
+        //   separating crust on one flank and converging crust on the
+        //   other, so their cells carry BOTH remaining bits (measured:
+        //   ~90% of finger cells) — any bit-based exemption protects
+        //   exactly the artifact.
+        // What the exemption MEANS — a flip carried by a real process is
+        // never un-done — is enforced on the recorded events themselves
+        // (`outs`): consumption at the cell, a continent-continent jam
+        // transfer, or an active trench consuming the cell's plate on the
+        // ring (the terrane-docking evidence). Ridges never need the
+        // exemption at all: spreading claims vacated cells for their
+        // PREVIOUS owner, which is not an ownership flip, and a transform
+        // transfers no material across the boundary — so at both, any
+        // cross-plate flip is re-sampling noise (the same physics as
+        // advect's was_transform_only). "Real ridges, trenches and
+        // transforms are never straightened" also holds structurally: the
+        // pass only un-does THIS step's flips, so a stable irregular ridge
+        // trace or staircase is never a candidate.
         let strength: Vec<f32> = (0..n).map(|c| self.strength(c)).collect();
         let eps_base = {
             let h = fnv1a(b"tectonics/regularize-eps");
@@ -1931,10 +1961,17 @@ impl SimState {
             fnv1a_continue(h, &step_idx.to_le_bytes())
         };
         let grid = Arc::clone(&self.grid);
+        // Cells taken by the sliver-capture scan below are settled: the
+        // flip-revert scan must not judge them again (a strong captured
+        // sliver would otherwise be reverted and re-captured every pass).
+        let mut captured = vec![false; n];
 
         for _pass in 0..8 {
             let mut reverted_any = false;
             for c in 0..n {
+                if captured[c] {
+                    continue;
+                }
                 let cur = self.plate_id[c];
                 let prevp = self.prev.plate[c];
                 if cur == prevp {
@@ -1943,44 +1980,118 @@ impl SimState {
                 if !self.plates[prevp as usize].alive {
                     continue; // nothing left to revert to
                 }
-                if self.prev.features[c] & process_bits != 0 {
-                    continue; // real process edges are never straightened
+                if self.outs[c].collided != NONE {
+                    continue; // continent-continent jam transfer: stands
                 }
-                let cont = self.crust_type[c] == 1;
+                if self.prev.ctype[c] == 0 && self.crust_type[c] == 1 {
+                    // Continental crust arriving across the boundary is
+                    // accretion, not noise — and the continental balance
+                    // guard (WO-0008 S1 step 6) has already spent this
+                    // gain to retain a trailing loss elsewhere on the
+                    // plate, so un-doing it here bleeds continent
+                    // (measured: −23% continental area over 2 Gy at seed
+                    // 42 vs the armed ±15%).
+                    continue;
+                }
+                // Connectivity-safe reverts only: a revert must rejoin the
+                // previous plate through a neighbor, or it strands an
+                // orphan for the §7 backstop to teleport (measured: 430
+                // backstop cells / 100 My vs the armed <= 10 budget). A
+                // flipped band reverts inward over the fixed-point passes
+                // as its outer cells rejoin; a cell with no path back is
+                // genuinely cut off and its flip stands.
+                if !grid
+                    .neighbors_of(c as u32)
+                    .iter()
+                    .any(|&nb| self.plate_id[nb as usize] == prevp)
+                {
+                    continue;
+                }
+                // ...and must not sever the NEW owner's region either: if
+                // the current owner's ring neighbors form more than one
+                // contiguous arc (ring is CCW-ordered), this cell may be a
+                // bridge of the flipped band and reverting it would cut
+                // the plate — same backstop churn from the other side.
+                {
+                    let nbs = grid.neighbors_of(c as u32);
+                    let k = nbs.len();
+                    let mut arcs = 0u32;
+                    for i in 0..k {
+                        let here = self.plate_id[nbs[i] as usize] == cur;
+                        let before = self.plate_id[nbs[(i + k - 1) % k] as usize] == cur;
+                        if here && !before {
+                            arcs += 1;
+                        }
+                    }
+                    if arcs > 1 {
+                        continue;
+                    }
+                }
+                // Craton floor on the PREVIOUS column: the floor's
+                // statement is "craton crust never leaves its plate", so
+                // the regime is judged on what stood at the cell before
+                // the flip (the strength() branch on the prev fields) —
+                // a craton plate advancing over ocean is an advance, not
+                // a transfer.
+                let cont = self.prev.ctype[c] == 1;
                 let age_ref = if cont {
-                    self.crust_age[c].min(self.orogeny_age[c])
+                    self.prev.age[c].min(self.prev.orog[c])
                 } else {
-                    self.crust_age[c]
+                    self.prev.age[c]
                 };
                 let craton = cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY;
                 let revert = if craton {
                     // Craton floor: revert unless an active trench is
                     // consuming this cell's plate here.
                     !self.trench_consuming_here(c)
-                } else if self.outs[c].subducted != NONE {
-                    false // consumption at a trench: the flip stands
+                } else if self.outs[c].subducted != NONE
+                    || (self.prev.ctype[c] == 1
+                        && self.prev.thick[c] >= SUBDUCTIBLE_CONT_KM
+                        && self.trench_consuming_here(c))
+                {
+                    // Consumption recorded at the cell, or the terrane-
+                    // docking signature — hard continental crust that kept
+                    // its column while an active trench consumed its plate
+                    // on the ring: a real process, the flip stands. The
+                    // ring evidence is gated on hard continent because
+                    // trenches and shear zones coincide: ungated, it
+                    // exempted every re-sampling flip NEAR a trench and
+                    // the strips survived (measured).
+                    false
                 } else {
-                    let h = fnv1a_continue(eps_base, &(c as u32).to_le_bytes());
-                    let eps = STRENGTH_FAIL_SIGMA * normal_from_hash(h);
-                    if strength[c] >= STRENGTH_FAIL_MEAN + eps {
-                        true // too strong to fail: the boundary stays put
-                    } else {
-                        // Geometry: lower boundary energy wins; a tie
-                        // keeps the previous owner. f64 in fixed order.
-                        let mut e_new = 0.0f64;
-                        let mut e_prev = 0.0f64;
-                        for &nb in grid.neighbors_of(c as u32) {
-                            let q = self.plate_id[nb as usize];
-                            let half =
-                                0.5 * (strength[c] as f64 + strength[nb as usize] as f64);
-                            if q != cur {
-                                e_new += half;
-                            }
-                            if q != prevp {
-                                e_prev += half;
-                            }
+                    // Geometry first: strength-weighted boundary energy of
+                    // the cell's inter-plate edges, new owner vs previous
+                    // owner. f64 in fixed traversal order.
+                    let mut e_new = 0.0f64;
+                    let mut e_prev = 0.0f64;
+                    for &nb in grid.neighbors_of(c as u32) {
+                        let q = self.plate_id[nb as usize];
+                        let half = 0.5 * (strength[c] as f64 + strength[nb as usize] as f64);
+                        if q != cur {
+                            e_new += half;
                         }
-                        e_prev <= e_new
+                        if q != prevp {
+                            e_prev += half;
+                        }
+                    }
+                    if e_prev <= e_new {
+                        // Keeping the flip does not lower the local
+                        // strength-weighted boundary energy (a tie keeps
+                        // the previous owner): revert. Note a PURE
+                        // energy-minimum rule was tried and measured worse
+                        // (fingers 3× at 2 Gy): weighted energy happily
+                        // trades a short strong boundary for a long weak
+                        // one, so raw length frays while E falls. The
+                        // failure test below is what pins strong crust.
+                        true
+                    } else {
+                        // The flip shortens the (weighted) boundary; it
+                        // still needs lithosphere at the cell that can
+                        // actually fail (Dan's ruling: normal-jittered
+                        // strength threshold).
+                        let h = fnv1a_continue(eps_base, &(c as u32).to_le_bytes());
+                        let eps = STRENGTH_FAIL_SIGMA * normal_from_hash(h);
+                        strength[c] >= STRENGTH_FAIL_MEAN + eps
                     }
                 };
                 if revert {
@@ -1988,6 +2099,96 @@ impl SimState {
                     reverted_any = true;
                 }
             }
+
+            // Sliver capture (same fixed-point loop, second serial scan):
+            // blocking the re-sampling flips above leaves a STATIC debris
+            // population — strips born as same-owner gap fill at oblique
+            // spreading centers, and weld/split scars — that has no owner
+            // change and so is never a candidate; measured at L6 seed
+            // cyrus it persists for Gy (~70–85% of finger cells survive
+            // each 100 My window) and alone holds fingers at ~1%. The
+            // capture rule: a cell attached to its plate by AT MOST ONE
+            // edge, with a single foreign plate holding the local
+            // majority around it, is mechanically part of that plate —
+            // transferring it only removes boundary (no new failure
+            // surface, the same physics as the tests above), and a leaf
+            // cell can never disconnect its plate, so chains erode from
+            // their tips one cell per pass. The cell's column transfers
+            // with it (terrane-style); the craton floor and the energy
+            // test still apply.
+            for c in 0..n {
+                if captured[c] {
+                    continue;
+                }
+                let p = self.plate_id[c];
+                let nbs = grid.neighbors_of(c as u32);
+                let same = nbs
+                    .iter()
+                    .filter(|&&nb| self.plate_id[nb as usize] == p)
+                    .count();
+                if same > 1 {
+                    continue;
+                }
+                let cont = self.crust_type[c] == 1;
+                let age_ref = if cont {
+                    self.crust_age[c].min(self.orogeny_age[c])
+                } else {
+                    self.crust_age[c]
+                };
+                if cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY {
+                    continue; // craton floor: never transfers
+                }
+                // Majority foreign plate around the cell (tie → lowest id,
+                // via strict > over ascending neighbor order — but count
+                // per plate first for determinism).
+                let mut best: u32 = NONE;
+                let mut best_cnt = 0usize;
+                let mut m = 0u64; // visited-plate mask over the ring only
+                for (i, &nb) in nbs.iter().enumerate() {
+                    let q = self.plate_id[nb as usize];
+                    if q == p || m & (1 << i) != 0 {
+                        continue;
+                    }
+                    let mut cnt = 0usize;
+                    for (j, &nb2) in nbs.iter().enumerate().skip(i) {
+                        if self.plate_id[nb2 as usize] == q {
+                            cnt += 1;
+                            m |= 1 << j;
+                        }
+                    }
+                    if cnt > best_cnt || (cnt == best_cnt && best != NONE && q < best) {
+                        best = q;
+                        best_cnt = cnt;
+                    }
+                }
+                if best == NONE || !self.plates[best as usize].alive || best_cnt < same + 2 {
+                    continue; // no clear majority holder
+                }
+                // Energy test: capture must lower the local
+                // strength-weighted boundary energy.
+                let mut e_now = 0.0f64;
+                let mut e_cap = 0.0f64;
+                for &nb in nbs {
+                    let q = self.plate_id[nb as usize];
+                    let half = 0.5 * (strength[c] as f64 + strength[nb as usize] as f64);
+                    if q != p {
+                        e_now += half;
+                    }
+                    if q != best {
+                        e_cap += half;
+                    }
+                }
+                if e_cap >= e_now {
+                    continue;
+                }
+                self.plate_cells[p as usize] -= 1;
+                self.plate_cells[best as usize] += 1;
+                self.plate_id[c] = best;
+                captured[c] = true;
+                self.sliver_captured += 1;
+                reverted_any = true;
+            }
+
             if !reverted_any {
                 break;
             }
@@ -2008,17 +2209,19 @@ impl SimState {
         }
 
         // Craton-floor instrumentation: transfers that survived anyway
-        // (connectivity reassignment, dead previous owner, ...).
+        // (connectivity reassignment, dead previous owner, a severed
+        // craton fragment, ...). Judged on the previous column, exactly
+        // like the floor above.
         for c in 0..n {
             let prevp = self.prev.plate[c];
             if self.plate_id[c] == prevp {
                 continue;
             }
-            let cont = self.crust_type[c] == 1;
+            let cont = self.prev.ctype[c] == 1;
             let age_ref = if cont {
-                self.crust_age[c].min(self.orogeny_age[c])
+                self.prev.age[c].min(self.prev.orog[c])
             } else {
-                self.crust_age[c]
+                self.prev.age[c]
             };
             if cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY && !self.trench_consuming_here(c) {
                 self.craton_transfer_violations += 1;

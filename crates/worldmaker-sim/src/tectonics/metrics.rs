@@ -1812,6 +1812,18 @@ fn oversized_enclosed_basin(sim: &SimState, a: u32, b: u32) -> Option<(u32, f64)
         if region.len() as u32 <= super::step::RELIC_BASIN_KEEP_CELLS {
             continue;
         }
+        // Basin-scale bound (WO-0011 S1 metric correction, decision log):
+        // the gate's premise — 60 My of locked closure suffices to consume
+        // the region — only holds at basin scale. When two continental
+        // giants border most of the world ocean, the ≥80% enclosure test
+        // matches the OPEN OCEAN (measured: a 21,992-cell "basin", 54% of
+        // the sphere, at seed cyrus post-regularization), which no amount
+        // of closure could consume in 60 My and which the §3 addendum
+        // never meant. Regions above 1% of the sphere are open ocean, not
+        // relic candidates.
+        if region.len() as f64 > 0.01 * n as f64 {
+            continue;
+        }
         let (mut border, mut border_ab) = (0u64, 0u64);
         for &c in &region {
             for &nb in sim.grid.neighbors_of(c) {
