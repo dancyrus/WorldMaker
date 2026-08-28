@@ -27,6 +27,31 @@ pub fn det_sin_cos(x: f32) -> (f32, f32) {
     (s, c)
 }
 
+/// Deterministic e^x for x ≤ 0 (WO-0009 S2: the terrain stage's uplift
+/// decay). Range reduction x = n·ln2 + r with |r| ≤ ln2/2, 2ⁿ built from
+/// exponent bits, exp(r) as a fixed-order degree-6 Taylor polynomial —
+/// only +, −, ×, / and bit assembly, so the result is bit-identical on
+/// every platform. Relative error ≲ 3e-7 on the valid range; inputs
+/// below −87 underflow to exactly 0. Callers must pass x ≤ 0.
+#[inline]
+pub fn det_exp_neg(x: f32) -> f32 {
+    debug_assert!(x <= 0.0, "det_exp_neg needs x <= 0: {x}");
+    if x < -87.0 {
+        return 0.0;
+    }
+    const LN2: f32 = core::f32::consts::LN_2;
+    // n = round(x / ln2); n in [-126, 0] on the valid range.
+    let n = (x * (1.0 / LN2) + 0.5).floor() as i32;
+    let r = x - n as f32 * LN2;
+    // exp(r), Horner, fixed order (|r| ≤ ~0.347).
+    let p = 1.0
+        + r * (1.0
+            + r * (0.5 + r * (1.0 / 6.0 + r * (1.0 / 24.0 + r * (1.0 / 120.0 + r / 720.0)))));
+    // 2^n via exponent bits (n ≥ -126 keeps it normal).
+    let two_n = f32::from_bits(((127 + n) as u32) << 23);
+    p * two_n
+}
+
 // ----- vec3 helpers (f32, fixed op order) -----
 
 #[inline]
@@ -386,6 +411,23 @@ mod tests {
             let t = random_tangent(&mut r, v);
             assert!(dot3(t, v).abs() < 1e-5);
             assert!((dot3(t, t) - 1.0).abs() < 1e-5);
+        }
+    }
+
+    /// det_exp_neg tracks libm exp closely on its range (the reference is
+    /// only a test oracle — production code never calls libm) and hits the
+    /// exact endpoints.
+    #[test]
+    fn det_exp_neg_matches_reference() {
+        assert_eq!(det_exp_neg(0.0), 1.0);
+        assert_eq!(det_exp_neg(-100.0), 0.0);
+        let mut x = -86.0f32;
+        while x <= 0.0 {
+            let got = det_exp_neg(x) as f64;
+            let want = (x as f64).exp();
+            let rel = (got - want).abs() / want;
+            assert!(rel < 1e-5, "det_exp_neg({x}) = {got}, want {want}");
+            x += 0.173;
         }
     }
 }

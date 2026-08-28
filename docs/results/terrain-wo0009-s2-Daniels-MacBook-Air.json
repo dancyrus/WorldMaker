@@ -1,0 +1,62 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-28",
+  "app_version": "0.1.0",
+  "metrics": {
+    "all_land_mean_mm_yr": 0.1964495838615633,
+    "benchmark_bands": {
+      "active_orogen_mm_yr": [
+        0.5,
+        10.0
+      ],
+      "craton_mm_yr": [
+        0.0003,
+        0.02
+      ],
+      "source": "earth-benchmarks-v1.md Table 5.1"
+    },
+    "config": {
+      "k_lith": [
+        0.0001,
+        0.00002,
+        0.00002,
+        0.00002,
+        0.00005,
+        0.0001,
+        2e-6,
+        1e-6,
+        2e-6,
+        4e-6,
+        3e-6,
+        3e-6,
+        3e-6,
+        3e-6,
+        0.00002,
+        0.00002
+      ],
+      "keyframe": "last",
+      "level": 6,
+      "morpho_my": 30.0,
+      "seed": 42,
+      "span_my": 500.0,
+      "u0_mm_yr": 5.0
+    },
+    "craton_cells": 5445,
+    "craton_mean_mm_yr": 0.02564834135279884,
+    "craton_median_mm_yr": 0.01499189453125,
+    "lake_cells": 2247,
+    "land_cells": 14911,
+    "ledger_deposited_q": 1536853898331,
+    "ledger_eroded_q": 1536853898331,
+    "ledger_residual_q": 0,
+    "max_discharge_m3s": 351224.0,
+    "orogen_cells": 1103,
+    "orogen_mean_mm_yr": 2.248942917568267,
+    "orogen_median_mm_yr": 2.605751302083333,
+    "peak_elev_after_m": 8934.337890625,
+    "peak_elev_before_m": 6411,
+    "post_orogenic_cells": 2222,
+    "post_orogenic_mean_mm_yr": 0.025292643471107934,
+    "su_deposit_cells": 15574
+  }
+}
