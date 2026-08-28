@@ -27,14 +27,14 @@ use crate::render::{
     WorldBundle,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ViewMode {
     Globe,
     Flat,
     Split,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Preset {
     Draft6,
     Standard7,
@@ -109,6 +109,8 @@ const UNDO_STROKE: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
 
 /// Scripted modes and world flags, driven from the command line (d3a §10.2).
+/// `Default` is the interactive launch: no scripted mode, no world flags.
+#[derive(Default)]
 pub struct Script {
     pub screenshots_dir: Option<PathBuf>,
     /// `--wo4-shots`: the WO-0004 documentation set (hud-1440,
@@ -139,6 +141,12 @@ pub struct Script {
     /// at 1440 px width, timeline mid-scrub, showing every control in the
     /// top bar and no bottom panel. Seed and preset come from the CLI.
     pub wo9_dir: Option<PathBuf>,
+    /// `--wo10-shot`: the WO-0010 proof shot — `startup.png` in this
+    /// directory, capturing the untouched interactive startup state
+    /// (Draft, Flat, Eckert IV) once the first world lands. Deliberately
+    /// NOT part of `scripted()`: proving the interactive defaults is the
+    /// point.
+    pub wo10_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -166,6 +174,40 @@ impl Script {
             && self.detail.is_none()
             && self.detail_octaves.is_none()
             && self.detail_amp_m.is_none()
+    }
+    /// Any scripted mode is active (screenshot sets or the perf loop).
+    /// `--wo10-shot` is deliberately absent: it exists to capture the
+    /// interactive startup state, so it must not switch to scripted defaults.
+    fn scripted(&self) -> bool {
+        self.screenshots_dir.is_some()
+            || self.wo4_dir.is_some()
+            || self.wo6_dir.is_some()
+            || self.wo7_dir.is_some()
+            || self.wo8_dir.is_some()
+            || self.wo8_s2_dir.is_some()
+            || self.wo9_dir.is_some()
+            || self.perf_out.is_some()
+    }
+    /// Startup state (WO-0010): interactive launches open in Draft, Flat
+    /// view, Eckert IV. Scripted runs keep the pre-WO-0010 state (High8
+    /// `--preset` fallback, Split, equirectangular) — several shot stages
+    /// and the perf loop inherit whatever they don't set explicitly, so
+    /// changing these would silently move committed screenshots and fps
+    /// numbers.
+    fn startup_state(&self) -> (Preset, ViewMode, Projection) {
+        if self.scripted() {
+            (
+                self.preset.unwrap_or(Preset::High8),
+                ViewMode::Split,
+                Projection::Equirectangular,
+            )
+        } else {
+            (
+                self.preset.unwrap_or(Preset::Draft6),
+                ViewMode::Flat,
+                Projection::EckertIv,
+            )
+        }
     }
     /// Sweep capture mode (d3a §12): a screenshot run carrying the dev detail
     /// overrides captures only the two judged crops — the deterministic coast
@@ -210,6 +252,11 @@ enum ScriptState {
     },
     /// WO-0009 top-controls proof shot (step 7).
     Wo9Shot {
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0010 proof shot (step 6): the untouched interactive startup.
+    Wo10Shot {
         frames: u32,
         requested: bool,
     },
@@ -401,6 +448,7 @@ impl WorldApp {
         }
         let seed_text = script.seed.clone().unwrap_or_else(|| "cyrus".to_string());
         let master_seed = seed_from_text(&seed_text);
+        let (default_preset, view_mode, projection) = script.startup_state();
         // Perf mode loops the pinned Standard7 -> High8 -> Ultra9 presets and
         // starts at the first; --preset is advisory there and ignored.
         let preset = if script.perf_out.is_some() {
@@ -411,7 +459,7 @@ impl WorldApp {
         } else if forces_parity {
             Preset::Standard7
         } else {
-            script.preset.unwrap_or(Preset::High8)
+            default_preset
         };
         let detail = script.detail.map(|d| d.clamp(0.0, 1.0)).unwrap_or(1.0);
         let detail_octaves = script
@@ -480,9 +528,9 @@ impl WorldApp {
             detail,
             detail_octaves,
             detail_amp_m,
-            view_mode: ViewMode::Split,
+            view_mode,
             preset,
-            projection: Projection::Equirectangular,
+            projection,
             graticule: true,
             layer: Layer::Elevation,
             debug_cell_bounds: false,
@@ -548,6 +596,11 @@ impl WorldApp {
                 }
             } else if script.wo9_dir.is_some() {
                 ScriptState::Wo9Shot {
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo10_dir.is_some() {
+                ScriptState::Wo10Shot {
                     frames: 0,
                     requested: false,
                 }
@@ -1630,6 +1683,7 @@ impl WorldApp {
             ScriptState::Wo7Shot { .. } => self.drive_wo7(ctx),
             ScriptState::Wo8Shot { .. } => self.drive_wo8(ctx),
             ScriptState::Wo9Shot { .. } => self.drive_wo9(ctx),
+            ScriptState::Wo10Shot { .. } => self.drive_wo10(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -2221,6 +2275,44 @@ impl WorldApp {
         }
     }
 
+    /// WO-0010 proof shot (step 6): `startup.png` — the app exactly as an
+    /// interactive first launch presents it (Draft, Flat, Eckert IV). No
+    /// state is touched; drive_script's wait gate has already held this
+    /// until the first world landed.
+    fn drive_wo10(&mut self, ctx: &egui::Context) {
+        let (frames, requested) = match &self.script_state {
+            ScriptState::Wo10Shot { frames, requested } => (*frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            log::info!("wo10 screenshot: startup");
+        }
+        // 45 frames lets the first baked frame settle before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo10_dir.clone().unwrap();
+            if let Err(e) = save_color_image(&image, &dir.join("startup.png")) {
+                log::error!("failed to save screenshot startup: {e:#}");
+            } else {
+                log::info!("saved screenshot startup.png");
+            }
+            self.script_state = ScriptState::Closing;
+        } else {
+            self.script_state = ScriptState::Wo10Shot { frames, requested };
+        }
+    }
+
     fn drive_perf(&mut self) {
         /// The pinned preset loop (d3a §10.3): Standard7 -> High8 -> Ultra9.
         const PRESETS: [(Preset, &str); 3] = [
@@ -2622,6 +2714,40 @@ mod tests {
             state_hash(&hist),
             before,
             "hold-shoreline bias mutated sim state"
+        );
+    }
+
+    /// WO-0010: an interactive launch (no CLI flags) opens in Draft preset,
+    /// Flat view, Eckert IV — `WorldApp::new` takes all three straight from
+    /// `startup_state`.
+    #[test]
+    fn interactive_startup_is_draft_flat_eckert() {
+        let script = super::Script::default();
+        assert_eq!(
+            script.startup_state(),
+            (
+                super::Preset::Draft6,
+                super::ViewMode::Flat,
+                worldmaker_core::Projection::EckertIv
+            )
+        );
+    }
+
+    /// Scripted runs keep the pre-WO-0010 startup state so committed
+    /// screenshots and perf numbers don't move (WO-0010 step 3).
+    #[test]
+    fn scripted_startup_keeps_pre_wo10_state() {
+        let script = super::Script {
+            wo7_dir: Some(std::path::PathBuf::from("shots")),
+            ..Default::default()
+        };
+        assert_eq!(
+            script.startup_state(),
+            (
+                super::Preset::High8,
+                super::ViewMode::Split,
+                worldmaker_core::Projection::Equirectangular
+            )
         );
     }
 }
