@@ -28,6 +28,63 @@ pub const GATE_CV: f64 = 0.50;
 /// See `GATE_CV`.
 pub const GATE_SINUOSITY: f64 = 1.18;
 
+// ----- WO-0011 plate-shape series (lifted from the shape probe) -----
+// The three series the shape probe prints, as reusable functions: the probe
+// calls them (behavior unchanged from its inline originals), and WO-0011 S3
+// arms gates on them. Serial, cell-id order, f64 accumulation.
+
+/// Mean over alive plates (with at least one cell) of boundary_cells /
+/// area — the probe's "compact" series. A compact cap is low; a shredded
+/// comb is high. `alive` is indexed by plate id.
+pub fn mean_boundary_per_area(grid: &Grid, plate_id: &[u32], alive: &[bool]) -> f64 {
+    let mut boundary = vec![0u32; alive.len()];
+    let mut area = vec![0u32; alive.len()];
+    for (c, &p) in plate_id.iter().enumerate() {
+        area[p as usize] += 1;
+        let nbs = grid.neighbors_of(c as u32);
+        let same = nbs.iter().filter(|&&nb| plate_id[nb as usize] == p).count();
+        if same < nbs.len() {
+            boundary[p as usize] += 1;
+        }
+    }
+    let mut sum = 0.0f64;
+    let mut plates = 0usize;
+    for p in 0..alive.len() {
+        if alive[p] && area[p] > 0 {
+            sum += boundary[p] as f64 / area[p] as f64;
+            plates += 1;
+        }
+    }
+    sum / plates.max(1) as f64
+}
+
+/// Fraction of all owned cells that are "fingers": at most 2 same-plate
+/// neighbours (thin strips and necks) — the probe's "finger" series.
+pub fn finger_fraction(grid: &Grid, plate_id: &[u32]) -> f64 {
+    let mut fingers = 0u64;
+    for (c, &p) in plate_id.iter().enumerate() {
+        let same = grid
+            .neighbors_of(c as u32)
+            .iter()
+            .filter(|&&nb| plate_id[nb as usize] == p)
+            .count();
+        if same <= 2 {
+            fingers += 1;
+        }
+    }
+    fingers as f64 / plate_id.len() as f64
+}
+
+/// The biggest plate's share of the sphere (cell-count fraction) — the
+/// probe's "largest" series, the welding indicator.
+pub fn largest_plate_share(plate_id: &[u32], plate_count: usize) -> f64 {
+    let mut area = vec![0u64; plate_count];
+    for &p in plate_id {
+        area[p as usize] += 1;
+    }
+    *area.iter().max().unwrap_or(&0) as f64 / plate_id.len() as f64
+}
+
 /// Coefficient of variation of plate areas, on cell counts (pinned; the
 /// pentagon area deficit is noise at this precision).
 ///
@@ -1753,6 +1810,18 @@ fn oversized_enclosed_basin(sim: &SimState, a: u32, b: u32) -> Option<(u32, f64)
             }
         }
         if region.len() as u32 <= super::step::RELIC_BASIN_KEEP_CELLS {
+            continue;
+        }
+        // Basin-scale bound (WO-0011 S1 metric correction, decision log):
+        // the gate's premise — 60 My of locked closure suffices to consume
+        // the region — only holds at basin scale. When two continental
+        // giants border most of the world ocean, the ≥80% enclosure test
+        // matches the OPEN OCEAN (measured: a 21,992-cell "basin", 54% of
+        // the sphere, at seed cyrus post-regularization), which no amount
+        // of closure could consume in 60 My and which the §3 addendum
+        // never meant. Regions above 1% of the sphere are open ocean, not
+        // relic candidates.
+        if region.len() as f64 > 0.01 * n as f64 {
             continue;
         }
         let (mut border, mut border_ab) = (0u64, 0u64);

@@ -23,12 +23,13 @@ use rayon::prelude::*;
 use worldmaker_core::dmath::{
     add3, cross3, dot3, mat3_mul, mat3_mul3, mat3_transpose, normalize3, rotation3, scale3, sub3,
 };
+use worldmaker_core::hash::{fnv1a, fnv1a_continue, splitmix64};
 use worldmaker_core::rng::sub_rng;
 use worldmaker_core::Grid;
 
 use super::keyframe::{
     dec_suture, ActiveRift, Keyframe, MicroplateOrigin, PairTimer, PlateState, RiftDriverKind,
-    SlabSegment, TectonicEvent, IDENTITY3, NEVER_SUTURED,
+    SlabSegment, TectonicEvent, Weld, IDENTITY3, NEVER_SUTURED,
 };
 use super::{
     TectonicsParams, DT_MY, F_ARC, F_BND_CONVERGENT, F_BND_DIVERGENT, F_BND_TRANSFORM, F_HOTSPOT,
@@ -170,6 +171,13 @@ const SUTURE_LOCK_CMYR: f32 = 0.4;
 /// intervening ocean is consumed (Wilson 1966), but a consumed-down relic
 /// sea no longer blocks the weld.
 pub(super) const SUTURE_OCEAN_RINGS: u16 = 2;
+/// Front advance rate of a matured weld (km/My, WO-0011 S2): a weld
+/// transfers the loser's cells progressively from the contact instead of
+/// relabelling them in one step (which welded a dumbbell out of any
+/// partial contact). Physical range 20–100: the India–Eurasia deformation
+/// front propagated on the order of 2,000 km into Asia in ~50 My. The
+/// rate is in km, not cells, so the merge speed is grid-level independent.
+pub(super) const WELD_FRONT_KM_MY: f32 = 50.0;
 
 // ----- relic-basin closure (WO-0008 S1, model §3 addendum) -----
 /// A basin consumed down to this many cells survives as a relic sea
@@ -210,6 +218,20 @@ const INSULATION_CONT_FRACTION: f32 = 1.0 / 3.0;
 const INSULATION_START_MY: f32 = 55.0;
 const INSULATION_FULL_MY: f32 = 165.0;
 const INSULATION_FLOOR: f32 = 0.18;
+
+// ----- boundary regularization (WO-0011 S1, plate-shape anti-fray) -----
+/// Mean strength at which lithosphere can fail and let a plate boundary
+/// re-localize through it (`strength()` units). An advection re-sampling
+/// flip keeps its new owner only below the (jittered) threshold. Anchored
+/// between young ocean (g_age floor 0.9 → S ≈ 0.9) and the continental
+/// platform (mature pre-craton continent, S ≈ 1.1–1.5): ordinary oceanic
+/// lithosphere and young margins can fail, platforms and cratons cannot.
+/// Calibrated at L6, seed cyrus (WO-0011 S1 step 6).
+const STRENGTH_FAIL_MEAN: f32 = 1.05;
+/// Sub-grid strength heterogeneity: sigma of the per-(cell, step) normal
+/// jitter on the failure threshold (~15% of MEAN), so the cutoff is a
+/// band, not a knife edge.
+const STRENGTH_FAIL_SIGMA: f32 = 0.05;
 
 // ----- rifting (WO-0006 S2, model §5 + amendment A) -----
 /// A plume qualifies as a rift driver once it has sat under continental
@@ -311,6 +333,21 @@ const NONE: u32 = u32::MAX;
 /// "No slab beneath this cell" sentinel for the per-cell `slab_plate` field.
 pub const SLAB_NONE: u16 = u16::MAX;
 
+/// Approximately standard-normal draw from a hash: the Irwin–Hall 12
+/// construction of `dmath::gaussian_f32`, fed by a splitmix64 chain instead
+/// of a stream RNG so it is a pure function of its key — no transcendentals,
+/// no RNG state, bit-identical on every platform. Good to ~3 sigma, which is
+/// all sub-grid strength heterogeneity needs.
+fn normal_from_hash(mut h: u64) -> f32 {
+    let mut sum = 0.0f32;
+    for _ in 0..6 {
+        h = splitmix64(h);
+        sum += (h >> 40) as f32 * (1.0 / 16_777_216.0);
+        sum += ((h >> 16) & 0x00FF_FFFF) as f32 * (1.0 / 16_777_216.0);
+    }
+    sum - 6.0
+}
+
 /// Per-cell result of the advection gather.
 #[derive(Clone, Copy)]
 struct CellOut {
@@ -333,6 +370,26 @@ struct CellOut {
     slab_since: f32,
     /// Advected suture scar (NEVER_SUTURED where none).
     suture_at: f32,
+}
+
+/// Pre-advect snapshot of the mutable per-cell fields, refreshed at the
+/// top of `advect` each step. `regularize_boundaries` (WO-0011 S1) reads
+/// it two ways: previous owners define this step's flip candidates, and
+/// the previous columns are the revert source (a rejected flip means the
+/// boundary did not move here, so the cell keeps its old owner AND its
+/// old crust).
+#[derive(Default)]
+struct PrevCells {
+    plate: Vec<u32>,
+    ctype: Vec<u32>,
+    age: Vec<f32>,
+    thick: Vec<f32>,
+    orog: Vec<f32>,
+    rift: Vec<f32>,
+    build: Vec<f32>,
+    slab_plate: Vec<u16>,
+    slab_since: Vec<f32>,
+    suture_at: Vec<f32>,
 }
 
 /// Per-cell result of boundary classification.
@@ -412,6 +469,12 @@ pub struct SimState {
     // Plate-level state.
     pub plates: Vec<PlateState>,
     pub collisions: Vec<PairTimer>,
+    /// Live progressive welds (WO-0011 S2): matured pairs whose loser is
+    /// transferring front-limited. Fixed order (append at maturity, retire
+    /// in place); a plate appears as loser of at most one motion-slaving
+    /// weld at a time, but a shrinking loser can be claimed by a second
+    /// weld and both fronts advance independently.
+    pub welds: Vec<Weld>,
     pub hotspots: Vec<[f32; 3]>,
     /// Per hotspot: continuous time under continental crust (My) — the
     /// plume rift driver's clock.
@@ -460,6 +523,9 @@ pub struct SimState {
     outs: Vec<CellOut>,
     class: Vec<ClassOut>,
     bfs_depth: Vec<u16>,
+    /// Pre-advect cell state (see [`PrevCells`]); scratch, never keyframed —
+    /// it is rebuilt at the top of every `advect`.
+    prev: PrevCells,
     pub(super) hotspot_hints: Vec<u32>,
 
     // Cumulative continental-inventory flows (cells), for the acceptance
@@ -490,6 +556,16 @@ pub struct SimState {
     /// Cells reassigned by the connectivity backstop (cumulative). The §7
     /// invariant target: this fires only for advection seam noise.
     pub connectivity_reassigned: u64,
+    /// Ownership flips reverted by `regularize_boundaries` (cumulative,
+    /// WO-0011 S1 diagnostic).
+    pub regularize_reverted: u64,
+    /// Craton-floor violations (cumulative, WO-0011 S1): craton-regime
+    /// cells that still ended a step transferred with no active trench
+    /// consuming their plate. Instrumentation here; S3 arms it at zero.
+    pub craton_transfer_violations: u64,
+    /// Sliver-debris cells captured by their surrounding plate
+    /// (cumulative, WO-0011 S1 diagnostic).
+    pub sliver_captured: u64,
 
     // ----- crust-volume ledger (WO-0008 S2) -----
     // Continental crustal volume in exact quantized units of
@@ -555,6 +631,7 @@ impl SimState {
             suture_at_my: vec![NEVER_SUTURED; n],
             plates: Vec::new(),
             collisions: Vec::new(),
+            welds: Vec::new(),
             hotspots: Vec::new(),
             hotspot_cont_my: Vec::new(),
             rifts: Vec::new(),
@@ -577,6 +654,7 @@ impl SimState {
             outs: Vec::new(),
             class: vec![ClassOut::default(); n],
             bfs_depth: vec![u16::MAX; n],
+            prev: PrevCells::default(),
             hotspot_hints: Vec::new(),
             cont_lost_to_ridge_gap: 0,
             cont_lost_to_consumption: 0,
@@ -594,6 +672,9 @@ impl SimState {
             rift_link_count: 0,
             microplate_count: 0,
             connectivity_reassigned: 0,
+            regularize_reverted: 0,
+            craton_transfer_violations: 0,
+            sliver_captured: 0,
             vol_advect_q: 0,
             vol_closure_q: 0,
             vol_arc_q: 0,
@@ -680,6 +761,7 @@ impl SimState {
         }
         s.plates = kf.plates.clone();
         s.collisions = kf.collisions.clone();
+        s.welds = kf.welds.clone();
         s.rifts = kf.rifts.clone();
         s.hotspots = hotspots.to_vec();
         s.hotspot_cont_my = kf.hotspot_cont_my.iter().map(|&v| v as f32).collect();
@@ -738,10 +820,11 @@ impl SimState {
         self.accumulate_boundary_stats();
     }
 
-    /// Advance one step. The whole step is RNG-free since WO-0006 S2 (the
-    /// last draw died with the random breakup); the seed/step parameters are
-    /// kept for API stability and S3's calibration hooks.
-    pub fn step(&mut self, _master_seed: u64, _step_idx: u32) {
+    /// Advance one step. The step is RNG-free in the reproducibility sense:
+    /// its only stochastic input is `regularize_boundaries`' per-(cell,
+    /// step) threshold jitter, a pure hash of (master seed, cell id, step
+    /// index) — same seed, same world, resumable at any keyframe.
+    pub fn step(&mut self, master_seed: u64, step_idx: u32) {
         // The crust-volume ledger (WO-0008 S2) measures each phase's
         // continental-volume delta in exact quantized units: the terms
         // telescope to the total change, so nothing is unexplained, and
@@ -751,6 +834,7 @@ impl SimState {
         self.motion_update();
         self.advect();
         self.enforce_connectivity();
+        self.regularize_boundaries(master_seed, step_idx);
         let v1 = self.cont_volume_q();
         self.vol_advect_q += v1 - v0;
         self.classify_boundaries();
@@ -770,11 +854,13 @@ impl SimState {
         // Sutures read this step's classification, so they run before the
         // split pass moves any cells: every ownership change after
         // enforce_connectivity is then connectivity-preserving by
-        // construction (a weld is a contact union; split halves are built
+        // construction (a weld front grows off the winner's interface and
+        // sweeps severed remainder fragments; split halves are built
         // connected).
         self.update_pair_timers_and_sutures();
         let v6 = self.cont_volume_q();
         self.vol_closure_q += v6 - v5;
+        self.advance_weld_fronts();
         self.capture_fossilized_plates();
         self.check_rift_splits();
         self.grow_rifts();
@@ -854,8 +940,20 @@ impl SimState {
     /// direction. RNG-free — poles wander exactly when the plate's boundary
     /// makeup changes.
     fn motion_update(&mut self) {
-        for pid in 0..self.plates.len() {
-            if !self.plates[pid].alive {
+        // Slaved motion (WO-0011 S2): while a weld is live the loser is
+        // mechanically part of the winner — it copies the winner's pole and
+        // speed instead of running its own balance (the pair already passed
+        // the §3 lock gate, so this is a small correction, and it stops the
+        // advancing front from shearing against an independently rotating
+        // loser). Slaving is by the OLDEST weld claiming the loser.
+        let mut slaved_by: Vec<u32> = vec![NONE; self.plates.len()];
+        for w in &self.welds {
+            if slaved_by[w.loser as usize] == NONE {
+                slaved_by[w.loser as usize] = w.winner;
+            }
+        }
+        for (pid, &slaved) in slaved_by.iter().enumerate() {
+            if !self.plates[pid].alive || slaved != NONE {
                 continue;
             }
             // Slab pull from attached ledger segments, weighted by thermal
@@ -897,6 +995,29 @@ impl SimState {
             p.pending_rot = mat3_mul3(&step_rot, &p.pending_rot);
             p.pending_deg += p.speed_deg_my * DT_MY;
         }
+        // Second pass, weld order: slaved losers copy their winner's
+        // (already-updated) pole and speed, then bank their own pending
+        // rotation as usual — pending phases can differ, so commits may
+        // interleave by a step; the seam noise that leaves is exactly what
+        // the regularization/backstop passes absorb.
+        for i in 0..self.welds.len() {
+            let w = self.welds[i];
+            let lu = w.loser as usize;
+            if slaved_by[lu] != w.winner || !self.plates[lu].alive {
+                continue; // a later weld on an already-slaved loser
+            }
+            slaved_by[lu] = NONE; // bank each slaved loser exactly once
+            let (pole, speed) = {
+                let win = &self.plates[w.winner as usize];
+                (win.pole, win.speed_deg_my)
+            };
+            let p = &mut self.plates[lu];
+            p.pole = pole;
+            p.speed_deg_my = speed;
+            let step_rot = rotation3(p.pole, p.speed_deg_my * DEG2RAD * DT_MY);
+            p.pending_rot = mat3_mul3(&step_rot, &p.pending_rot);
+            p.pending_deg += p.speed_deg_my * DT_MY;
+        }
     }
 
     /// Angular velocity vector (rad/My) of a plate.
@@ -911,6 +1032,19 @@ impl SimState {
     fn advect(&mut self) {
         let n = self.grid.cell_count() as usize;
         let commit_deg = COMMIT_FRACTION * self.cell_spacing_km / (R_EARTH_KM * DEG2RAD);
+
+        // Snapshot the pre-advect cell state for regularize_boundaries
+        // (WO-0011 S1). clone_from reuses the buffers after the first step.
+        self.prev.plate.clone_from(&self.plate_id);
+        self.prev.ctype.clone_from(&self.crust_type);
+        self.prev.age.clone_from(&self.crust_age);
+        self.prev.thick.clone_from(&self.thickness);
+        self.prev.orog.clone_from(&self.orogeny_age);
+        self.prev.rift.clone_from(&self.rift_age);
+        self.prev.build.clone_from(&self.buildup);
+        self.prev.slab_plate.clone_from(&self.slab_plate);
+        self.prev.slab_since.clone_from(&self.slab_since_my);
+        self.prev.suture_at.clone_from(&self.suture_at_my);
 
         // Dense index for alive plates so candidates fit a u32 bitmask.
         let mut id_of_dense: Vec<u32> = Vec::new();
@@ -1794,6 +1928,456 @@ impl SimState {
         any_fragment
     }
 
+    // ----- A2: boundary regularization (WO-0011 S1, anti-fray) -----
+
+    /// Strength-gated boundary regularization. `advect()` re-samples the
+    /// plate-id field across every inter-plate velocity discontinuity;
+    /// shear stretches the interleaved teeth into strips, and nothing
+    /// upstream resists it — the pipeline enforces connectedness, never
+    /// compactness (the WO-0011 "gerrymander" diagnosis). Physically a
+    /// plate boundary localizes on weak lithosphere; propagating one
+    /// through strong interior needs stress the driving forces do not
+    /// supply (Vauchez et al. 1997). So a re-sampling flip stands only
+    /// where the lithosphere can actually fail:
+    ///
+    /// * Candidates: cells whose owner changed this step. EXEMPT any flip
+    ///   carried by a real recorded process — consumption at the cell
+    ///   (`outs.subducted` set: its slab segment is already banked), a
+    ///   continent-continent jam transfer (`outs.collided` set), or an
+    ///   active trench consuming the cell's previous plate on its ring
+    ///   (terrane docking) — real trenches are never straightened. See the
+    ///   comment at the body's head for why the exemption keys on events
+    ///   rather than the WO's F_BND feature bits.
+    /// * Failure test (Dan's ruling: normal distribution): the flip keeps
+    ///   its new owner only when `strength(c) < STRENGTH_FAIL_MEAN + eps`,
+    ///   with `eps` a per-(cell, step) draw from N(0, STRENGTH_FAIL_SIGMA²)
+    ///   by deterministic hash over (master seed, cell id, step index).
+    /// * Geometry test: a flip that passes still reverts unless keeping it
+    ///   LOWERS the local strength-weighted boundary energy — E = Σ over
+    ///   the cell's inter-plate edges of (S(c) + S(nb))/2, new owner vs
+    ///   previous owner; a tie keeps the previous owner. Strong-interior
+    ///   teeth lose to the straight interface; weak young margins keep
+    ///   their irregularity.
+    /// * Craton floor: a cell in the craton strength regime (exactly the
+    ///   `strength()` branch) never transfers, except at an active trench
+    ///   consuming its plate. Transfers that survive the step anyway are
+    ///   counted in `craton_transfer_violations` (S3 arms it at zero).
+    /// * Sliver capture (S1 addition, see the in-body comment): static
+    ///   sliver debris — cells holding to their plate by at most one edge,
+    ///   or two mutually-adjacent ones — is captured by the surrounding
+    ///   plate, eroding strips from their tips and flanks; without it the
+    ///   anti-fray gates cannot be met because the strips are never
+    ///   candidates (their owner never changes).
+    ///
+    /// Serial, cell-id order, iterated to a fixed point with a pass cap of
+    /// 8 (seam-repair convention); reverts only ever un-do this step's
+    /// flips, so the candidate set strictly shrinks and the loop
+    /// terminates. `enforce_connectivity()` re-runs afterwards — reverts
+    /// can re-fragment a plate.
+    ///
+    /// Strength is evaluated once at pass entry on the post-advect fields
+    /// with the previous step's continental census (accumulate_boundary_
+    /// stats has not run yet) — the same one-step-old convention as the
+    /// exemptions. The eps hash keys on the absolute step index, so a run
+    /// resumed from a keyframe replays bit-for-bit.
+    fn regularize_boundaries(&mut self, master_seed: u64, step_idx: u32) {
+        let n = self.grid.cell_count() as usize;
+        // Process exemption by EVENT EVIDENCE, not by class bit — a
+        // deviation from the WO-0011 S1 letter (which exempts the three
+        // F_BND feature bits), reported to Dan; S3 reviews. Measured at L6
+        // seed cyrus, the class bits cannot express the intent:
+        // * F_BND_TRANSFORM is classify's dead-band DEFAULT — every quiet
+        //   boundary cell carries it, so exempting it exempts every
+        //   boundary and the pass never fires (10 reverts in 2 Gy).
+        // * The interleaved strips this pass exists to kill touch
+        //   separating crust on one flank and converging crust on the
+        //   other, so their cells carry BOTH remaining bits (measured:
+        //   ~90% of finger cells) — any bit-based exemption protects
+        //   exactly the artifact.
+        // What the exemption MEANS — a flip carried by a real process is
+        // never un-done — is enforced on the recorded events themselves
+        // (`outs`): consumption at the cell, a continent-continent jam
+        // transfer, or an active trench consuming the cell's plate on the
+        // ring (the terrane-docking evidence). Ridges never need the
+        // exemption at all: spreading claims vacated cells for their
+        // PREVIOUS owner, which is not an ownership flip, and a transform
+        // transfers no material across the boundary — so at both, any
+        // cross-plate flip is re-sampling noise (the same physics as
+        // advect's was_transform_only). "Real ridges, trenches and
+        // transforms are never straightened" also holds structurally: the
+        // pass only un-does THIS step's flips, so a stable irregular ridge
+        // trace or staircase is never a candidate.
+        let strength: Vec<f32> = (0..n).map(|c| self.strength(c)).collect();
+        let eps_base = {
+            let h = fnv1a(b"tectonics/regularize-eps");
+            let h = fnv1a_continue(h, &master_seed.to_le_bytes());
+            fnv1a_continue(h, &step_idx.to_le_bytes())
+        };
+        let grid = Arc::clone(&self.grid);
+        // Cells taken by the sliver-capture scan below are settled: the
+        // flip-revert scan must not judge them again (a strong captured
+        // sliver would otherwise be reverted and re-captured every pass).
+        let mut captured = vec![false; n];
+
+        for _pass in 0..8 {
+            let mut reverted_any = false;
+            for c in 0..n {
+                if captured[c] {
+                    continue;
+                }
+                let cur = self.plate_id[c];
+                let prevp = self.prev.plate[c];
+                if cur == prevp {
+                    continue;
+                }
+                if !self.plates[prevp as usize].alive {
+                    continue; // nothing left to revert to
+                }
+                if self.outs[c].collided != NONE {
+                    continue; // continent-continent jam transfer: stands
+                }
+                if self.prev.ctype[c] == 0 && self.crust_type[c] == 1 {
+                    // Continental crust arriving across the boundary is
+                    // accretion, not noise — and the continental balance
+                    // guard (WO-0008 S1 step 6) has already spent this
+                    // gain to retain a trailing loss elsewhere on the
+                    // plate, so un-doing it here bleeds continent
+                    // (measured: −23% continental area over 2 Gy at seed
+                    // 42 vs the armed ±15%).
+                    continue;
+                }
+                // Connectivity-safe reverts only: a revert must rejoin the
+                // previous plate through a neighbor, or it strands an
+                // orphan for the §7 backstop to teleport (measured: 430
+                // backstop cells / 100 My vs the armed <= 10 budget). A
+                // flipped band reverts inward over the fixed-point passes
+                // as its outer cells rejoin; a cell with no path back is
+                // genuinely cut off and its flip stands.
+                if !grid
+                    .neighbors_of(c as u32)
+                    .iter()
+                    .any(|&nb| self.plate_id[nb as usize] == prevp)
+                {
+                    continue;
+                }
+                // ...and must not sever the NEW owner's region either: if
+                // the current owner's ring neighbors form more than one
+                // contiguous arc (ring is CCW-ordered), this cell may be a
+                // bridge of the flipped band and reverting it would cut
+                // the plate — same backstop churn from the other side.
+                {
+                    let nbs = grid.neighbors_of(c as u32);
+                    let k = nbs.len();
+                    let mut arcs = 0u32;
+                    for i in 0..k {
+                        let here = self.plate_id[nbs[i] as usize] == cur;
+                        let before = self.plate_id[nbs[(i + k - 1) % k] as usize] == cur;
+                        if here && !before {
+                            arcs += 1;
+                        }
+                    }
+                    if arcs > 1 {
+                        continue;
+                    }
+                }
+                // Craton floor on the PREVIOUS column: the floor's
+                // statement is "craton crust never leaves its plate", so
+                // the regime is judged on what stood at the cell before
+                // the flip (the strength() branch on the prev fields) —
+                // a craton plate advancing over ocean is an advance, not
+                // a transfer.
+                let cont = self.prev.ctype[c] == 1;
+                let age_ref = if cont {
+                    self.prev.age[c].min(self.prev.orog[c])
+                } else {
+                    self.prev.age[c]
+                };
+                let craton = cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY;
+                let revert = if craton {
+                    // Craton floor: revert unless an active trench is
+                    // consuming this cell's plate here.
+                    !self.trench_consuming_here(c)
+                } else if self.outs[c].subducted != NONE
+                    || (self.prev.ctype[c] == 1
+                        && self.prev.thick[c] >= SUBDUCTIBLE_CONT_KM
+                        && self.trench_consuming_here(c))
+                {
+                    // Consumption recorded at the cell, or the terrane-
+                    // docking signature — hard continental crust that kept
+                    // its column while an active trench consumed its plate
+                    // on the ring: a real process, the flip stands. The
+                    // ring evidence is gated on hard continent because
+                    // trenches and shear zones coincide: ungated, it
+                    // exempted every re-sampling flip NEAR a trench and
+                    // the strips survived (measured).
+                    false
+                } else {
+                    // Geometry first: strength-weighted boundary energy of
+                    // the cell's inter-plate edges, new owner vs previous
+                    // owner. f64 in fixed traversal order.
+                    let mut e_new = 0.0f64;
+                    let mut e_prev = 0.0f64;
+                    for &nb in grid.neighbors_of(c as u32) {
+                        let q = self.plate_id[nb as usize];
+                        let half = 0.5 * (strength[c] as f64 + strength[nb as usize] as f64);
+                        if q != cur {
+                            e_new += half;
+                        }
+                        if q != prevp {
+                            e_prev += half;
+                        }
+                    }
+                    if e_prev <= e_new {
+                        // Keeping the flip does not lower the local
+                        // strength-weighted boundary energy (a tie keeps
+                        // the previous owner): revert. Note a PURE
+                        // energy-minimum rule was tried and measured worse
+                        // (fingers 3× at 2 Gy): weighted energy happily
+                        // trades a short strong boundary for a long weak
+                        // one, so raw length frays while E falls. The
+                        // failure test below is what pins strong crust.
+                        true
+                    } else {
+                        // The flip shortens the (weighted) boundary; it
+                        // still needs lithosphere at the cell that can
+                        // actually fail (Dan's ruling: normal-jittered
+                        // strength threshold).
+                        let h = fnv1a_continue(eps_base, &(c as u32).to_le_bytes());
+                        let eps = STRENGTH_FAIL_SIGMA * normal_from_hash(h);
+                        strength[c] >= STRENGTH_FAIL_MEAN + eps
+                    }
+                };
+                if revert {
+                    self.revert_flip(c);
+                    reverted_any = true;
+                }
+            }
+
+            // Sliver capture (same fixed-point loop, second serial scan):
+            // blocking the re-sampling flips above leaves a STATIC debris
+            // population — strips born as same-owner gap fill at oblique
+            // spreading centers, and weld/split scars — that has no owner
+            // change and so is never a candidate; measured at L6 seed
+            // cyrus it persists for Gy (~70–85% of finger cells survive
+            // each 100 My window) and alone holds fingers at ~1%. The
+            // capture rule: a cell attached to its plate by at most one
+            // edge — or exactly two edges in consecutive ring slots —
+            // with a foreign plate holding the clear local majority
+            // around it, is mechanically part of that plate:
+            // transferring it only removes boundary (no new failure
+            // surface, the same physics as the tests above), and neither
+            // a leaf nor a cell whose two anchors are mutually adjacent
+            // can disconnect its plate, so strips erode from their tips
+            // and flanks. The cell's column transfers with it
+            // (terrane-style — crust never moves, so margin shape in
+            // crust terms is untouched); the craton floor and the energy
+            // test still apply.
+            for c in 0..n {
+                if captured[c] {
+                    continue;
+                }
+                let p = self.plate_id[c];
+                if self.plate_cells[p as usize] <= 1 {
+                    // Never capture a plate's last cell: a one-cell plate
+                    // still owns its slab ledger, and emptying it here
+                    // would orphan those segments on a dead plate (advect's
+                    // retirement transfers them; this path has no consumer
+                    // to transfer to). Consumption or fossil capture
+                    // retires it properly.
+                    continue;
+                }
+                let nbs = grid.neighbors_of(c as u32);
+                let same = nbs
+                    .iter()
+                    .filter(|&&nb| self.plate_id[nb as usize] == p)
+                    .count();
+                if same > 2 {
+                    continue;
+                }
+                if same == 2 {
+                    // Two same-plate neighbors: capturable only when they
+                    // sit in CONSECUTIVE ring slots — consecutive ring
+                    // neighbors are mutually adjacent on this grid, so
+                    // removing the cell cannot disconnect them (it is
+                    // provably not a bridge). Non-consecutive pairs may be
+                    // a neck; those stay (S2's welding rework owns necks).
+                    let k = nbs.len();
+                    let consecutive = (0..k).any(|i| {
+                        self.plate_id[nbs[i] as usize] == p
+                            && self.plate_id[nbs[(i + 1) % k] as usize] == p
+                    });
+                    if !consecutive {
+                        continue;
+                    }
+                }
+                let cont = self.crust_type[c] == 1;
+                let age_ref = if cont {
+                    self.crust_age[c].min(self.orogeny_age[c])
+                } else {
+                    self.crust_age[c]
+                };
+                if cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY {
+                    continue; // craton floor: never transfers
+                }
+                // Majority foreign plate around the cell (tie → lowest id,
+                // via strict > over ascending neighbor order — but count
+                // per plate first for determinism).
+                let mut best: u32 = NONE;
+                let mut best_cnt = 0usize;
+                let mut m = 0u64; // visited-plate mask over the ring only
+                for (i, &nb) in nbs.iter().enumerate() {
+                    let q = self.plate_id[nb as usize];
+                    if q == p || m & (1 << i) != 0 {
+                        continue;
+                    }
+                    let mut cnt = 0usize;
+                    for (j, &nb2) in nbs.iter().enumerate().skip(i) {
+                        if self.plate_id[nb2 as usize] == q {
+                            cnt += 1;
+                            m |= 1 << j;
+                        }
+                    }
+                    if cnt > best_cnt || (cnt == best_cnt && best != NONE && q < best) {
+                        best = q;
+                        best_cnt = cnt;
+                    }
+                }
+                if best == NONE || !self.plates[best as usize].alive || best_cnt < same + 2 {
+                    continue; // no clear majority holder
+                }
+                // Energy test: capture must lower the local
+                // strength-weighted boundary energy.
+                let mut e_now = 0.0f64;
+                let mut e_cap = 0.0f64;
+                for &nb in nbs {
+                    let q = self.plate_id[nb as usize];
+                    let half = 0.5 * (strength[c] as f64 + strength[nb as usize] as f64);
+                    if q != p {
+                        e_now += half;
+                    }
+                    if q != best {
+                        e_cap += half;
+                    }
+                }
+                if e_cap >= e_now {
+                    continue;
+                }
+                self.plate_cells[p as usize] -= 1;
+                self.plate_cells[best as usize] += 1;
+                self.plate_id[c] = best;
+                captured[c] = true;
+                self.sliver_captured += 1;
+                reverted_any = true;
+            }
+
+            if !reverted_any {
+                break;
+            }
+        }
+
+        // Reverts can re-fragment a plate; restore the §7 invariant.
+        self.enforce_connectivity();
+
+        // A plate whose only cells this step were reverted-away flips can
+        // end empty; retire it like advect does.
+        for pid in 0..self.plates.len() {
+            if self.plates[pid].alive && self.plate_cells[pid] == 0 {
+                self.plates[pid].alive = false;
+                self.collisions
+                    .retain(|t| t.a != pid as u32 && t.b != pid as u32);
+                log::debug!("t={} My: plate {pid} emptied by regularization", self.t_my);
+            }
+        }
+
+        // Craton-floor instrumentation: transfers that survived anyway
+        // (connectivity reassignment, dead previous owner, a severed
+        // craton fragment, ...). Judged on the previous column, exactly
+        // like the floor above.
+        for c in 0..n {
+            let prevp = self.prev.plate[c];
+            if self.plate_id[c] == prevp {
+                continue;
+            }
+            let cont = self.prev.ctype[c] == 1;
+            let age_ref = if cont {
+                self.prev.age[c].min(self.prev.orog[c])
+            } else {
+                self.prev.age[c]
+            };
+            if cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY && !self.trench_consuming_here(c) {
+                self.craton_transfer_violations += 1;
+            }
+        }
+    }
+
+    /// Is this changed cell at an active trench consuming its previous
+    /// plate (the per-pair polarity rule in advect)? True when the cell
+    /// itself records the consumption, or a ring neighbor consumed the same
+    /// plate for the same winner this step (the terrane-docking path keeps
+    /// the cell's column, so the trench evidence sits on the ring).
+    fn trench_consuming_here(&self, c: usize) -> bool {
+        let prevp = self.prev.plate[c];
+        let cur = self.plate_id[c];
+        if self.outs[c].subducted == prevp {
+            return true;
+        }
+        self.grid.neighbors_of(c as u32).iter().any(|&nb| {
+            let o = &self.outs[nb as usize];
+            o.subducted == prevp && o.plate == cur
+        })
+    }
+
+    /// Un-do one of this step's ownership flips: the boundary did not move
+    /// here, so the cell keeps its previous owner and its previous column
+    /// (the advect-revert convention — features cleared; classification
+    /// re-derives them after this pass). Mirrors and un-books the scatter
+    /// pass's inventory and underthrust entries for this cell so the
+    /// ledger stays truthful and nothing double-deposits.
+    fn revert_flip(&mut self, c: usize) {
+        let cur = self.plate_id[c] as usize;
+        let prevp = self.prev.plate[c];
+        // Un-book the underthrust capture exactly where advect booked it
+        // (same condition, same pair, same quantized column).
+        let outp = self.outs[c].plate;
+        if self.prev.ctype[c] == 1 && outp != prevp {
+            let prev_q = (self.prev.thick[c] * 100.0).round() as i64;
+            let (a, b) = (prevp.min(outp), prevp.max(outp));
+            if prev_q > 0 && self.collisions.iter().any(|t| t.a == a && t.b == b) {
+                self.underthrust_removed_q -= prev_q;
+                if let Some(e) = self
+                    .underthrust_budget
+                    .iter_mut()
+                    .find(|e| e.0 == a && e.1 == b)
+                {
+                    e.2 -= prev_q;
+                }
+            }
+        }
+        // Reverse the scatter's inventory flow for this cell. The (0, 1)
+        // gain case cannot reach here: continental-gain flips are exempt
+        // from reverts (the guard in the candidate scan), which is also
+        // what makes these u64 decrements underflow-safe.
+        match (self.prev.ctype[c], self.crust_type[c]) {
+            (1, 0) if self.features[c] & F_RIDGE != 0 => self.cont_lost_to_ridge_gap -= 1,
+            (1, 0) => self.cont_lost_to_consumption -= 1,
+            _ => {}
+        }
+        self.plate_cells[cur] -= 1;
+        self.plate_cells[prevp as usize] += 1;
+        self.plate_id[c] = prevp;
+        self.crust_type[c] = self.prev.ctype[c];
+        self.crust_age[c] = self.prev.age[c];
+        self.thickness[c] = self.prev.thick[c];
+        self.orogeny_age[c] = self.prev.orog[c];
+        self.rift_age[c] = self.prev.rift[c];
+        self.buildup[c] = self.prev.build[c];
+        self.features[c] = 0;
+        self.slab_plate[c] = self.prev.slab_plate[c];
+        self.slab_since_my[c] = self.prev.slab_since[c];
+        self.suture_at_my[c] = self.prev.suture_at[c];
+        self.regularize_reverted += 1;
+    }
+
     // ----- B: boundary classification -----
 
     fn classify_boundaries(&mut self) {
@@ -2435,8 +3019,10 @@ impl SimState {
     /// plate's perimeter, (2) mean relative speed across the contact below
     /// SUTURE_LOCK_CMYR, (3) every cell within 2 rings of the contact on
     /// both sides continental. Any lapse resets the timer ("sustained" is
-    /// literal). At SUTURE_AFTER_MY the pair welds: smaller merges into
-    /// larger and every contact cell records the suture scar. Serial and
+    /// literal). At SUTURE_AFTER_MY the pair welds: the suture event fires,
+    /// every contact cell records the scar, and a [`Weld`] is appended —
+    /// the smaller plate then merges into the larger FRONT-LIMITED via
+    /// `advance_weld_fronts` (WO-0011 S2), not in one step. Serial and
     /// id-ordered throughout.
     fn update_pair_timers_and_sutures(&mut self) {
         struct PairAcc {
@@ -2456,6 +3042,16 @@ impl SimState {
             }
             let p = self.plate_id[c];
             let (a, b) = (p.min(cl.contact_partner), p.max(cl.contact_partner));
+            // A pair with a live weld is already merging: its front does the
+            // work and it runs no pair timer (WO-0011 S2). Third-party
+            // contacts of either plate still accumulate normally.
+            if self
+                .welds
+                .iter()
+                .any(|w| (w.winner.min(w.loser), w.winner.max(w.loser)) == (a, b))
+            {
+                continue;
+            }
             let e = match pairs.iter_mut().find(|e| e.a == a && e.b == b) {
                 Some(e) => e,
                 None => {
@@ -2584,28 +3180,234 @@ impl SimState {
         for &c in &e.contact_cells {
             self.suture_at_my[c as usize] = self.t_my;
         }
-        for pid in self.plate_id.iter_mut() {
-            if *pid == loser {
-                *pid = winner;
-            }
-        }
-        self.plate_cells[winner as usize] += self.plate_cells[loser as usize];
-        self.plate_cells[loser as usize] = 0;
-        self.cont_cells_per_plate[winner as usize] += self.cont_cells_per_plate[loser as usize];
-        self.cont_cells_per_plate[loser as usize] = 0;
-        self.plates[loser as usize].alive = false;
         self.plates[winner as usize].youngest_suture_my = self.t_my;
-        // The merged plate inherits the loser's slab ledger (slabs keep
-        // sinking under the weld) and its live rifts (the scar cells are
-        // its cells now).
-        let segs = std::mem::take(&mut self.plates[loser as usize].slab);
-        self.plates[winner as usize].slab.extend(segs);
-        for r in self.rifts.iter_mut() {
-            if r.plate == loser {
-                r.plate = winner;
+        // The merge ACTION is front-limited (WO-0011 S2): no wholesale
+        // relabel. The weld is permanent — it never un-matures — and the
+        // pair leaves the pair-timer bookkeeping; `advance_weld_fronts`
+        // transfers the loser's cells from the contact at
+        // `WELD_FRONT_KM_MY` until retirement.
+        self.welds.push(Weld {
+            winner,
+            loser,
+            fired_my: self.t_my,
+            front_km: 0.0,
+            layers_done: 0,
+        });
+        self.collisions.retain(|t| !(t.a == a && t.b == b));
+    }
+
+    /// Front-limited weld merge (WO-0011 S2). Each live weld's deformation
+    /// front advances `WELD_FRONT_KM_MY`; every loser cell within the front
+    /// of the contact transfers to the winner, whole hop-layers at a time
+    /// (distance = hops × `cell_spacing_km`; serial, id-ordered BFS).
+    /// Because the loser is slaved to the winner the pair moves rigidly, so
+    /// depth from the CURRENT winner–loser interface plus the layers already
+    /// transferred equals graph distance from the originally stamped
+    /// contact — the cumulative rule survives advection, whose re-sampling
+    /// would otherwise drift the original contact's grid ids off the
+    /// material. The scar advances with the front: transferred cells still
+    /// touching remaining loser cells stamp `suture_at_my` at transfer
+    /// time. Bookkeeping is per transferred cell, never in one lump; the
+    /// crust-volume ledger is untouched because an ownership relabel moves
+    /// no continental volume. When the loser's last cell transfers, the
+    /// weld retires it: slab ledger and remaining live rifts transfer to
+    /// the winner exactly as the wholesale path did.
+    fn advance_weld_fronts(&mut self) {
+        if self.welds.is_empty() {
+            return;
+        }
+        let n = self.grid.cell_count() as usize;
+        for i in 0..self.welds.len() {
+            let Weld { winner, loser, .. } = self.welds[i];
+            let (wu, lu) = (winner as usize, loser as usize);
+            // A loser consumed by another path (trench, second weld), or a
+            // dead winner: the retain below drops the weld.
+            if !self.plates[lu].alive || !self.plates[wu].alive {
+                continue;
+            }
+            self.welds[i].front_km += WELD_FRONT_KM_MY * DT_MY;
+            // Layers 0..=floor(front/spacing) are within the front; layer 0
+            // is the loser-side contact itself (graph distance 0 from the
+            // stamped contact cells).
+            let target_layers = (self.welds[i].front_km / self.cell_spacing_km) as u32 + 1;
+            let nlayers = target_layers.saturating_sub(self.welds[i].layers_done);
+            if nlayers == 0 {
+                continue;
+            }
+            // Seeds: loser cells on the current interface whose winner-side
+            // neighbor carries this weld's scar (stamped at maturity or by
+            // an earlier front step — the scar advects with the material,
+            // so it anchors the front to the sutured contact and never to
+            // unrelated far-side boundary segments the pair also shares).
+            let fired = self.welds[i].fired_my;
+            let mut depth = vec![u16::MAX; n];
+            let mut queue: VecDeque<u32> = VecDeque::new();
+            let mut transfer: Vec<u32> = Vec::new();
+            for (c, d) in depth.iter_mut().enumerate() {
+                if self.plate_id[c] != loser {
+                    continue;
+                }
+                if self.grid.neighbors_of(c as u32).iter().any(|&nb| {
+                    let nbu = nb as usize;
+                    self.plate_id[nbu] == winner && self.suture_at_my[nbu] >= fired
+                }) {
+                    *d = 0;
+                    queue.push_back(c as u32);
+                    transfer.push(c as u32);
+                }
+            }
+            if transfer.is_empty() {
+                // Front detached (advection seam noise): the budget keeps
+                // accruing in front_km and transfers as a burst when the
+                // interface re-forms — the cumulative rule, unchanged.
+                continue;
+            }
+            self.welds[i].layers_done = target_layers;
+            while let Some(c) = queue.pop_front() {
+                let dc = depth[c as usize];
+                if dc + 1 >= nlayers as u16 {
+                    continue;
+                }
+                for &nb in self.grid.neighbors_of(c) {
+                    let nbu = nb as usize;
+                    if depth[nbu] == u16::MAX && self.plate_id[nbu] == loser {
+                        depth[nbu] = dc + 1;
+                        queue.push_back(nb);
+                        transfer.push(nb);
+                    }
+                }
+            }
+            transfer.sort_unstable();
+            for &c in &transfer {
+                let cu = c as usize;
+                self.plate_id[cu] = winner;
+                self.plate_cells[lu] -= 1;
+                self.plate_cells[wu] += 1;
+                if self.crust_type[cu] == 1 {
+                    self.cont_cells_per_plate[lu] -= 1;
+                    self.cont_cells_per_plate[wu] += 1;
+                }
+            }
+            for &c in &transfer {
+                if self
+                    .grid
+                    .neighbors_of(c)
+                    .iter()
+                    .any(|&nb| self.plate_id[nb as usize] == loser)
+                {
+                    self.suture_at_my[c as usize] = self.t_my;
+                }
+            }
+            // §7 stays true by construction: the transferred set grows off
+            // the winner's interface, but the front can sever the REMAINDER
+            // (a bite spanning a narrow loser waist). Any remainder
+            // fragment besides the largest component (tie → the one holding
+            // the lowest cell id) was cut off inside the collision zone and
+            // transfers to the winner too, per cell.
+            if self.plate_cells[lu] > 0 {
+                self.transfer_severed_loser_fragments(winner, loser);
+            }
+            if self.plate_cells[lu] == 0 {
+                self.plates[lu].alive = false;
+                let segs = std::mem::take(&mut self.plates[lu].slab);
+                self.plates[wu].slab.extend(segs);
+                for r in self.rifts.iter_mut() {
+                    if r.plate == loser {
+                        r.plate = winner;
+                    }
+                }
+                self.collisions.retain(|t| t.a != loser && t.b != loser);
+                // A chained weld this loser was winning continues under the
+                // plate its mass merged into.
+                for w in self.welds.iter_mut() {
+                    if w.winner == loser {
+                        w.winner = winner;
+                    }
+                }
+                log::debug!(
+                    "t={} My: weld consumed plate {loser} into {winner}",
+                    self.t_my
+                );
+            } else {
+                // Rifts follow their cells (WO-0011 S2): a rift whose path
+                // has fully crossed the front belongs to the winner now.
+                for r in self.rifts.iter_mut() {
+                    if r.plate != loser {
+                        continue;
+                    }
+                    let mut on_loser = false;
+                    let mut on_winner = false;
+                    for &c in &r.cells {
+                        let p = self.plate_id[c as usize];
+                        on_loser |= p == loser;
+                        on_winner |= p == winner;
+                    }
+                    if !on_loser && on_winner {
+                        r.plate = winner;
+                    }
+                }
             }
         }
-        self.collisions.retain(|t| t.a != loser && t.b != loser);
+        self.welds.retain(|w| {
+            self.plates[w.loser as usize].alive && self.plates[w.winner as usize].alive
+        });
+    }
+
+    /// Reassign every component of the loser's remaining cells except the
+    /// largest (tie → the component holding the lowest cell id) to the
+    /// winner, per cell. Serial BFS in cell-id order, mirroring
+    /// `enforce_connectivity`'s keep rule.
+    fn transfer_severed_loser_fragments(&mut self, winner: u32, loser: u32) {
+        let n = self.grid.cell_count() as usize;
+        let (wu, lu) = (winner as usize, loser as usize);
+        let mut seen = vec![false; n];
+        // (cells, first-cell) per component, discovered in ascending id.
+        let mut comps: Vec<Vec<u32>> = Vec::new();
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for c0 in 0..n {
+            if self.plate_id[c0] != loser || seen[c0] {
+                continue;
+            }
+            let mut comp = vec![c0 as u32];
+            seen[c0] = true;
+            queue.push_back(c0 as u32);
+            while let Some(c) = queue.pop_front() {
+                for &nb in self.grid.neighbors_of(c) {
+                    let nbu = nb as usize;
+                    if !seen[nbu] && self.plate_id[nbu] == loser {
+                        seen[nbu] = true;
+                        queue.push_back(nb);
+                        comp.push(nb);
+                    }
+                }
+            }
+            comps.push(comp);
+        }
+        if comps.len() <= 1 {
+            return;
+        }
+        // Strict > keeps the earliest (lowest first-cell-id) on ties.
+        let mut keep = 0;
+        for (k, comp) in comps.iter().enumerate() {
+            if comp.len() > comps[keep].len() {
+                keep = k;
+            }
+        }
+        for (k, comp) in comps.iter().enumerate() {
+            if k == keep {
+                continue;
+            }
+            for &c in comp {
+                let cu = c as usize;
+                self.plate_id[cu] = winner;
+                self.plate_cells[lu] -= 1;
+                self.plate_cells[wu] += 1;
+                if self.crust_type[cu] == 1 {
+                    self.cont_cells_per_plate[lu] -= 1;
+                    self.cont_cells_per_plate[wu] += 1;
+                }
+            }
+        }
     }
 
     /// Oceanic cells within SUTURE_OCEAN_RINGS rings of the contact on
@@ -3354,6 +4156,13 @@ impl SimState {
             if border[pid].is_empty() || rel_n[pid] == 0 {
                 continue;
             }
+            // A weld loser is quiet BECAUSE it is slaved to its winner
+            // (WO-0011 S2) — capturing it would wholesale-merge it and
+            // recreate the dumbbell the front-limited weld exists to
+            // prevent. Its death path is weld retirement.
+            if self.welds.iter().any(|w| w.loser == pid as u32) {
+                continue;
+            }
             let quiet = (rel_sum[pid] / rel_n[pid] as f64) < CLASSIFY_CMYR as f64;
             if !quiet {
                 self.plates[pid].quiet_my = 0.0;
@@ -3685,6 +4494,7 @@ impl SimState {
             self.rifts.clone(),
             plates,
             self.collisions.clone(),
+            self.welds.clone(),
         )
     }
 
@@ -3889,6 +4699,7 @@ mod tests {
             s.classify_boundaries();
             s.accumulate_boundary_stats();
             s.update_pair_timers_and_sutures();
+            s.advance_weld_fronts();
             s.t_my += DT_MY;
         }
     }
@@ -4068,8 +4879,15 @@ mod tests {
         s.init_stats();
 
         suture_steps(&mut s, 40);
-        assert_eq!(s.alive_plates(), 1, "the relic sea must not block the weld");
-        assert_eq!(s.suture_count, 1);
+        assert_eq!(s.suture_count, 1, "the relic sea must not block the weld");
+        // The weld is front-limited (WO-0011 S2): the loser is still being
+        // consumed at 40 steps, not relabelled in one lump...
+        assert_eq!(s.alive_plates(), 2, "the merge must be progressive");
+        assert_eq!(s.welds.len(), 1);
+        // ...and finishes once the front has crossed the hemisphere.
+        suture_steps(&mut s, 150);
+        assert_eq!(s.alive_plates(), 1, "the weld must consume the loser");
+        assert!(s.welds.is_empty(), "a finished weld retires");
         let ocean_left = s.crust_type.iter().filter(|&&t| t == 0).count() as u32;
         assert_eq!(
             ocean_left, RELIC_BASIN_KEEP_CELLS,
@@ -4078,32 +4896,232 @@ mod tests {
     }
 
     /// ...and the same contact with the ocean closed sutures at 30 My,
-    /// writing the scar on the contact cells and logging the conditions.
+    /// writing the scar on the contact cells and logging the conditions —
+    /// then consumes the loser front-limited (WO-0011 S2), never in one
+    /// lump.
     #[test]
     fn locked_continental_contact_sutures_at_30_my() {
         let mut s = two_plate_cont_state();
         let t0 = s.t_my;
+        let cells_at_start = s.plate_cells.clone();
         suture_steps(&mut s, 16);
-        assert_eq!(s.alive_plates(), 1, "closed locked contact must weld");
-        assert_eq!(s.suture_count, 1);
-        let Some(TectonicEvent::Suture {
-            t,
-            contact_fraction,
-            ..
-        }) = s.events.first()
-        else {
-            panic!("expected a suture event, got {:?}", s.events.first());
+        assert_eq!(s.suture_count, 1, "closed locked contact must weld");
+        assert_eq!(s.welds.len(), 1, "the weld must be live, not wholesale");
+        assert_eq!(s.alive_plates(), 2, "the merge must be progressive");
+        let fire_t = {
+            let Some(TectonicEvent::Suture {
+                t,
+                contact_fraction,
+                ..
+            }) = s.events.first()
+            else {
+                panic!("expected a suture event, got {:?}", s.events.first());
+            };
+            // Timer hits 30 My on the 15th accumulation (timers start at 0).
+            assert_eq!(*t, t0 + 14.0 * DT_MY);
+            assert!(
+                *contact_fraction >= SUTURE_CONTACT_FRACTION,
+                "recorded contact fraction {contact_fraction} under the §3 minimum"
+            );
+            *t
         };
-        // Timer hits 30 My on the 15th accumulation (timers start at 0).
-        assert_eq!(*t, t0 + 14.0 * DT_MY);
-        assert!(
-            *contact_fraction >= SUTURE_CONTACT_FRACTION,
-            "recorded contact fraction {contact_fraction} under the §3 minimum"
-        );
         // The scar is on the cells: every cell of the old contact carries
         // suture_at_my = fire time.
-        let scarred = s.suture_at_my.iter().filter(|&&v| v == *t).count();
+        let scarred = s.suture_at_my.iter().filter(|&&v| v == fire_t).count();
         assert!(scarred > 10, "suture scar missing ({scarred} cells)");
+        // The loser (the smaller plate) shrinks monotonically, one front
+        // band at a time, and never by more than a few layers per step.
+        let loser = s.welds[0].loser as usize;
+        assert!(
+            s.plate_cells[loser] > 0 && s.plate_cells[loser] < cells_at_start[loser],
+            "the front must have started consuming the loser"
+        );
+        // The front crosses the hemisphere in ~11 layers (~9 steps each at
+        // L3's 891 km spacing); the weld then retires the loser with its
+        // ledger, exactly like the old wholesale path did in one step.
+        suture_steps(&mut s, 130);
+        assert_eq!(s.alive_plates(), 1, "the weld must consume the loser");
+        assert!(s.welds.is_empty(), "a finished weld retires");
+        assert_eq!(s.plate_cells[loser], 0);
+        // The advancing scar was stamped beyond the original contact.
+        let scarred_late = s.suture_at_my.iter().filter(|&&v| v > fire_t).count();
+        assert!(
+            scarred_late > scarred,
+            "the scar must advance with the front ({scarred_late} late cells)"
+        );
+    }
+
+    /// WO-0011 S2 dumbbell probe: a two-plate L7 world with an off-centre
+    /// PARTIAL contact (a ~3-cell arc, ~170 km — exactly the pinprick-scale
+    /// neck Dan's bound rules out), forced to maturity by installing the
+    /// weld state directly (the §3 GATE is sound and tested above; the
+    /// merge ACTION is what this probes). The old wholesale relabel turned
+    /// this geometry into a dumbbell in one step: two masses each above 2%
+    /// of the sphere joined by the 3-cell contact. The front-limited weld
+    /// must instead grow the winner as ONE mass. Deterministic: serial
+    /// id-ordered BFS throughout, no RNG, no advection.
+    #[test]
+    fn dumbbell_probe_partial_contact_welds_as_one_mass() {
+        let grid = Arc::new(Grid::build(7));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.0));
+        s.plates.push(test_plate(1, 0.0));
+        // Loser = an 18° continental cap (2.45% of the sphere, above the
+        // 2%-mass bound) around an off-axis center; winner = the rest.
+        let axis = normalize3([1.0, 0.0, 0.3]);
+        let cos_cap = (18.0f32 * DEG2RAD).cos();
+        for c in 0..n {
+            s.plate_id[c] = u32::from(dot3(grid.positions[c], axis) >= cos_cap);
+            s.crust_type[c] = 1;
+            s.thickness[c] = 35.0;
+            s.crust_age[c] = 500.0;
+            s.orogeny_age[c] = 500.0;
+        }
+        s.t_my = 500.0;
+        s.init_stats();
+        let cap_cells = s.plate_cells[1];
+        assert!(
+            cap_cells as f32 > 0.02 * n as f32,
+            "the cap must be above the 2% mass bound ({cap_cells} cells)"
+        );
+
+        // The partial contact: the topmost rim cell of the cap and its
+        // rim neighbors within 1 hop — a ~3-cell arc (~170 km at L7's
+        // 55.8 km spacing). Stamp the scar on both sides, install the
+        // weld at maturity state (what update_pair_timers_and_sutures
+        // does, minus the 30 My wait).
+        let on_rim = |s: &SimState, c: u32| {
+            let p = s.plate_id[c as usize];
+            s.grid
+                .neighbors_of(c)
+                .iter()
+                .any(|&nb| s.plate_id[nb as usize] != p)
+        };
+        let p_top = (0..n as u32)
+            .filter(|&c| s.plate_id[c as usize] == 1 && on_rim(&s, c))
+            .max_by(|&a, &b| {
+                grid.positions[a as usize][2]
+                    .partial_cmp(&grid.positions[b as usize][2])
+                    .unwrap()
+            })
+            .unwrap();
+        let mut contact: Vec<u32> = vec![p_top];
+        for &nb in grid.neighbors_of(p_top) {
+            if on_rim(&s, nb) {
+                contact.push(nb);
+            }
+        }
+        for &c in &contact {
+            s.suture_at_my[c as usize] = s.t_my;
+        }
+        s.suture_count += 1;
+        s.plates[0].youngest_suture_my = s.t_my;
+        s.welds.push(Weld {
+            winner: 0,
+            loser: 1,
+            fired_my: s.t_my,
+            front_km: 0.0,
+            layers_done: 0,
+        });
+
+        // Erode the winner by 2 rings, then component-scan: a neck of
+        // width ≤ 4 cells (~223 km at L7 — conservative on the ruled
+        // 170 km / 3-cell bound, one grid quantum stricter) vanishes
+        // under the erosion, so a dumbbell shows up as TWO surviving
+        // components each above 2% of the sphere.
+        let mass_min = (0.02 * n as f32) as usize;
+        let no_dumbbell = |s: &SimState| {
+            let mut keep: Vec<bool> = (0..n as u32).map(|c| s.plate_id[c as usize] == 0).collect();
+            for _ in 0..2 {
+                let interior: Vec<bool> = (0..n as u32)
+                    .map(|c| {
+                        keep[c as usize]
+                            && s.grid.neighbors_of(c).iter().all(|&nb| keep[nb as usize])
+                    })
+                    .collect();
+                keep = interior;
+            }
+            let mut seen = vec![false; n];
+            let mut queue: VecDeque<u32> = VecDeque::new();
+            let mut big = 0u32;
+            for c0 in 0..n {
+                if !keep[c0] || seen[c0] {
+                    continue;
+                }
+                seen[c0] = true;
+                queue.push_back(c0 as u32);
+                let mut count = 0usize;
+                while let Some(c) = queue.pop_front() {
+                    count += 1;
+                    for &nb in s.grid.neighbors_of(c) {
+                        if keep[nb as usize] && !seen[nb as usize] {
+                            seen[nb as usize] = true;
+                            queue.push_back(nb);
+                        }
+                    }
+                }
+                if count >= mass_min {
+                    big += 1;
+                }
+            }
+            big <= 1
+        };
+
+        // Clean-run bounds (measured on this exact setup, commented in
+        // the asserts): the largest one-step transfer band and the
+        // largest one-step boundary-cell growth of the winner.
+        let mut max_area_step = 0u32;
+        let mut max_boundary_step = 0i64;
+        let winner_boundary = |s: &SimState| -> i64 {
+            (0..n as u32)
+                .filter(|&c| s.plate_id[c as usize] == 0 && on_rim(s, c))
+                .count() as i64
+        };
+        let mut prev_area = s.plate_cells[0];
+        let mut prev_boundary = winner_boundary(&s);
+        let mut steps = 0u32;
+        while s.plates[1].alive {
+            s.advance_weld_fronts();
+            s.t_my += DT_MY;
+            steps += 1;
+            assert!(steps <= 200, "the weld must finish consuming the cap");
+            let area = s.plate_cells[0];
+            max_area_step = max_area_step.max(area - prev_area);
+            let boundary = winner_boundary(&s);
+            max_boundary_step = max_boundary_step.max(boundary - prev_boundary);
+            prev_area = area;
+            prev_boundary = boundary;
+            assert!(
+                no_dumbbell(&s),
+                "step {steps}: the winner holds a sub-170 km neck joining \
+                 two masses each above 2% of the sphere (Dan's ruled bound)"
+            );
+        }
+        assert!(s.welds.is_empty(), "a finished weld retires");
+        assert_eq!(s.plate_cells[1], 0);
+        assert_eq!(s.plate_cells[0] as usize, n);
+        // The whole cap carries the advancing scar (stamped at transfer).
+        let scarred = s.suture_at_my.iter().filter(|&&v| v >= 500.0).count();
+        assert!(
+            scarred as u32 > cap_cells / 2,
+            "the scar must advance with the front ({scarred} cells)"
+        );
+        // No lump transfer: the wholesale relabel moved all ~4,000 cap
+        // cells in one step; the front moves band-sized slices (clean run
+        // on this setup: 42 steps to consume the cap, max 166 cells/step —
+        // bound 400 leaves margin without admitting a lump).
+        assert!(
+            max_area_step < 400,
+            "one-step transfer of {max_area_step} cells is a lump, not a front"
+        );
+        // The winner's boundary never spikes either (clean-run max +2
+        // boundary cells in a step; the wholesale relabel added the cap's
+        // whole ~200-cell rim at once).
+        assert!(
+            max_boundary_step < 50,
+            "one-step boundary growth of {max_boundary_step} is a spike"
+        );
     }
 
     /// A two-plate jam world for the WO-0008 S2 collision tests: plate 1

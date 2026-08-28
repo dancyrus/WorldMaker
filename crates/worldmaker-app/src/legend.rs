@@ -394,6 +394,7 @@ mod tests {
             rifts: Vec::new(),
             plates: vec![plate(0, 0.5), plate(1, 1.0)],
             collisions: Vec::new(),
+            welds: Vec::new(),
         }
     }
 

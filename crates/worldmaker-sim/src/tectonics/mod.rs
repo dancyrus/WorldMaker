@@ -29,7 +29,7 @@ mod water_gates;
 
 pub use keyframe::{
     ActiveRift, Keyframe, MicroplateOrigin, PairTimer, PlateState, RiftDriverKind, RunDiagnostics,
-    SlabSegment, TectonicEvent, TectonicsHistory, NEVER_SUTURED,
+    SlabSegment, TectonicEvent, TectonicsHistory, Weld, NEVER_SUTURED,
 };
 pub use setup::CONT_AREA_FACTOR;
 pub use step::{SimState, SLAB_DETACH_MY, SLAB_NONE};

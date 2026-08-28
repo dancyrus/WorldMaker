@@ -1,0 +1,483 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-28",
+  "app_version": "0.1.0",
+  "metrics": {
+    "config": {
+      "work_order": "WO-0011-S1",
+      "probe": "plate_shape_probe",
+      "grid_level": 6,
+      "plate_count_param": 24,
+      "land_fraction": 0.4,
+      "tectonic_vigor": 1.0,
+      "span_my": 2000.0,
+      "dt_my": 2.0,
+      "sample_interval_my": 100.0,
+      "seed_text": "cyrus",
+      "before_commit": "c6eb2ae",
+      "strength_fail_mean": 1.05,
+      "strength_fail_sigma": 0.05
+    },
+    "before": {
+      "columns": [
+        "t_my",
+        "alive_count",
+        "largest_share_pct",
+        "compact",
+        "finger_pct",
+        "interior_flip_pct"
+      ],
+      "rows": [
+        [
+          100,
+          19,
+          19.9,
+          0.153,
+          0.3,
+          89.9
+        ],
+        [
+          200,
+          15,
+          30.9,
+          0.147,
+          0.3,
+          0.0
+        ],
+        [
+          300,
+          13,
+          31.1,
+          0.14,
+          0.5,
+          0.0
+        ],
+        [
+          400,
+          12,
+          52.1,
+          0.162,
+          0.6,
+          0.0
+        ],
+        [
+          500,
+          12,
+          52.2,
+          0.19,
+          0.9,
+          3.6
+        ],
+        [
+          600,
+          12,
+          52.5,
+          0.206,
+          1.1,
+          8.3
+        ],
+        [
+          700,
+          11,
+          52.9,
+          0.186,
+          1.3,
+          0.0
+        ],
+        [
+          800,
+          11,
+          52.9,
+          0.193,
+          1.1,
+          0.0
+        ],
+        [
+          900,
+          11,
+          53.0,
+          0.2,
+          1.1,
+          0.0
+        ],
+        [
+          1000,
+          10,
+          52.9,
+          0.2,
+          1.4,
+          0.0
+        ],
+        [
+          1100,
+          10,
+          52.7,
+          0.2,
+          1.5,
+          0.0
+        ],
+        [
+          1200,
+          10,
+          53.0,
+          0.214,
+          1.5,
+          0.0
+        ],
+        [
+          1300,
+          10,
+          53.3,
+          0.204,
+          1.1,
+          0.0
+        ],
+        [
+          1400,
+          10,
+          53.6,
+          0.208,
+          1.1,
+          0.0
+        ],
+        [
+          1500,
+          10,
+          53.7,
+          0.21,
+          1.1,
+          0.0
+        ],
+        [
+          1600,
+          9,
+          56.8,
+          0.212,
+          1.0,
+          0.0
+        ],
+        [
+          1700,
+          7,
+          65.5,
+          0.25,
+          1.1,
+          0.0
+        ],
+        [
+          1800,
+          7,
+          66.0,
+          0.245,
+          1.1,
+          0.0
+        ],
+        [
+          1900,
+          7,
+          66.7,
+          0.246,
+          1.1,
+          0.0
+        ],
+        [
+          2000,
+          7,
+          67.4,
+          0.232,
+          1.0,
+          0.0
+        ]
+      ]
+    },
+    "after": {
+      "columns": [
+        "t_my",
+        "alive_count",
+        "largest_share_pct",
+        "compact",
+        "finger_pct",
+        "interior_flip_pct",
+        "reverts_cum_count",
+        "slivers_cum_count",
+        "craton_violations_cum_count"
+      ],
+      "rows": [
+        [
+          100,
+          19,
+          17.9,
+          0.156,
+          0.1,
+          84.2,
+          1144,
+          333,
+          4
+        ],
+        [
+          200,
+          16,
+          20.3,
+          0.15,
+          0.1,
+          13.6,
+          1352,
+          605,
+          4
+        ],
+        [
+          300,
+          16,
+          20.9,
+          0.164,
+          0.1,
+          0.0,
+          1499,
+          932,
+          4
+        ],
+        [
+          400,
+          15,
+          21.2,
+          0.148,
+          0.1,
+          0.0,
+          1605,
+          1255,
+          4
+        ],
+        [
+          500,
+          13,
+          40.2,
+          0.131,
+          0.1,
+          0.0,
+          1717,
+          1464,
+          4
+        ],
+        [
+          600,
+          13,
+          40.5,
+          0.135,
+          0.1,
+          0.0,
+          1889,
+          1639,
+          4
+        ],
+        [
+          700,
+          13,
+          41.5,
+          0.155,
+          0.1,
+          0.0,
+          2017,
+          1912,
+          20
+        ],
+        [
+          800,
+          12,
+          43.8,
+          0.119,
+          0.1,
+          0.0,
+          2107,
+          2280,
+          20
+        ],
+        [
+          900,
+          12,
+          45.9,
+          0.121,
+          0.1,
+          0.0,
+          2315,
+          2605,
+          32
+        ],
+        [
+          1000,
+          11,
+          51.0,
+          0.124,
+          0.2,
+          0.0,
+          2360,
+          2857,
+          33
+        ],
+        [
+          1100,
+          9,
+          65.8,
+          0.131,
+          0.2,
+          0.0,
+          2379,
+          2976,
+          33
+        ],
+        [
+          1200,
+          9,
+          66.2,
+          0.136,
+          0.2,
+          0.0,
+          2403,
+          3133,
+          34
+        ],
+        [
+          1300,
+          8,
+          71.7,
+          0.144,
+          0.2,
+          0.0,
+          2409,
+          3239,
+          40
+        ],
+        [
+          1400,
+          8,
+          71.9,
+          0.155,
+          0.2,
+          0.0,
+          2411,
+          3328,
+          40
+        ],
+        [
+          1500,
+          7,
+          72.3,
+          0.134,
+          0.2,
+          0.0,
+          2427,
+          3458,
+          40
+        ],
+        [
+          1600,
+          7,
+          71.9,
+          0.142,
+          0.1,
+          0.0,
+          2444,
+          3700,
+          40
+        ],
+        [
+          1700,
+          7,
+          71.1,
+          0.169,
+          0.1,
+          0.0,
+          2488,
+          3925,
+          40
+        ],
+        [
+          1800,
+          7,
+          71.4,
+          0.167,
+          0.1,
+          0.0,
+          2573,
+          4170,
+          40
+        ],
+        [
+          1900,
+          7,
+          71.6,
+          0.152,
+          0.2,
+          0.0,
+          2646,
+          4348,
+          40
+        ],
+        [
+          2000,
+          7,
+          71.5,
+          0.147,
+          0.2,
+          0.0,
+          2673,
+          4556,
+          40
+        ]
+      ]
+    },
+    "step6_criteria": {
+      "finger_max_pct_after_100my": 0.2,
+      "finger_gate_pct": 0.5,
+      "finger_gate_pass": true,
+      "compact_at_100my": 0.156,
+      "compact_at_2gy": 0.147,
+      "compact_ratio_2gy_over_100my": 0.94,
+      "compact_gate_ratio": 1.15,
+      "compact_gate_pass": true,
+      "compact_max_ratio_any_sample": 1.08,
+      "note": "both criteria pass at every sample, not just the endpoint: compact peaks at 1.08x its 100 My value (1700 My) and ENDS BELOW it; fingers never exceed 0.2%; interior flips 0% at every post-transient sample"
+    },
+    "physics_gates_after": {
+      "note": "report_gate_values at defaults, both seeds, shipped S1 build",
+      "seed_42": {
+        "m1_alive_band": [
+          8,
+          14
+        ],
+        "m1_stddev": 1.89,
+        "m1_pin_my": 510,
+        "m2_sutures_per_gy": 2.0,
+        "m3_splits_per_gy": 5.0,
+        "m5b_backstop_worst_window_cells": 0,
+        "m5a_exclave_samples": 0,
+        "m6_relief_pct": 64,
+        "m7_mean_cmyr": 2.5,
+        "s1_cont_area_change_pct": -9.6,
+        "s2_volume_ledger_exact": true
+      },
+      "seed_cyrus": {
+        "m1_alive_band": [
+          9,
+          12
+        ],
+        "m1_stddev": 0.89,
+        "m1_pin_my": 650,
+        "m2_sutures_per_gy": 1.5,
+        "m3_splits_per_gy": 1.0,
+        "m5b_backstop_worst_window_cells": 0,
+        "m5a_exclave_samples": 0,
+        "m6_relief_pct": 78,
+        "m7_mean_cmyr": 1.66,
+        "s1_cont_area_change_pct": -7.7,
+        "s2_volume_ledger_exact": true
+      },
+      "rebaselined_clauses": {
+        "m1_stddev": "ARMED 1.5 -> RECORDED with /3 backstop",
+        "m1_pin": "backstop 2x -> 4x of 500 My",
+        "m2_band": "ARMED 2-6/Gy -> RECORDED with 1-12/Gy backstop",
+        "m7_mean_band": "ARMED 2-6 cm/yr -> RECORDED with 1-12 backstop (cyrus 1.66 under a wholesale-weld 71% supercontinent)",
+        "s1_relic_basins": "metric bounded to basin scale (<= 1% of sphere); the >=80% enclosure test matched the open world ocean when two continental giants bordered it"
+      }
+    }
+  }
+}
