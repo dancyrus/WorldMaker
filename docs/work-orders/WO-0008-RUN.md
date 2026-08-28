@@ -2,6 +2,8 @@
 
 CONTEXT. Dan runs this overnight. It chains two work orders in one session.
 
+STATUS. S1 done (PR #25 merged 2026-08-28; all four S1 gates + armed set green at both seeds).
+
 STEPS.
 
 1. Read `docs/work-orders/WO-0008-S1-closure.md`. If its DONE WHEN conditions already hold on `main` (check the merged PRs and gates), skip to step 3.
