@@ -129,6 +129,12 @@ pub struct Script {
     /// directory. Seed and preset come from the CLI (the WO pins seed
     /// cyrus, Draft6).
     pub wo8_dir: Option<PathBuf>,
+    /// `--wo8-s2-shots`: the WO-0008 S2 documentation close-ups — a wide
+    /// orogen (Elevation + Thickness stacked into `wide-orogen.png`) and
+    /// an island-arc chain (`island-arcs.png`), flat view centered on
+    /// features located in the final keyframe, legends visible. Seed and
+    /// preset come from the CLI.
+    pub wo8_s2_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -513,7 +519,7 @@ impl WorldApp {
                     frames: 0,
                     requested: false,
                 }
-            } else if script.wo8_dir.is_some() {
+            } else if script.wo8_dir.is_some() || script.wo8_s2_dir.is_some() {
                 ScriptState::Wo8Shot {
                     stage: 0,
                     frames: 0,
@@ -1805,6 +1811,10 @@ impl WorldApp {
     /// preset (the WO pins seed cyrus, Draft6), Elevation then Plates,
     /// stacked vertically into one `setup-t0.png`.
     fn drive_wo8(&mut self, ctx: &egui::Context) {
+        if self.script.wo8_s2_dir.is_some() {
+            self.drive_wo8_s2(ctx);
+            return;
+        }
         const SHOTS: [(&str, Layer); 2] =
             [("elevation", Layer::Elevation), ("plates", Layer::Plates)];
         let (stage, frames, requested) = match &self.script_state {
@@ -1853,6 +1863,156 @@ impl WorldApp {
                     log::error!("failed to save setup-t0.png: {e:#}");
                 } else {
                     log::info!("saved setup-t0.png");
+                }
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo8Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0008 S2 close-ups (step 11): the final era's widest thick
+    /// orogen (Elevation then Thickness, stacked into `wide-orogen.png`)
+    /// and an island-arc chain (`island-arcs.png`), flat view centered on
+    /// features located in the final keyframe, legends visible.
+    fn drive_wo8_s2(&mut self, ctx: &egui::Context) {
+        const ZOOM: f32 = 7.0;
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo8Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            let last = self
+                .history
+                .as_ref()
+                .map(|h| h.keyframes.len() - 1)
+                .unwrap_or(0);
+            self.viewing_kf = last;
+            self.view_mode = ViewMode::Flat;
+            let target = if let Some(h) = &self.history {
+                let kf = &h.keyframes[last];
+                let n = kf.flags.len();
+                let cont = |c: usize| kf.flags[c] & (1 << 15) != 0;
+                if stage < 2 {
+                    // The widest thick orogen: the >45 km continental cell
+                    // with the most >45 km continental neighbors.
+                    let mut best = (0usize, -1i32);
+                    for c in 0..n {
+                        if !cont(c) || kf.thickness_ckm[c] < 4500 {
+                            continue;
+                        }
+                        let thick_nbs = self
+                            .grid
+                            .neighbors_of(c as u32)
+                            .iter()
+                            .filter(|&&nb| {
+                                cont(nb as usize) && kf.thickness_ckm[nb as usize] >= 4500
+                            })
+                            .count() as i32;
+                        if thick_nbs > best.1 {
+                            best = (c, thick_nbs);
+                        }
+                    }
+                    Some(best.0)
+                } else {
+                    // An island-arc chain: the young continental cell with
+                    // the most young continental cells within 2 rings and
+                    // no old continent adjacent (fallback: any young
+                    // isolated cell; then the orogen target).
+                    let young = |c: usize| cont(c) && kf.crust_age_my[c] < 80;
+                    let mut best: Option<(usize, i32)> = None;
+                    for c in 0..n {
+                        if !young(c) {
+                            continue;
+                        }
+                        let mut old_adjacent = false;
+                        let mut young_near = 0i32;
+                        for &nb in self.grid.neighbors_of(c as u32) {
+                            let nbu = nb as usize;
+                            if cont(nbu) && !young(nbu) {
+                                old_adjacent = true;
+                            }
+                            if young(nbu) {
+                                young_near += 1;
+                            }
+                            for &nb2 in self.grid.neighbors_of(nb) {
+                                let n2 = nb2 as usize;
+                                if n2 != c && young(n2) {
+                                    young_near += 1;
+                                }
+                            }
+                        }
+                        if old_adjacent {
+                            continue;
+                        }
+                        if best.is_none_or(|(_, b)| young_near > b) {
+                            best = Some((c, young_near));
+                        }
+                    }
+                    best.map(|(c, _)| c)
+                }
+            } else {
+                None
+            };
+            if let Some(c) = target {
+                self.flat_center_target = Some((self.grid.lat[c], self.grid.lon[c], ZOOM));
+            }
+            self.layer = if stage == 1 {
+                Layer::Thickness
+            } else {
+                Layer::Elevation
+            };
+            self.needs_bake = true;
+            log::info!("wo8-s2 screenshot stage {stage}");
+        }
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            self.wo8_shots.push(image);
+            self.script_state = if stage + 1 < 3 {
+                if stage == 1 {
+                    // The orogen pair is complete: save it now.
+                    let dir = self.script.wo8_s2_dir.clone().unwrap();
+                    let shots = std::mem::take(&mut self.wo8_shots);
+                    if let Err(e) = save_stacked_images(&shots, &dir.join("wide-orogen.png")) {
+                        log::error!("failed to save wide-orogen.png: {e:#}");
+                    } else {
+                        log::info!("saved wide-orogen.png");
+                    }
+                }
+                ScriptState::Wo8Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                let dir = self.script.wo8_s2_dir.clone().unwrap();
+                let shots = std::mem::take(&mut self.wo8_shots);
+                if let Err(e) = save_stacked_images(&shots, &dir.join("island-arcs.png")) {
+                    log::error!("failed to save island-arcs.png: {e:#}");
+                } else {
+                    log::info!("saved island-arcs.png");
                 }
                 ScriptState::Closing
             };

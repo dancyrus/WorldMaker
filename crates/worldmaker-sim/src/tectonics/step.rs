@@ -1482,10 +1482,7 @@ impl SimState {
                 // not just the thickness difference).
                 let prev_q = (self.thickness[c] * 100.0).round() as i64;
                 {
-                    let (a, b) = (
-                        self.plate_id[c].min(o.plate),
-                        self.plate_id[c].max(o.plate),
-                    );
+                    let (a, b) = (self.plate_id[c].min(o.plate), self.plate_id[c].max(o.plate));
                     if prev_q > 0 && self.collisions.iter().any(|t| t.a == a && t.b == b) {
                         let lost = prev_q;
                         self.underthrust_removed_q += lost;
@@ -2074,11 +2071,9 @@ impl SimState {
                 // has matured.
                 let beside_young_island = self.grid.neighbors_of(c as u32).iter().any(|&nb| {
                     let nbu = nb as usize;
-                    self.crust_type[nbu] == 1
-                        && self.crust_age[nbu] < ARC_SITE_ISLAND_BLOCK_MY
+                    self.crust_type[nbu] == 1 && self.crust_age[nbu] < ARC_SITE_ISLAND_BLOCK_MY
                 });
-                if self.crust_type[c] == 0 && t >= ISLAND_ARC_CONVERT_KM && !beside_young_island
-                {
+                if self.crust_type[c] == 0 && t >= ISLAND_ARC_CONVERT_KM && !beside_young_island {
                     self.crust_type[c] = 1; // island arc: young continental crust
                     self.crust_age[c] = 0.0;
                     self.cont_gained_by_arc += 1;
@@ -2170,8 +2165,7 @@ impl SimState {
             let p = self.plate_id[c as usize];
             for &nb in self.grid.neighbors_of(c) {
                 let nbu = nb as usize;
-                if depth[nbu] == u16::MAX && self.plate_id[nbu] == p && self.crust_type[nbu] == 1
-                {
+                if depth[nbu] == u16::MAX && self.plate_id[nbu] == p && self.crust_type[nbu] == 1 {
                     depth[nbu] = dc + 1;
                     queue.push_back(nb);
                 }
@@ -2197,8 +2191,7 @@ impl SimState {
             // tapered weights (W' − i); shared cells add weight.
             let mut zone: Vec<(u32, u32)> = Vec::new(); // (cell, weight)
             for &c0 in &contacts {
-                let w_cells = ((W_BASE_KM
-                    / (self.strength(c0 as usize) * self.cell_spacing_km))
+                let w_cells = ((W_BASE_KM / (self.strength(c0 as usize) * self.cell_spacing_km))
                     .round() as u32)
                     .clamp(1, W_MAX_CELLS);
                 let mut cur = c0;
@@ -2429,7 +2422,6 @@ impl SimState {
             }
         }
     }
-
 
     /// §3 suture: a pair timer accumulates only while ALL THREE conditions
     /// hold — (1) continent-continent contact along ≥ 30% of the smaller
@@ -4314,7 +4306,10 @@ mod tests {
                 .neighbors_of(c as u32)
                 .iter()
                 .any(|&nb| land.contains(&(nb as usize)));
-            assert!(!wall, "adjacent converted cells at {c}: a wall, not islands");
+            assert!(
+                !wall,
+                "adjacent converted cells at {c}: a wall, not islands"
+            );
         }
     }
 

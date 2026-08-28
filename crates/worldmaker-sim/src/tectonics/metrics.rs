@@ -642,8 +642,14 @@ pub const M6_MERGE_GAP_MY: f32 = 50.0;
 pub const M6_PERSIST_MY: f32 = 20.0;
 /// ...must reach this crust thickness somewhere along the zone...
 pub const M6_RELIEF_THICKNESS_KM: f32 = 45.0;
-/// ...in at least this fraction of cases.
-pub const M6_RELIEF_FRACTION_MIN: f64 = 0.8;
+/// ...in at least this fraction of cases. Re-measured at the WO-0008 S2
+/// close per its step 8 (honest number minus five points): with the free
+/// COLLISION_THICKEN creation gone, relief is funded entirely by
+/// underthrust deposits, and the honest re-measure read 73% (seed cyrus)
+/// and 39% (seed 42) — the S2 orogen-width gate (a >45 km zone at least
+/// 3 cells deep) carries the wide-orogen requirement now, and this
+/// fraction gates gross regression.
+pub const M6_RELIEF_FRACTION_MIN: f64 = 0.34;
 /// Metric 7: run mean plate speed (cm/yr, MORVEL-anchored)...
 pub const M7_MEAN_CMYR_MIN: f64 = 2.0;
 /// See [`M7_MEAN_CMYR_MIN`].
@@ -1160,9 +1166,11 @@ impl PhysicsTracker {
                 continue;
             }
             let p = sim.plate_id[c];
-            let touches_partner = sim.grid.neighbors_of(c as u32).iter().any(|&nb| {
-                sim.plate_id[nb as usize] != p && sim.crust_type[nb as usize] == 1
-            });
+            let touches_partner = sim
+                .grid
+                .neighbors_of(c as u32)
+                .iter()
+                .any(|&nb| sim.plate_id[nb as usize] != p && sim.crust_type[nb as usize] == 1);
             if !touches_partner {
                 continue;
             }
@@ -1212,10 +1220,7 @@ impl PhysicsTracker {
             }
             let mut queue: VecDeque<u32> = VecDeque::new();
             for c0 in 0..sim.plate_id.len() {
-                if seen[c0]
-                    || sim.crust_type[c0] != 1
-                    || sim.crust_age[c0] >= S2_ARC_WALL_AGE_MY
-                {
+                if seen[c0] || sim.crust_type[c0] != 1 || sim.crust_age[c0] >= S2_ARC_WALL_AGE_MY {
                     continue;
                 }
                 let mut cells: Vec<u32> = Vec::new();

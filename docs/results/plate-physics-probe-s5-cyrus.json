@@ -1,0 +1,2600 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-28",
+  "app_version": "0.1.0",
+  "metrics": {
+    "config": {
+      "dt_my": 2.0,
+      "grid_level": 6,
+      "land_fraction": 0.29,
+      "plate_count_param": 12,
+      "sample_interval_my": 100.0,
+      "seed_text": "cyrus",
+      "seed_u64": 14176781840892274037,
+      "span_my": 2000.0,
+      "tectonic_vigor": 1.0
+    },
+    "events": [
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 10.0
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 14.0
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 18.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 20.0
+      },
+      {
+        "driver": "plume",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 20.0
+      },
+      {
+        "driver": "plume",
+        "event": "rift_start",
+        "plate": 4,
+        "t_my": 20.0
+      },
+      {
+        "contact_cells_smaller_side": 58,
+        "contact_fraction_of_smaller_perimeter": 0.21245421469211578,
+        "event": "suture",
+        "loser_plate": 5,
+        "t_my": 88.0,
+        "winner_plate": 1
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 88.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 88.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 4,
+        "t_my": 104.0
+      },
+      {
+        "contact_cells_smaller_side": 59,
+        "contact_fraction_of_smaller_perimeter": 0.4836065471172333,
+        "event": "suture",
+        "loser_plate": 11,
+        "t_my": 110.0,
+        "winner_plate": 1
+      },
+      {
+        "contact_cells_smaller_side": 85,
+        "contact_fraction_of_smaller_perimeter": 0.19767442345619202,
+        "event": "suture",
+        "loser_plate": 0,
+        "t_my": 130.0,
+        "winner_plate": 1
+      },
+      {
+        "driver": "back_arc",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 260.0
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 260.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 338.0
+      },
+      {
+        "driver": "back_arc",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 338.0
+      },
+      {
+        "child_plate": 12,
+        "driver": "back_arc",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 364.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 364.0
+      },
+      {
+        "driver": "back_arc",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 604.0
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 604.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 608.0
+      },
+      {
+        "driver": "back_arc",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 608.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 616.0
+      },
+      {
+        "driver": "back_arc",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 616.0
+      },
+      {
+        "driver": "plume",
+        "event": "rift_start",
+        "plate": 2,
+        "t_my": 632.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 2,
+        "t_my": 634.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 640.0
+      },
+      {
+        "child_plate": 13,
+        "driver": "back_arc",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 846.0
+      },
+      {
+        "event": "microplate",
+        "origin": "back_arc_basin",
+        "plate": 13,
+        "t_my": 846.0
+      },
+      {
+        "event": "capture",
+        "loser_plate": 13,
+        "t_my": 952.0,
+        "winner_plate": 7
+      },
+      {
+        "driver": "back_arc",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 1086.0
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 1086.0
+      },
+      {
+        "child_plate": 14,
+        "driver": "back_arc",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 1228.0
+      },
+      {
+        "event": "microplate",
+        "origin": "back_arc_basin",
+        "plate": 14,
+        "t_my": 1228.0
+      },
+      {
+        "child_plate": 15,
+        "driver": "opposing_slabs",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 1280.0
+      },
+      {
+        "driver": "back_arc",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 1520.0
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 1520.0
+      },
+      {
+        "child_plate": 16,
+        "driver": "opposing_slabs",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 1536.0
+      },
+      {
+        "child_plate": 17,
+        "driver": "opposing_slabs",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 1536.0
+      },
+      {
+        "event": "microplate",
+        "origin": "ridge_jump",
+        "plate": 17,
+        "t_my": 1536.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 1,
+        "t_my": 1536.0
+      },
+      {
+        "contact_cells_smaller_side": 42,
+        "contact_fraction_of_smaller_perimeter": 0.30434781312942505,
+        "event": "suture",
+        "loser_plate": 9,
+        "t_my": 1686.0,
+        "winner_plate": 4
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 4,
+        "t_my": 1686.0
+      },
+      {
+        "event": "rift_failed",
+        "plate": 4,
+        "t_my": 1698.0
+      },
+      {
+        "driver": "opposing_slabs",
+        "event": "rift_start",
+        "plate": 1,
+        "t_my": 1776.0
+      },
+      {
+        "child_plate": 18,
+        "driver": "opposing_slabs",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 1780.0
+      },
+      {
+        "event": "microplate",
+        "origin": "ridge_jump",
+        "plate": 18,
+        "t_my": 1780.0
+      },
+      {
+        "child_plate": 19,
+        "driver": "opposing_slabs",
+        "event": "split",
+        "parent_plate": 1,
+        "t_my": 1780.0
+      },
+      {
+        "event": "microplate",
+        "origin": "ridge_jump",
+        "plate": 19,
+        "t_my": 1780.0
+      },
+      {
+        "event": "capture",
+        "loser_plate": 18,
+        "t_my": 1956.0,
+        "winner_plate": 6
+      }
+    ],
+    "headline": {
+      "connectivity_reassigned_total": 0,
+      "cont_gained_by_closure_total": 0,
+      "continental_cells_final": 14066,
+      "events_recorded": 50,
+      "events_total": 50,
+      "final_alive_plate_count": 14,
+      "max_multi_component_plates_in_sample": 0,
+      "max_sampled_alive_plate_count": 15,
+      "microplate_count_total": 5,
+      "microplates_per_gy": 2.5,
+      "min_sampled_alive_plate_count": 9,
+      "rift_failed_count_total": 12,
+      "rift_failures_per_gy": 6.0,
+      "rift_link_count_total": 1,
+      "rift_start_count_total": 19,
+      "rift_starts_per_gy": 9.5,
+      "sample_count": 21,
+      "samples_with_exclaves_count": 0,
+      "split_count_total": 8,
+      "splits_per_gy": 4.0,
+      "suture_count_total": 4,
+      "sutures_per_gy": 2.0,
+      "underthrust_deposited_q_total": 7890010,
+      "underthrust_incorporated_q_total": 1497876,
+      "underthrust_removed_q_total": 10449014,
+      "underthrust_spilled_q_total": 2559004,
+      "volume_ledger_exact": true
+    },
+    "samples": [
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 0,
+            "speed_deg_my": 0.4790131151676178
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 1,
+            "speed_deg_my": 0.4802078604698181
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 2,
+            "speed_deg_my": 0.6062102317810059
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 3,
+            "speed_deg_my": 0.6297652721405029
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 4,
+            "speed_deg_my": 0.5182521939277649
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 5,
+            "speed_deg_my": 0.6686990261077881
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 6,
+            "speed_deg_my": 0.5431966781616211
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 7,
+            "speed_deg_my": 0.6541591882705688
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 8,
+            "speed_deg_my": 0.6649477481842041
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 9,
+            "speed_deg_my": 0.5053442716598511
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 10,
+            "speed_deg_my": 0.36456555128097534
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 11,
+            "speed_deg_my": 0.38315945863723755
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 0,
+        "cont_gained_by_arc_cum": 0,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 0,
+        "cont_lost_to_ridge_gap_cum": 0,
+        "cont_lost_to_rift_cum": 0,
+        "continental_cells": 16005,
+        "continental_cells_hard": 16005,
+        "largest_plate_cell_share": 0.2556759923831844,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.5414600496490797,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 0,
+        "plates_below_0p05_deg_my_count": 0,
+        "rift_failed_count_cum": 0,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 0,
+        "rift_start_count_cum": 0,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 0,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 0,
+        "suture_fail_extent_cum": 0,
+        "suture_fail_lock_cum": 0,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 0.0,
+        "underthrust_deposited_q_cum": 0,
+        "underthrust_incorporated_q_cum": 0,
+        "underthrust_removed_q_cum": 0,
+        "underthrust_spilled_q_cum": 0,
+        "vol_advect_q_cum": 0,
+        "vol_arc_q_cum": 0,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 0,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": 0,
+        "vol_rift_q_cum": 0,
+        "vol_spread_q_cum": 0
+      },
+      {
+        "active_rift_count": 1,
+        "alive_plate_count": 11,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1706,
+            "plate_id": 0,
+            "speed_deg_my": 0.03120686300098896
+          },
+          {
+            "attached_slab_cells": 250,
+            "plate_id": 1,
+            "speed_deg_my": 0.021153055131435394
+          },
+          {
+            "attached_slab_cells": 1031,
+            "plate_id": 2,
+            "speed_deg_my": 0.04827532544732094
+          },
+          {
+            "attached_slab_cells": 1485,
+            "plate_id": 3,
+            "speed_deg_my": 0.19186429679393768
+          },
+          {
+            "attached_slab_cells": 70,
+            "plate_id": 4,
+            "speed_deg_my": 0.014960192143917084
+          },
+          {
+            "attached_slab_cells": 767,
+            "plate_id": 6,
+            "speed_deg_my": 0.37590616941452026
+          },
+          {
+            "attached_slab_cells": 1478,
+            "plate_id": 7,
+            "speed_deg_my": 0.1633201688528061
+          },
+          {
+            "attached_slab_cells": 1030,
+            "plate_id": 8,
+            "speed_deg_my": 0.49556636810302734
+          },
+          {
+            "attached_slab_cells": 85,
+            "plate_id": 9,
+            "speed_deg_my": 0.018389958888292313
+          },
+          {
+            "attached_slab_cells": 58,
+            "plate_id": 10,
+            "speed_deg_my": 0.12421994656324387
+          },
+          {
+            "attached_slab_cells": 23,
+            "plate_id": 11,
+            "speed_deg_my": 0.00469509232789278
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 1743,
+        "cont_gained_by_arc_cum": 5,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 2264,
+        "cont_lost_to_ridge_gap_cum": 522,
+        "cont_lost_to_rift_cum": 131,
+        "continental_cells": 15427,
+        "continental_cells_hard": 15320,
+        "largest_plate_cell_share": 0.26341487232068744,
+        "locked_pair_count": 1,
+        "mean_plate_speed_deg_my": 0.13541431242430751,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 6,
+        "plates_below_0p05_deg_my_count": 6,
+        "rift_failed_count_cum": 3,
+        "rift_failures_in_window_count": 3,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 5,
+        "rift_starts_in_window_count": 5,
+        "split_count_cum": 0,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 1,
+        "suture_fail_extent_cum": 270,
+        "suture_fail_lock_cum": 390,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 1,
+        "t_my": 100.0,
+        "underthrust_deposited_q_cum": 2880101,
+        "underthrust_incorporated_q_cum": 416750,
+        "underthrust_removed_q_cum": 4571597,
+        "underthrust_spilled_q_cum": 1691496,
+        "vol_advect_q_cum": -4066018,
+        "vol_arc_q_cum": 165614,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 3296851,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -162757,
+        "vol_rift_q_cum": -709338,
+        "vol_spread_q_cum": -16
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 9,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1734,
+            "plate_id": 1,
+            "speed_deg_my": 0.03966493904590607
+          },
+          {
+            "attached_slab_cells": 778,
+            "plate_id": 2,
+            "speed_deg_my": 0.07822240889072418
+          },
+          {
+            "attached_slab_cells": 5790,
+            "plate_id": 3,
+            "speed_deg_my": 0.8109344244003296
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 4,
+            "speed_deg_my": 0.018141981214284897
+          },
+          {
+            "attached_slab_cells": 958,
+            "plate_id": 6,
+            "speed_deg_my": 0.4401785731315613
+          },
+          {
+            "attached_slab_cells": 765,
+            "plate_id": 7,
+            "speed_deg_my": 0.0632954090833664
+          },
+          {
+            "attached_slab_cells": 1114,
+            "plate_id": 8,
+            "speed_deg_my": 0.2868500053882599
+          },
+          {
+            "attached_slab_cells": 33,
+            "plate_id": 9,
+            "speed_deg_my": 0.03692056983709335
+          },
+          {
+            "attached_slab_cells": 434,
+            "plate_id": 10,
+            "speed_deg_my": 0.42780840396881104
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 2992,
+        "cont_gained_by_arc_cum": 47,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 3498,
+        "cont_lost_to_ridge_gap_cum": 604,
+        "cont_lost_to_rift_cum": 366,
+        "continental_cells": 15250,
+        "continental_cells_hard": 15204,
+        "largest_plate_cell_share": 0.4957033347981056,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.24466852388448185,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 4,
+        "rift_failures_in_window_count": 1,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 5,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 0,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 468,
+        "suture_fail_lock_cum": 539,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 2,
+        "t_my": 200.0,
+        "underthrust_deposited_q_cum": 3233281,
+        "underthrust_incorporated_q_cum": 475738,
+        "underthrust_removed_q_cum": 5061109,
+        "underthrust_spilled_q_cum": 1827828,
+        "vol_advect_q_cum": -4270192,
+        "vol_arc_q_cum": 375908,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 3709019,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -346991,
+        "vol_rift_q_cum": -1480437,
+        "vol_spread_q_cum": -22
+      },
+      {
+        "active_rift_count": 2,
+        "alive_plate_count": 9,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 2600,
+            "plate_id": 1,
+            "speed_deg_my": 0.11395516991615295
+          },
+          {
+            "attached_slab_cells": 1726,
+            "plate_id": 2,
+            "speed_deg_my": 0.14649558067321777
+          },
+          {
+            "attached_slab_cells": 5213,
+            "plate_id": 3,
+            "speed_deg_my": 0.4946040213108063
+          },
+          {
+            "attached_slab_cells": 92,
+            "plate_id": 4,
+            "speed_deg_my": 0.021898921579122543
+          },
+          {
+            "attached_slab_cells": 534,
+            "plate_id": 6,
+            "speed_deg_my": 0.18850460648536682
+          },
+          {
+            "attached_slab_cells": 262,
+            "plate_id": 7,
+            "speed_deg_my": 0.018110405653715134
+          },
+          {
+            "attached_slab_cells": 4711,
+            "plate_id": 8,
+            "speed_deg_my": 0.8416967988014221
+          },
+          {
+            "attached_slab_cells": 121,
+            "plate_id": 9,
+            "speed_deg_my": 0.01622653566300869
+          },
+          {
+            "attached_slab_cells": 1058,
+            "plate_id": 10,
+            "speed_deg_my": 0.5351917147636414
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 5822,
+        "cont_gained_by_arc_cum": 78,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 6342,
+        "cont_lost_to_ridge_gap_cum": 676,
+        "cont_lost_to_rift_cum": 459,
+        "continental_cells": 15197,
+        "continental_cells_hard": 15066,
+        "largest_plate_cell_share": 0.46635906449880377,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.2640759727607171,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 4,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 7,
+        "rift_starts_in_window_count": 2,
+        "split_count_cum": 0,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 688,
+        "suture_fail_lock_cum": 734,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 300.0,
+        "underthrust_deposited_q_cum": 3568429,
+        "underthrust_incorporated_q_cum": 545406,
+        "underthrust_removed_q_cum": 5420575,
+        "underthrust_spilled_q_cum": 1852146,
+        "vol_advect_q_cum": -4692620,
+        "vol_arc_q_cum": 626009,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 4113835,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -514025,
+        "vol_rift_q_cum": -1875674,
+        "vol_spread_q_cum": -71
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1727,
+            "plate_id": 1,
+            "speed_deg_my": 0.0767907053232193
+          },
+          {
+            "attached_slab_cells": 1923,
+            "plate_id": 2,
+            "speed_deg_my": 0.2369741052389145
+          },
+          {
+            "attached_slab_cells": 3875,
+            "plate_id": 3,
+            "speed_deg_my": 0.3558027446269989
+          },
+          {
+            "attached_slab_cells": 82,
+            "plate_id": 4,
+            "speed_deg_my": 0.0134190758690238
+          },
+          {
+            "attached_slab_cells": 661,
+            "plate_id": 6,
+            "speed_deg_my": 0.1349133849143982
+          },
+          {
+            "attached_slab_cells": 220,
+            "plate_id": 7,
+            "speed_deg_my": 0.016958415508270264
+          },
+          {
+            "attached_slab_cells": 3786,
+            "plate_id": 8,
+            "speed_deg_my": 0.47340500354766846
+          },
+          {
+            "attached_slab_cells": 80,
+            "plate_id": 9,
+            "speed_deg_my": 0.007621354423463345
+          },
+          {
+            "attached_slab_cells": 852,
+            "plate_id": 10,
+            "speed_deg_my": 0.34017232060432434
+          },
+          {
+            "attached_slab_cells": 183,
+            "plate_id": 12,
+            "speed_deg_my": 0.05240044742822647
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 9146,
+        "cont_gained_by_arc_cum": 108,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 9702,
+        "cont_lost_to_ridge_gap_cum": 716,
+        "cont_lost_to_rift_cum": 750,
+        "continental_cells": 14918,
+        "continental_cells_hard": 14738,
+        "largest_plate_cell_share": 0.42512572628289635,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.17084575574845076,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 6,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 6,
+        "rift_failures_in_window_count": 2,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 8,
+        "rift_starts_in_window_count": 1,
+        "split_count_cum": 1,
+        "splits_in_window_count": 1,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 1010,
+        "suture_fail_lock_cum": 1006,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 400.0,
+        "underthrust_deposited_q_cum": 3778550,
+        "underthrust_incorporated_q_cum": 593638,
+        "underthrust_removed_q_cum": 5673665,
+        "underthrust_spilled_q_cum": 1895115,
+        "vol_advect_q_cum": -5082634,
+        "vol_arc_q_cum": 903442,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 4372188,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -664466,
+        "vol_rift_q_cum": -2934383,
+        "vol_spread_q_cum": -634
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 821,
+            "plate_id": 1,
+            "speed_deg_my": 0.06452975422143936
+          },
+          {
+            "attached_slab_cells": 2845,
+            "plate_id": 2,
+            "speed_deg_my": 0.3251217007637024
+          },
+          {
+            "attached_slab_cells": 5664,
+            "plate_id": 3,
+            "speed_deg_my": 0.6275160908699036
+          },
+          {
+            "attached_slab_cells": 55,
+            "plate_id": 4,
+            "speed_deg_my": 0.015161959454417229
+          },
+          {
+            "attached_slab_cells": 1293,
+            "plate_id": 6,
+            "speed_deg_my": 0.17955061793327332
+          },
+          {
+            "attached_slab_cells": 139,
+            "plate_id": 7,
+            "speed_deg_my": 0.011458323337137699
+          },
+          {
+            "attached_slab_cells": 2859,
+            "plate_id": 8,
+            "speed_deg_my": 0.5724600553512573
+          },
+          {
+            "attached_slab_cells": 34,
+            "plate_id": 9,
+            "speed_deg_my": 0.0057345242239534855
+          },
+          {
+            "attached_slab_cells": 1592,
+            "plate_id": 10,
+            "speed_deg_my": 0.6326590180397034
+          },
+          {
+            "attached_slab_cells": 358,
+            "plate_id": 12,
+            "speed_deg_my": 0.061943646520376205
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 11613,
+        "cont_gained_by_arc_cum": 149,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 12221,
+        "cont_lost_to_ridge_gap_cum": 729,
+        "cont_lost_to_rift_cum": 851,
+        "continental_cells": 14845,
+        "continental_cells_hard": 14678,
+        "largest_plate_cell_share": 0.43291343196133003,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.24961356907151638,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 6,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 6,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 8,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 1,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 1292,
+        "suture_fail_lock_cum": 1238,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 500.0,
+        "underthrust_deposited_q_cum": 3962150,
+        "underthrust_incorporated_q_cum": 637310,
+        "underthrust_removed_q_cum": 5887499,
+        "underthrust_spilled_q_cum": 1925349,
+        "vol_advect_q_cum": -5361839,
+        "vol_arc_q_cum": 1266694,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 4599460,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -795749,
+        "vol_rift_q_cum": -3273186,
+        "vol_spread_q_cum": -3774
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1015,
+            "plate_id": 1,
+            "speed_deg_my": 0.09549225866794586
+          },
+          {
+            "attached_slab_cells": 2901,
+            "plate_id": 2,
+            "speed_deg_my": 0.2525009214878082
+          },
+          {
+            "attached_slab_cells": 5373,
+            "plate_id": 3,
+            "speed_deg_my": 0.5958632826805115
+          },
+          {
+            "attached_slab_cells": 33,
+            "plate_id": 4,
+            "speed_deg_my": 0.015949176624417305
+          },
+          {
+            "attached_slab_cells": 1747,
+            "plate_id": 6,
+            "speed_deg_my": 0.3141990900039673
+          },
+          {
+            "attached_slab_cells": 146,
+            "plate_id": 7,
+            "speed_deg_my": 0.01313021034002304
+          },
+          {
+            "attached_slab_cells": 4720,
+            "plate_id": 8,
+            "speed_deg_my": 0.9857164621353149
+          },
+          {
+            "attached_slab_cells": 25,
+            "plate_id": 9,
+            "speed_deg_my": 0.005150373559445143
+          },
+          {
+            "attached_slab_cells": 1268,
+            "plate_id": 10,
+            "speed_deg_my": 0.44729891419410706
+          },
+          {
+            "attached_slab_cells": 547,
+            "plate_id": 12,
+            "speed_deg_my": 0.10552889108657837
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 14417,
+        "cont_gained_by_arc_cum": 198,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 15080,
+        "cont_lost_to_ridge_gap_cum": 749,
+        "cont_lost_to_rift_cum": 892,
+        "continental_cells": 14833,
+        "continental_cells_hard": 14652,
+        "largest_plate_cell_share": 0.44319125042722524,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.28308295807801187,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 7,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 6,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 8,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 1,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 1658,
+        "suture_fail_lock_cum": 1554,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 600.0,
+        "underthrust_deposited_q_cum": 4151390,
+        "underthrust_incorporated_q_cum": 681126,
+        "underthrust_removed_q_cum": 6118697,
+        "underthrust_spilled_q_cum": 1967307,
+        "vol_advect_q_cum": -5662662,
+        "vol_arc_q_cum": 1676887,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 4832516,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -943280,
+        "vol_rift_q_cum": -3437122,
+        "vol_spread_q_cum": -1574
+      },
+      {
+        "active_rift_count": 1,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1015,
+            "plate_id": 1,
+            "speed_deg_my": 0.09115296602249146
+          },
+          {
+            "attached_slab_cells": 2261,
+            "plate_id": 2,
+            "speed_deg_my": 0.1728096753358841
+          },
+          {
+            "attached_slab_cells": 5845,
+            "plate_id": 3,
+            "speed_deg_my": 0.5350384712219238
+          },
+          {
+            "attached_slab_cells": 22,
+            "plate_id": 4,
+            "speed_deg_my": 0.015221464447677135
+          },
+          {
+            "attached_slab_cells": 1430,
+            "plate_id": 6,
+            "speed_deg_my": 0.1251269280910492
+          },
+          {
+            "attached_slab_cells": 73,
+            "plate_id": 7,
+            "speed_deg_my": 0.011163265444338322
+          },
+          {
+            "attached_slab_cells": 1459,
+            "plate_id": 8,
+            "speed_deg_my": 0.3630203604698181
+          },
+          {
+            "attached_slab_cells": 14,
+            "plate_id": 9,
+            "speed_deg_my": 0.005058560986071825
+          },
+          {
+            "attached_slab_cells": 1019,
+            "plate_id": 10,
+            "speed_deg_my": 0.5537620186805725
+          },
+          {
+            "attached_slab_cells": 629,
+            "plate_id": 12,
+            "speed_deg_my": 0.07707037031650543
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 17638,
+        "cont_gained_by_arc_cum": 228,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 18381,
+        "cont_lost_to_ridge_gap_cum": 765,
+        "cont_lost_to_rift_cum": 963,
+        "continental_cells": 14795,
+        "continental_cells_hard": 14613,
+        "largest_plate_cell_share": 0.45429910648894095,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.19494240810163319,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 8,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 4,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 13,
+        "rift_starts_in_window_count": 5,
+        "split_count_cum": 1,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 2053,
+        "suture_fail_lock_cum": 1899,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 700.0,
+        "underthrust_deposited_q_cum": 4485982,
+        "underthrust_incorporated_q_cum": 767630,
+        "underthrust_removed_q_cum": 6500033,
+        "underthrust_spilled_q_cum": 2014051,
+        "vol_advect_q_cum": -6095512,
+        "vol_arc_q_cum": 2010134,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 5253612,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -1132975,
+        "vol_rift_q_cum": -3719828,
+        "vol_spread_q_cum": -653
+      },
+      {
+        "active_rift_count": 1,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 776,
+            "plate_id": 1,
+            "speed_deg_my": 0.09114795923233032
+          },
+          {
+            "attached_slab_cells": 3080,
+            "plate_id": 2,
+            "speed_deg_my": 0.3184770941734314
+          },
+          {
+            "attached_slab_cells": 3027,
+            "plate_id": 3,
+            "speed_deg_my": 0.41118818521499634
+          },
+          {
+            "attached_slab_cells": 23,
+            "plate_id": 4,
+            "speed_deg_my": 0.012661422602832317
+          },
+          {
+            "attached_slab_cells": 971,
+            "plate_id": 6,
+            "speed_deg_my": 0.11093510687351227
+          },
+          {
+            "attached_slab_cells": 47,
+            "plate_id": 7,
+            "speed_deg_my": 0.0143113499507308
+          },
+          {
+            "attached_slab_cells": 2455,
+            "plate_id": 8,
+            "speed_deg_my": 0.9021987915039062
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 9,
+            "speed_deg_my": 0.006302466616034508
+          },
+          {
+            "attached_slab_cells": 1526,
+            "plate_id": 10,
+            "speed_deg_my": 1.2949403524398804
+          },
+          {
+            "attached_slab_cells": 758,
+            "plate_id": 12,
+            "speed_deg_my": 0.07372067868709564
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 21393,
+        "cont_gained_by_arc_cum": 260,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 22172,
+        "cont_lost_to_ridge_gap_cum": 796,
+        "cont_lost_to_rift_cum": 1020,
+        "continental_cells": 14754,
+        "continental_cells_hard": 14547,
+        "largest_plate_cell_share": 0.46609052292368536,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.323588340729475,
+        "microplate_count_cum": 0,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 6,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 13,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 1,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 2387,
+        "suture_fail_lock_cum": 2183,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 800.0,
+        "underthrust_deposited_q_cum": 4668921,
+        "underthrust_incorporated_q_cum": 811610,
+        "underthrust_removed_q_cum": 6721815,
+        "underthrust_spilled_q_cum": 2052894,
+        "vol_advect_q_cum": -6426473,
+        "vol_arc_q_cum": 2356634,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 5480531,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -1340282,
+        "vol_rift_q_cum": -3921814,
+        "vol_spread_q_cum": -3552
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 11,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 429,
+            "plate_id": 1,
+            "speed_deg_my": 0.05961204320192337
+          },
+          {
+            "attached_slab_cells": 3473,
+            "plate_id": 2,
+            "speed_deg_my": 0.2741527557373047
+          },
+          {
+            "attached_slab_cells": 3383,
+            "plate_id": 3,
+            "speed_deg_my": 0.33510157465934753
+          },
+          {
+            "attached_slab_cells": 15,
+            "plate_id": 4,
+            "speed_deg_my": 0.010586404241621494
+          },
+          {
+            "attached_slab_cells": 1302,
+            "plate_id": 6,
+            "speed_deg_my": 0.12837758660316467
+          },
+          {
+            "attached_slab_cells": 216,
+            "plate_id": 7,
+            "speed_deg_my": 0.021667422726750374
+          },
+          {
+            "attached_slab_cells": 969,
+            "plate_id": 8,
+            "speed_deg_my": 0.5305420160293579
+          },
+          {
+            "attached_slab_cells": 4,
+            "plate_id": 9,
+            "speed_deg_my": 0.005099776200950146
+          },
+          {
+            "attached_slab_cells": 60,
+            "plate_id": 10,
+            "speed_deg_my": 0.16363798081874847
+          },
+          {
+            "attached_slab_cells": 516,
+            "plate_id": 12,
+            "speed_deg_my": 0.0409679189324379
+          },
+          {
+            "attached_slab_cells": 2,
+            "plate_id": 13,
+            "speed_deg_my": 0.007449551485478878
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 23961,
+        "cont_gained_by_arc_cum": 283,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 24790,
+        "cont_lost_to_ridge_gap_cum": 802,
+        "cont_lost_to_rift_cum": 1045,
+        "continental_cells": 14746,
+        "continental_cells_hard": 14527,
+        "largest_plate_cell_share": 0.4783457838972706,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.14338136642155322,
+        "microplate_count_cum": 1,
+        "microplates_in_window_count": 1,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 8,
+        "plates_below_0p05_deg_my_count": 5,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 13,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 2,
+        "splits_in_window_count": 1,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 2734,
+        "suture_fail_lock_cum": 2474,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 900.0,
+        "underthrust_deposited_q_cum": 4858450,
+        "underthrust_incorporated_q_cum": 854842,
+        "underthrust_removed_q_cum": 6970120,
+        "underthrust_spilled_q_cum": 2111670,
+        "vol_advect_q_cum": -6661679,
+        "vol_arc_q_cum": 2692000,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 5713292,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -1555515,
+        "vol_rift_q_cum": -4031535,
+        "vol_spread_q_cum": -3606
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 420,
+            "plate_id": 1,
+            "speed_deg_my": 0.08300106227397919
+          },
+          {
+            "attached_slab_cells": 3168,
+            "plate_id": 2,
+            "speed_deg_my": 0.3717624247074127
+          },
+          {
+            "attached_slab_cells": 4084,
+            "plate_id": 3,
+            "speed_deg_my": 0.4121288061141968
+          },
+          {
+            "attached_slab_cells": 30,
+            "plate_id": 4,
+            "speed_deg_my": 0.009782123379409313
+          },
+          {
+            "attached_slab_cells": 1959,
+            "plate_id": 6,
+            "speed_deg_my": 0.3612399101257324
+          },
+          {
+            "attached_slab_cells": 283,
+            "plate_id": 7,
+            "speed_deg_my": 0.08854424953460693
+          },
+          {
+            "attached_slab_cells": 1417,
+            "plate_id": 8,
+            "speed_deg_my": 0.42859965562820435
+          },
+          {
+            "attached_slab_cells": 3,
+            "plate_id": 9,
+            "speed_deg_my": 0.005581320263445377
+          },
+          {
+            "attached_slab_cells": 597,
+            "plate_id": 10,
+            "speed_deg_my": 0.3215486407279968
+          },
+          {
+            "attached_slab_cells": 223,
+            "plate_id": 12,
+            "speed_deg_my": 0.02044832333922386
+          }
+        ],
+        "captures_in_window_count": 1,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 25873,
+        "cont_gained_by_arc_cum": 305,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 26738,
+        "cont_lost_to_ridge_gap_cum": 820,
+        "cont_lost_to_rift_cum": 1086,
+        "continental_cells": 14714,
+        "continental_cells_hard": 14528,
+        "largest_plate_cell_share": 0.4836922025291734,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.2102636516094208,
+        "microplate_count_cum": 1,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 7,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 13,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 2,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 3101,
+        "suture_fail_lock_cum": 2743,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1000.0,
+        "underthrust_deposited_q_cum": 5007343,
+        "underthrust_incorporated_q_cum": 889756,
+        "underthrust_removed_q_cum": 7152561,
+        "underthrust_spilled_q_cum": 2145218,
+        "vol_advect_q_cum": -6960304,
+        "vol_arc_q_cum": 3032286,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 5897099,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -1764006,
+        "vol_rift_q_cum": -4164228,
+        "vol_spread_q_cum": -4161
+      },
+      {
+        "active_rift_count": 2,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1507,
+            "plate_id": 1,
+            "speed_deg_my": 0.10359364748001099
+          },
+          {
+            "attached_slab_cells": 3205,
+            "plate_id": 2,
+            "speed_deg_my": 0.15949656069278717
+          },
+          {
+            "attached_slab_cells": 3120,
+            "plate_id": 3,
+            "speed_deg_my": 0.2820310890674591
+          },
+          {
+            "attached_slab_cells": 3,
+            "plate_id": 4,
+            "speed_deg_my": 0.007597950752824545
+          },
+          {
+            "attached_slab_cells": 2642,
+            "plate_id": 6,
+            "speed_deg_my": 0.37267136573791504
+          },
+          {
+            "attached_slab_cells": 765,
+            "plate_id": 7,
+            "speed_deg_my": 0.1894204169511795
+          },
+          {
+            "attached_slab_cells": 1536,
+            "plate_id": 8,
+            "speed_deg_my": 0.4108777940273285
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 9,
+            "speed_deg_my": 0.005453248508274555
+          },
+          {
+            "attached_slab_cells": 302,
+            "plate_id": 10,
+            "speed_deg_my": 0.5371216535568237
+          },
+          {
+            "attached_slab_cells": 67,
+            "plate_id": 12,
+            "speed_deg_my": 0.011922856792807579
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 29356,
+        "cont_gained_by_arc_cum": 325,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 30276,
+        "cont_lost_to_ridge_gap_cum": 891,
+        "cont_lost_to_rift_cum": 1097,
+        "continental_cells": 14751,
+        "continental_cells_hard": 14577,
+        "largest_plate_cell_share": 0.48366778965870805,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.20801865835674108,
+        "microplate_count_cum": 1,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 7,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 15,
+        "rift_starts_in_window_count": 2,
+        "split_count_cum": 2,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 3479,
+        "suture_fail_lock_cum": 3021,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1100.0,
+        "underthrust_deposited_q_cum": 5549940,
+        "underthrust_incorporated_q_cum": 1004756,
+        "underthrust_removed_q_cum": 7739383,
+        "underthrust_spilled_q_cum": 2189443,
+        "vol_advect_q_cum": -7421983,
+        "vol_arc_q_cum": 3407504,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 6554696,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -1986994,
+        "vol_rift_q_cum": -4264625,
+        "vol_spread_q_cum": -4767
+      },
+      {
+        "active_rift_count": 2,
+        "alive_plate_count": 10,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1072,
+            "plate_id": 1,
+            "speed_deg_my": 0.09160211682319641
+          },
+          {
+            "attached_slab_cells": 2221,
+            "plate_id": 2,
+            "speed_deg_my": 0.11645610630512238
+          },
+          {
+            "attached_slab_cells": 4564,
+            "plate_id": 3,
+            "speed_deg_my": 0.375836580991745
+          },
+          {
+            "attached_slab_cells": 3,
+            "plate_id": 4,
+            "speed_deg_my": 0.00700873089954257
+          },
+          {
+            "attached_slab_cells": 1287,
+            "plate_id": 6,
+            "speed_deg_my": 0.07319875061511993
+          },
+          {
+            "attached_slab_cells": 1537,
+            "plate_id": 7,
+            "speed_deg_my": 0.38592055439949036
+          },
+          {
+            "attached_slab_cells": 645,
+            "plate_id": 8,
+            "speed_deg_my": 0.3236877918243408
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 9,
+            "speed_deg_my": 0.0048962607979774475
+          },
+          {
+            "attached_slab_cells": 218,
+            "plate_id": 10,
+            "speed_deg_my": 0.30236122012138367
+          },
+          {
+            "attached_slab_cells": 67,
+            "plate_id": 12,
+            "speed_deg_my": 0.012727322988212109
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 34177,
+        "cont_gained_by_arc_cum": 342,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 35278,
+        "cont_lost_to_ridge_gap_cum": 914,
+        "cont_lost_to_rift_cum": 1268,
+        "continental_cells": 14562,
+        "continental_cells_hard": 14352,
+        "largest_plate_cell_share": 0.49304233191738683,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.16936954357661307,
+        "microplate_count_cum": 1,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_below_0p05_deg_my_count": 3,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 15,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 2,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 3775,
+        "suture_fail_lock_cum": 3217,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1200.0,
+        "underthrust_deposited_q_cum": 6163480,
+        "underthrust_incorporated_q_cum": 1128288,
+        "underthrust_removed_q_cum": 8429643,
+        "underthrust_spilled_q_cum": 2266163,
+        "vol_advect_q_cum": -8071265,
+        "vol_arc_q_cum": 3707470,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 7291768,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -2265142,
+        "vol_rift_q_cum": -5014153,
+        "vol_spread_q_cum": -4760
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 780,
+            "plate_id": 1,
+            "speed_deg_my": 0.04719648137688637
+          },
+          {
+            "attached_slab_cells": 2084,
+            "plate_id": 2,
+            "speed_deg_my": 0.1196414977312088
+          },
+          {
+            "attached_slab_cells": 3305,
+            "plate_id": 3,
+            "speed_deg_my": 0.34155362844467163
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 4,
+            "speed_deg_my": 0.008349328301846981
+          },
+          {
+            "attached_slab_cells": 597,
+            "plate_id": 6,
+            "speed_deg_my": 0.037676192820072174
+          },
+          {
+            "attached_slab_cells": 1112,
+            "plate_id": 7,
+            "speed_deg_my": 0.13593684136867523
+          },
+          {
+            "attached_slab_cells": 808,
+            "plate_id": 8,
+            "speed_deg_my": 0.48436903953552246
+          },
+          {
+            "attached_slab_cells": 2,
+            "plate_id": 9,
+            "speed_deg_my": 0.005179903004318476
+          },
+          {
+            "attached_slab_cells": 590,
+            "plate_id": 10,
+            "speed_deg_my": 0.6370234489440918
+          },
+          {
+            "attached_slab_cells": 22,
+            "plate_id": 12,
+            "speed_deg_my": 0.013182508759200573
+          },
+          {
+            "attached_slab_cells": 17,
+            "plate_id": 14,
+            "speed_deg_my": 0.028810331597924232
+          },
+          {
+            "attached_slab_cells": 4,
+            "plate_id": 15,
+            "speed_deg_my": 0.1429910808801651
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 37756,
+        "cont_gained_by_arc_cum": 351,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 38969,
+        "cont_lost_to_ridge_gap_cum": 942,
+        "cont_lost_to_rift_cum": 1454,
+        "continental_cells": 14359,
+        "continental_cells_hard": 14184,
+        "largest_plate_cell_share": 0.4929446804355256,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.16682585689704865,
+        "microplate_count_cum": 2,
+        "microplates_in_window_count": 1,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 7,
+        "plates_below_0p05_deg_my_count": 6,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 15,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 4,
+        "splits_in_window_count": 2,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 4059,
+        "suture_fail_lock_cum": 3401,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1300.0,
+        "underthrust_deposited_q_cum": 6576914,
+        "underthrust_incorporated_q_cum": 1213462,
+        "underthrust_removed_q_cum": 8899494,
+        "underthrust_spilled_q_cum": 2322580,
+        "vol_advect_q_cum": -8532491,
+        "vol_arc_q_cum": 3960487,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 7790376,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -2549190,
+        "vol_rift_q_cum": -5695712,
+        "vol_spread_q_cum": -6485
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 674,
+            "plate_id": 1,
+            "speed_deg_my": 0.06042478233575821
+          },
+          {
+            "attached_slab_cells": 3278,
+            "plate_id": 2,
+            "speed_deg_my": 0.43477508425712585
+          },
+          {
+            "attached_slab_cells": 4815,
+            "plate_id": 3,
+            "speed_deg_my": 0.4825851023197174
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 4,
+            "speed_deg_my": 0.00823835376650095
+          },
+          {
+            "attached_slab_cells": 521,
+            "plate_id": 6,
+            "speed_deg_my": 0.028315778821706772
+          },
+          {
+            "attached_slab_cells": 1137,
+            "plate_id": 7,
+            "speed_deg_my": 0.1686956286430359
+          },
+          {
+            "attached_slab_cells": 408,
+            "plate_id": 8,
+            "speed_deg_my": 0.2585102915763855
+          },
+          {
+            "attached_slab_cells": 136,
+            "plate_id": 9,
+            "speed_deg_my": 0.007726055104285479
+          },
+          {
+            "attached_slab_cells": 372,
+            "plate_id": 10,
+            "speed_deg_my": 0.3840990662574768
+          },
+          {
+            "attached_slab_cells": 68,
+            "plate_id": 12,
+            "speed_deg_my": 0.01164447795599699
+          },
+          {
+            "attached_slab_cells": 6,
+            "plate_id": 14,
+            "speed_deg_my": 0.008448677137494087
+          },
+          {
+            "attached_slab_cells": 72,
+            "plate_id": 15,
+            "speed_deg_my": 0.19071920216083527
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 42672,
+        "cont_gained_by_arc_cum": 369,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 43931,
+        "cont_lost_to_ridge_gap_cum": 961,
+        "cont_lost_to_rift_cum": 1646,
+        "continental_cells": 14180,
+        "continental_cells_hard": 14038,
+        "largest_plate_cell_share": 0.49990234851813875,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.17034854169469327,
+        "microplate_count_cum": 2,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_below_0p05_deg_my_count": 5,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 15,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 4,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 4329,
+        "suture_fail_lock_cum": 3571,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1400.0,
+        "underthrust_deposited_q_cum": 6785957,
+        "underthrust_incorporated_q_cum": 1257862,
+        "underthrust_removed_q_cum": 9119837,
+        "underthrust_spilled_q_cum": 2333880,
+        "vol_advect_q_cum": -8798769,
+        "vol_arc_q_cum": 4270650,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 8043819,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -2809602,
+        "vol_rift_q_cum": -6383889,
+        "vol_spread_q_cum": -9319
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 12,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1594,
+            "plate_id": 1,
+            "speed_deg_my": 0.10132692009210587
+          },
+          {
+            "attached_slab_cells": 7151,
+            "plate_id": 2,
+            "speed_deg_my": 0.7014009952545166
+          },
+          {
+            "attached_slab_cells": 2896,
+            "plate_id": 3,
+            "speed_deg_my": 0.2838866114616394
+          },
+          {
+            "attached_slab_cells": 36,
+            "plate_id": 4,
+            "speed_deg_my": 0.007838104851543903
+          },
+          {
+            "attached_slab_cells": 315,
+            "plate_id": 6,
+            "speed_deg_my": 0.019434675574302673
+          },
+          {
+            "attached_slab_cells": 1147,
+            "plate_id": 7,
+            "speed_deg_my": 0.2793295979499817
+          },
+          {
+            "attached_slab_cells": 2940,
+            "plate_id": 8,
+            "speed_deg_my": 1.5415854454040527
+          },
+          {
+            "attached_slab_cells": 75,
+            "plate_id": 9,
+            "speed_deg_my": 0.00628980528563261
+          },
+          {
+            "attached_slab_cells": 1230,
+            "plate_id": 10,
+            "speed_deg_my": 2.0
+          },
+          {
+            "attached_slab_cells": 55,
+            "plate_id": 12,
+            "speed_deg_my": 0.01094743050634861
+          },
+          {
+            "attached_slab_cells": 81,
+            "plate_id": 14,
+            "speed_deg_my": 0.4007135331630707
+          },
+          {
+            "attached_slab_cells": 98,
+            "plate_id": 15,
+            "speed_deg_my": 0.18138721585273743
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 49166,
+        "cont_gained_by_arc_cum": 401,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 50429,
+        "cont_lost_to_ridge_gap_cum": 1008,
+        "cont_lost_to_rift_cum": 1760,
+        "continental_cells": 14119,
+        "continental_cells_hard": 14012,
+        "largest_plate_cell_share": 0.5088130462379766,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.46117836128299433,
+        "microplate_count_cum": 2,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 5,
+        "plates_below_0p05_deg_my_count": 4,
+        "rift_failed_count_cum": 10,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 15,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 4,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 4606,
+        "suture_fail_lock_cum": 3748,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1500.0,
+        "underthrust_deposited_q_cum": 7046904,
+        "underthrust_incorporated_q_cum": 1315486,
+        "underthrust_removed_q_cum": 9427566,
+        "underthrust_spilled_q_cum": 2380662,
+        "vol_advect_q_cum": -9151200,
+        "vol_arc_q_cum": 4760700,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 8362390,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -3068568,
+        "vol_rift_q_cum": -6751492,
+        "vol_spread_q_cum": -14649
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 14,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 1553,
+            "plate_id": 1,
+            "speed_deg_my": 0.052335239946842194
+          },
+          {
+            "attached_slab_cells": 4388,
+            "plate_id": 2,
+            "speed_deg_my": 0.17305132746696472
+          },
+          {
+            "attached_slab_cells": 3205,
+            "plate_id": 3,
+            "speed_deg_my": 0.35222917795181274
+          },
+          {
+            "attached_slab_cells": 16,
+            "plate_id": 4,
+            "speed_deg_my": 0.008357184007763863
+          },
+          {
+            "attached_slab_cells": 262,
+            "plate_id": 6,
+            "speed_deg_my": 0.015952207148075104
+          },
+          {
+            "attached_slab_cells": 2234,
+            "plate_id": 7,
+            "speed_deg_my": 0.35487014055252075
+          },
+          {
+            "attached_slab_cells": 858,
+            "plate_id": 8,
+            "speed_deg_my": 0.30606770515441895
+          },
+          {
+            "attached_slab_cells": 42,
+            "plate_id": 9,
+            "speed_deg_my": 0.004613837227225304
+          },
+          {
+            "attached_slab_cells": 212,
+            "plate_id": 10,
+            "speed_deg_my": 0.4023784399032593
+          },
+          {
+            "attached_slab_cells": 114,
+            "plate_id": 12,
+            "speed_deg_my": 0.013796067796647549
+          },
+          {
+            "attached_slab_cells": 106,
+            "plate_id": 14,
+            "speed_deg_my": 0.030065657570958138
+          },
+          {
+            "attached_slab_cells": 87,
+            "plate_id": 15,
+            "speed_deg_my": 0.19685867428779602
+          },
+          {
+            "attached_slab_cells": 308,
+            "plate_id": 16,
+            "speed_deg_my": 0.06068873405456543
+          },
+          {
+            "attached_slab_cells": 8,
+            "plate_id": 17,
+            "speed_deg_my": 0.16816593706607819
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 54907,
+        "cont_gained_by_arc_cum": 419,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 56211,
+        "cont_lost_to_ridge_gap_cum": 1042,
+        "cont_lost_to_rift_cum": 1817,
+        "continental_cells": 14080,
+        "continental_cells_hard": 13938,
+        "largest_plate_cell_share": 0.4667252575557834,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.15281645215249487,
+        "microplate_count_cum": 3,
+        "microplates_in_window_count": 1,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 9,
+        "plates_below_0p05_deg_my_count": 5,
+        "rift_failed_count_cum": 11,
+        "rift_failures_in_window_count": 1,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 17,
+        "rift_starts_in_window_count": 2,
+        "split_count_cum": 6,
+        "splits_in_window_count": 2,
+        "suture_count_cum": 3,
+        "suture_fail_extent_cum": 5034,
+        "suture_fail_lock_cum": 4073,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1600.0,
+        "underthrust_deposited_q_cum": 7325717,
+        "underthrust_incorporated_q_cum": 1370349,
+        "underthrust_removed_q_cum": 9780625,
+        "underthrust_spilled_q_cum": 2454908,
+        "vol_advect_q_cum": -9526628,
+        "vol_arc_q_cum": 5092510,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 8696066,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -3387929,
+        "vol_rift_q_cum": -7040635,
+        "vol_spread_q_cum": -13355
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 13,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 748,
+            "plate_id": 1,
+            "speed_deg_my": 0.07275398075580597
+          },
+          {
+            "attached_slab_cells": 3249,
+            "plate_id": 2,
+            "speed_deg_my": 0.2865017056465149
+          },
+          {
+            "attached_slab_cells": 4606,
+            "plate_id": 3,
+            "speed_deg_my": 0.522070586681366
+          },
+          {
+            "attached_slab_cells": 27,
+            "plate_id": 4,
+            "speed_deg_my": 0.017676835879683495
+          },
+          {
+            "attached_slab_cells": 523,
+            "plate_id": 6,
+            "speed_deg_my": 0.019689008593559265
+          },
+          {
+            "attached_slab_cells": 2616,
+            "plate_id": 7,
+            "speed_deg_my": 0.46270912885665894
+          },
+          {
+            "attached_slab_cells": 744,
+            "plate_id": 8,
+            "speed_deg_my": 0.2865877151489258
+          },
+          {
+            "attached_slab_cells": 1621,
+            "plate_id": 10,
+            "speed_deg_my": 1.1898289918899536
+          },
+          {
+            "attached_slab_cells": 90,
+            "plate_id": 12,
+            "speed_deg_my": 0.01756090670824051
+          },
+          {
+            "attached_slab_cells": 20,
+            "plate_id": 14,
+            "speed_deg_my": 0.025617634877562523
+          },
+          {
+            "attached_slab_cells": 104,
+            "plate_id": 15,
+            "speed_deg_my": 0.24375775456428528
+          },
+          {
+            "attached_slab_cells": 654,
+            "plate_id": 16,
+            "speed_deg_my": 0.10891441255807877
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 17,
+            "speed_deg_my": 0.1433153599500656
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 58646,
+        "cont_gained_by_arc_cum": 458,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 59961,
+        "cont_lost_to_ridge_gap_cum": 1069,
+        "cont_lost_to_rift_cum": 1904,
+        "continental_cells": 14031,
+        "continental_cells_hard": 13813,
+        "largest_plate_cell_share": 0.46975245349348177,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.26130646323928464,
+        "microplate_count_cum": 3,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 4,
+        "plates_below_0p05_deg_my_count": 4,
+        "rift_failed_count_cum": 12,
+        "rift_failures_in_window_count": 1,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 18,
+        "rift_starts_in_window_count": 1,
+        "split_count_cum": 6,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 4,
+        "suture_fail_extent_cum": 5353,
+        "suture_fail_lock_cum": 4264,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 1,
+        "t_my": 1700.0,
+        "underthrust_deposited_q_cum": 7472834,
+        "underthrust_incorporated_q_cum": 1398313,
+        "underthrust_removed_q_cum": 9978742,
+        "underthrust_spilled_q_cum": 2505908,
+        "vol_advect_q_cum": -9854265,
+        "vol_arc_q_cum": 5486434,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 8871147,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -3665274,
+        "vol_rift_q_cum": -7346733,
+        "vol_spread_q_cum": -17457
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 15,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 677,
+            "plate_id": 1,
+            "speed_deg_my": 0.05760294944047928
+          },
+          {
+            "attached_slab_cells": 3586,
+            "plate_id": 2,
+            "speed_deg_my": 0.36396169662475586
+          },
+          {
+            "attached_slab_cells": 5521,
+            "plate_id": 3,
+            "speed_deg_my": 0.4949115216732025
+          },
+          {
+            "attached_slab_cells": 17,
+            "plate_id": 4,
+            "speed_deg_my": 0.01855914294719696
+          },
+          {
+            "attached_slab_cells": 341,
+            "plate_id": 6,
+            "speed_deg_my": 0.016200190410017967
+          },
+          {
+            "attached_slab_cells": 2976,
+            "plate_id": 7,
+            "speed_deg_my": 0.4055250883102417
+          },
+          {
+            "attached_slab_cells": 1308,
+            "plate_id": 8,
+            "speed_deg_my": 0.8011828660964966
+          },
+          {
+            "attached_slab_cells": 2804,
+            "plate_id": 10,
+            "speed_deg_my": 2.0
+          },
+          {
+            "attached_slab_cells": 73,
+            "plate_id": 12,
+            "speed_deg_my": 0.015039180405437946
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 14,
+            "speed_deg_my": 0.027483487501740456
+          },
+          {
+            "attached_slab_cells": 131,
+            "plate_id": 15,
+            "speed_deg_my": 0.28056591749191284
+          },
+          {
+            "attached_slab_cells": 2119,
+            "plate_id": 16,
+            "speed_deg_my": 0.3949117064476013
+          },
+          {
+            "attached_slab_cells": 10,
+            "plate_id": 17,
+            "speed_deg_my": 0.012142722494900227
+          },
+          {
+            "attached_slab_cells": 31,
+            "plate_id": 18,
+            "speed_deg_my": 0.051075778901576996
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 19,
+            "speed_deg_my": 0.05718789994716644
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 62722,
+        "cont_gained_by_arc_cum": 496,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 64023,
+        "cont_lost_to_ridge_gap_cum": 1085,
+        "cont_lost_to_rift_cum": 1960,
+        "continental_cells": 14060,
+        "continental_cells_hard": 13806,
+        "largest_plate_cell_share": 0.4584981202089742,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.3330900099128485,
+        "microplate_count_cum": 5,
+        "microplates_in_window_count": 2,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 12,
+        "plates_below_0p05_deg_my_count": 5,
+        "rift_failed_count_cum": 12,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 19,
+        "rift_starts_in_window_count": 1,
+        "split_count_cum": 8,
+        "splits_in_window_count": 2,
+        "suture_count_cum": 4,
+        "suture_fail_extent_cum": 5765,
+        "suture_fail_lock_cum": 4576,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1800.0,
+        "underthrust_deposited_q_cum": 7627686,
+        "underthrust_incorporated_q_cum": 1433972,
+        "underthrust_removed_q_cum": 10154295,
+        "underthrust_spilled_q_cum": 2526609,
+        "vol_advect_q_cum": -10043712,
+        "vol_arc_q_cum": 5920428,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 9061658,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -3925933,
+        "vol_rift_q_cum": -7554463,
+        "vol_spread_q_cum": -16340
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 15,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 265,
+            "plate_id": 1,
+            "speed_deg_my": 0.044967714697122574
+          },
+          {
+            "attached_slab_cells": 5344,
+            "plate_id": 2,
+            "speed_deg_my": 0.42992693185806274
+          },
+          {
+            "attached_slab_cells": 6236,
+            "plate_id": 3,
+            "speed_deg_my": 0.6079837679862976
+          },
+          {
+            "attached_slab_cells": 58,
+            "plate_id": 4,
+            "speed_deg_my": 0.01858050376176834
+          },
+          {
+            "attached_slab_cells": 222,
+            "plate_id": 6,
+            "speed_deg_my": 0.013467730954289436
+          },
+          {
+            "attached_slab_cells": 2109,
+            "plate_id": 7,
+            "speed_deg_my": 0.4109269976615906
+          },
+          {
+            "attached_slab_cells": 392,
+            "plate_id": 8,
+            "speed_deg_my": 0.1898791640996933
+          },
+          {
+            "attached_slab_cells": 2470,
+            "plate_id": 10,
+            "speed_deg_my": 2.0
+          },
+          {
+            "attached_slab_cells": 36,
+            "plate_id": 12,
+            "speed_deg_my": 0.009672521613538265
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 14,
+            "speed_deg_my": 0.009854740463197231
+          },
+          {
+            "attached_slab_cells": 26,
+            "plate_id": 15,
+            "speed_deg_my": 0.14244136214256287
+          },
+          {
+            "attached_slab_cells": 3963,
+            "plate_id": 16,
+            "speed_deg_my": 0.6279475688934326
+          },
+          {
+            "attached_slab_cells": 14,
+            "plate_id": 17,
+            "speed_deg_my": 0.00724423723295331
+          },
+          {
+            "attached_slab_cells": 168,
+            "plate_id": 18,
+            "speed_deg_my": 0.02619534730911255
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 19,
+            "speed_deg_my": 0.003828521817922592
+          }
+        ],
+        "captures_in_window_count": 0,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 64700,
+        "cont_gained_by_arc_cum": 540,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 66028,
+        "cont_lost_to_ridge_gap_cum": 1092,
+        "cont_lost_to_rift_cum": 2010,
+        "continental_cells": 14060,
+        "continental_cells_hard": 13807,
+        "largest_plate_cell_share": 0.4596455251208437,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.30286114069943626,
+        "microplate_count_cum": 5,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 11,
+        "plates_below_0p05_deg_my_count": 8,
+        "rift_failed_count_cum": 12,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 19,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 8,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 4,
+        "suture_fail_extent_cum": 6321,
+        "suture_fail_lock_cum": 4892,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 1900.0,
+        "underthrust_deposited_q_cum": 7756828,
+        "underthrust_incorporated_q_cum": 1466472,
+        "underthrust_removed_q_cum": 10306244,
+        "underthrust_spilled_q_cum": 2549416,
+        "vol_advect_q_cum": -10159799,
+        "vol_arc_q_cum": 6439211,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 9223300,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -4186765,
+        "vol_rift_q_cum": -7733956,
+        "vol_spread_q_cum": -20318
+      },
+      {
+        "active_rift_count": 0,
+        "alive_plate_count": 14,
+        "attached_slab_per_plate": [
+          {
+            "attached_slab_cells": 199,
+            "plate_id": 1,
+            "speed_deg_my": 0.06435412168502808
+          },
+          {
+            "attached_slab_cells": 6849,
+            "plate_id": 2,
+            "speed_deg_my": 0.762841522693634
+          },
+          {
+            "attached_slab_cells": 4811,
+            "plate_id": 3,
+            "speed_deg_my": 0.40577512979507446
+          },
+          {
+            "attached_slab_cells": 8,
+            "plate_id": 4,
+            "speed_deg_my": 0.016211872920393944
+          },
+          {
+            "attached_slab_cells": 286,
+            "plate_id": 6,
+            "speed_deg_my": 0.011582816950976849
+          },
+          {
+            "attached_slab_cells": 2994,
+            "plate_id": 7,
+            "speed_deg_my": 0.46315643191337585
+          },
+          {
+            "attached_slab_cells": 2003,
+            "plate_id": 8,
+            "speed_deg_my": 1.4434953927993774
+          },
+          {
+            "attached_slab_cells": 1839,
+            "plate_id": 10,
+            "speed_deg_my": 2.0
+          },
+          {
+            "attached_slab_cells": 34,
+            "plate_id": 12,
+            "speed_deg_my": 0.008709349669516087
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 14,
+            "speed_deg_my": 0.007779471110552549
+          },
+          {
+            "attached_slab_cells": 12,
+            "plate_id": 15,
+            "speed_deg_my": 0.0609126053750515
+          },
+          {
+            "attached_slab_cells": 946,
+            "plate_id": 16,
+            "speed_deg_my": 0.19689899682998657
+          },
+          {
+            "attached_slab_cells": 18,
+            "plate_id": 17,
+            "speed_deg_my": 0.005274426657706499
+          },
+          {
+            "attached_slab_cells": 0,
+            "plate_id": 19,
+            "speed_deg_my": 0.0014168954221531749
+          }
+        ],
+        "captures_in_window_count": 1,
+        "connectivity_reassigned_cum": 0,
+        "cont_gained_by_advection_cum": 67149,
+        "cont_gained_by_arc_cum": 582,
+        "cont_gained_by_closure_cum": 0,
+        "cont_lost_to_consumption_cum": 68501,
+        "cont_lost_to_ridge_gap_cum": 1110,
+        "cont_lost_to_rift_cum": 2046,
+        "continental_cells": 14066,
+        "continental_cells_hard": 13733,
+        "largest_plate_cell_share": 0.4650895952346077,
+        "locked_pair_count": 0,
+        "mean_plate_speed_deg_my": 0.38917207384448765,
+        "microplate_count_cum": 5,
+        "microplates_in_window_count": 0,
+        "multi_component_plate_count": 0,
+        "multi_component_plates": [],
+        "pair_timer_count": 10,
+        "plates_below_0p05_deg_my_count": 6,
+        "rift_failed_count_cum": 12,
+        "rift_failures_in_window_count": 0,
+        "rift_link_count_cum": 1,
+        "rift_start_count_cum": 19,
+        "rift_starts_in_window_count": 0,
+        "split_count_cum": 8,
+        "splits_in_window_count": 0,
+        "suture_count_cum": 4,
+        "suture_fail_extent_cum": 6812,
+        "suture_fail_lock_cum": 5205,
+        "suture_fail_ocean_cum": 0,
+        "sutures_in_window_count": 0,
+        "t_my": 2000.0,
+        "underthrust_deposited_q_cum": 7890010,
+        "underthrust_incorporated_q_cum": 1497876,
+        "underthrust_removed_q_cum": 10449014,
+        "underthrust_spilled_q_cum": 2559004,
+        "vol_advect_q_cum": -10336828,
+        "vol_arc_q_cum": 6958312,
+        "vol_closure_q_cum": 0,
+        "vol_collision_q_cum": 9387886,
+        "vol_quantize_q_cum": 0,
+        "vol_relax_q_cum": -4446885,
+        "vol_rift_q_cum": -7926541,
+        "vol_spread_q_cum": -22091
+      }
+    ]
+  }
+}

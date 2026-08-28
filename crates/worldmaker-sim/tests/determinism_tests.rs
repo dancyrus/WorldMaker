@@ -77,12 +77,24 @@ fn fixed_seed_reproduces_committed_hash() {
 /// whole-world change by design. Values from print_tectonic_goldens on
 /// Daniels-MacBook-Air at the S3 calibrated constants; the phase-0 noise
 /// golden above verified UNMOVED in the same suite run.
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x2916_52b9_61e3_f74c;
-const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xa154_6f8c_7944_6284;
+/// ALL THREE regenerated 2026-08-28 for WO-0008 — the fourth sanctioned
+/// golden move (decision log, "fourth sanctioned golden move, WO-0008"):
+/// S0 replaced the t = 0 crust layout (whole-plate continents + craton
+/// cores), S1 rebuilt closure/linkage/seam/balance (relic-basin closure,
+/// the three-part seam rule, insulation venting, fossil capture, axis
+/// rifts), and S2 rebuilt orogeny and arcs (underthrust-funded
+/// distributed zones, spreading, foreland loading, discrete arc sites,
+/// crust-volume ledger) — a whole-world change by design at every stage.
+/// Old WO-0006 values 0x2916_52b9_61e3_f74c / 0xa154_6f8c_7944_6284 /
+/// crust 0x08f5_c8f9_67db_bc04. Values from print_tectonic_goldens on
+/// Daniels-MacBook-Air; the phase-0 noise golden above verified UNMOVED
+/// in the same suite run.
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xabb5_3577_2c81_9c99;
+const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0x7680_b5da_d03d_486a;
 /// Pinned at WO-0003 close (S4 audit): the harness had recorded this hash in
 /// every results JSON but no test asserted it, leaving crust type free to
 /// drift cross-platform unnoticed. Regenerated with the pair above.
-const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0x08f5_c8f9_67db_bc04;
+const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0xebe0_d5a5_a29e_2745;
 
 /// Golden-regeneration aid: prints the three tectonic hashes for the
 /// current build. Used exactly once per sanctioned golden move.
@@ -103,7 +115,6 @@ fn print_tectonic_goldens() {
 }
 
 #[test]
-#[ignore = "WO-0008 in progress; regenerated in S2"]
 fn tectonics_reproduces_committed_goldens() {
     let grid = Arc::new(Grid::build(6));
     let mut world = WorldState::new(grid);
