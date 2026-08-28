@@ -188,10 +188,27 @@ const BOUNDARY_TRANSFORM: [f32; 3] = rgb(255, 210, 60);
 /// Continents on the crust-age layer (the map reads as ocean age).
 const AGE_CONTINENT: [f32; 3] = rgb(72, 70, 72);
 /// Age range that spans the viridis ramp: 0 (bright, at the ridge) to this.
-const AGE_MAX_MY: f32 = 150.0;
+pub const AGE_MAX_MY: f32 = 150.0;
+
+/// The stable plate color: id % 48 (WO-0006 S2) — the same rule
+/// `bake_values` writes into the category word.
+pub fn plate_color(plate_id: u32) -> [f32; 3] {
+    PLATE_COLORS[plate_id as usize % PLATE_COLORS.len()]
+}
+
+/// The viridis ramp at t ∈ 0..=1 (legend bars sample it; the GPU LUT row 2
+/// is baked from the same anchors).
+pub fn viridis(t: f32) -> [f32; 3] {
+    ramp(&VIRIDIS, t)
+}
+
+/// The batlow ramp at t ∈ 0..=1 (LUT row 3).
+pub fn batlow(t: f32) -> [f32; 3] {
+    ramp(&BATLOW, t)
+}
 
 /// Phase 0's hypsometric palette, ported from the old WGSL.
-fn hypsometric(elev_rel_m: f32) -> [f32; 3] {
+pub fn hypsometric(elev_rel_m: f32) -> [f32; 3] {
     let e = elev_rel_m;
     if e <= 0.0 {
         let t = (-e / 6000.0).clamp(0.0, 1.0);

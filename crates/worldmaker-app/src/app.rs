@@ -19,6 +19,7 @@ use worldmaker_sim::{Cancelled, Progress, WorldState};
 
 use crate::boundaries::BoundarySet;
 use crate::layers::{self, Layer};
+use crate::legend;
 use crate::pending_edits;
 use crate::render::{
     flat_base_half_extents, globe_radius_px, globe_rotation, layer_flags, pack_shade_params,
@@ -48,7 +49,7 @@ impl Preset {
         Preset::High8,
         Preset::Ultra9,
     ];
-    fn level(self) -> u32 {
+    pub fn level(self) -> u32 {
         match self {
             Preset::Draft6 => 6,
             Preset::Standard7 => 7,
@@ -118,6 +119,11 @@ pub struct Script {
     /// velocity-1000; Split view, Eckert IV) into this directory. The run
     /// forces a 2 Gy span; seed and preset come from the CLI.
     pub wo6_dir: Option<PathBuf>,
+    /// `--wo7-shots`: the WO-0007 sea-level/legend documentation set
+    /// (elevation-sea0, elevation-sea-4000, plates-legend, overlay-legend;
+    /// default Split view) into this directory. Seed and preset come from
+    /// the CLI (the WO pins seed cyrus, Draft6).
+    pub wo7_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -171,6 +177,12 @@ enum ScriptState {
     },
     /// WO-0006 S3 screenshot set (step 6).
     Wo6Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0007 sea-level/legend screenshot set (step 8).
+    Wo7Shot {
         stage: usize,
         frames: u32,
         requested: bool,
@@ -251,6 +263,20 @@ pub struct WorldApp {
     seed_text: String,
     master_seed: u64,
     sea_level_m: f32,
+    /// Land-fraction readout next to the sea-level slider (WO-0007 step 3):
+    /// percent of the viewed keyframe's cells (every 8th sampled) at or
+    /// above the slider level. Recomputed on slider release and when the
+    /// viewed world changes, never per frame.
+    land_frac_pct: Option<f32>,
+    /// Cache key for the readout: (values_gen, viewing_kf, sea-level bits).
+    land_frac_key: Option<(u64, usize, u32)>,
+    /// Legend content for the viewed keyframe (WO-0007 step 4), rebuilt on
+    /// every rebake; the Elevation legend is additionally rebuilt per frame
+    /// so its sea marker rides the live slider.
+    legend_spec: Option<legend::LegendSpec>,
+    /// The legend panel's last measured width — the Split-view seam-overlap
+    /// test reads it (hide only if the panel would cross the seam).
+    legend_width: f32,
     /// Render-detail slider, 0..=1 (off -> tuned default amplitude). A pure
     /// live view control, like sea level: uniform-only, never a rebake.
     detail: f32,
@@ -407,6 +433,10 @@ impl WorldApp {
             seed_text,
             master_seed,
             sea_level_m: 0.0,
+            land_frac_pct: None,
+            land_frac_key: None,
+            legend_spec: None,
+            legend_width: 0.0,
             detail,
             detail_octaves,
             detail_amp_m,
@@ -460,6 +490,12 @@ impl WorldApp {
                 }
             } else if script.wo6_dir.is_some() {
                 ScriptState::Wo6Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo7_dir.is_some() {
+                ScriptState::Wo7Shot {
                     stage: 0,
                     frames: 0,
                     requested: false,
@@ -641,8 +677,10 @@ impl WorldApp {
         // pending strokes can still display over the current world; that is
         // safe across a grid switch because rebuild_grid publishes a fresh
         // right-sized placeholder bundle first (judgement A4).
+        let mut new_legend = None;
         let (values, boundaries) = if let Some(history) = &self.history {
             let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
+            new_legend = Some(legend::legend_spec(self.layer, kf, self.sea_level_m));
             self.values_gen += 1;
             // Smoothed boundary polylines are Plates-layer styling (d3a §8):
             // extracted from this keyframe's plate assignment there and on
@@ -709,6 +747,13 @@ impl WorldApp {
             values_gen: self.values_gen,
             overlay_gen: self.overlay_gen,
         });
+        // Legend rides the same trigger set as the bake (layer switches,
+        // timeline scrubs, fresh histories all pass through here). Mid-run
+        // (history == None) the previous legend stays, matching the reused
+        // values above.
+        if let Some(spec) = new_legend {
+            self.legend_spec = Some(spec);
+        }
     }
 
     /// The live shading uniforms for both canvases this frame.
@@ -929,6 +974,44 @@ impl WorldApp {
             ));
     }
 
+    /// The legend panel (WO-0007 step 4): one implementation, anchored to
+    /// the bottom-left of the canvas, collapsible, per-layer content from
+    /// the viewed keyframe. In Split view it hides only if it would overlap
+    /// the seam (`seam_x`, measured against last frame's panel width).
+    fn legend_overlay(&mut self, ctx: &egui::Context, full: egui::Rect, seam_x: Option<f32>) {
+        // The Elevation legend tracks the live slider (cheap: 64 palette
+        // samples); everything else uses the rebake-time cache.
+        if self.layer == Layer::Elevation {
+            if let Some(history) = &self.history {
+                let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
+                self.legend_spec = Some(legend::legend_spec(self.layer, kf, self.sea_level_m));
+            }
+        }
+        let Some(spec) = &self.legend_spec else {
+            return;
+        };
+        let margin = 8.0;
+        if let Some(seam) = seam_x {
+            if full.min.x + margin + self.legend_width >= seam {
+                return;
+            }
+        }
+        let area = egui::Area::new(egui::Id::new("layer-legend"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(full.left_bottom() + egui::vec2(margin, -margin))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width(190.0);
+                    egui::CollapsingHeader::new(spec.title)
+                        .id_salt("legend-header")
+                        .default_open(true)
+                        .show(ui, |ui| legend::legend_body(ui, spec));
+                });
+            });
+        self.legend_width = area.response.rect.width();
+    }
+
     // ----- panels -----
 
     fn top_bar(&mut self, root: &mut egui::Ui) {
@@ -997,12 +1080,30 @@ impl WorldApp {
                 ui.label("Sea level:");
                 // Offset around the solved sea level. A pure LIVE view
                 // control since Fix 3: it rides the shading uniforms every
-                // frame — dragging it never rebakes.
-                ui.add(
-                    egui::Slider::new(&mut self.sea_level_m, -4000.0..=4000.0)
+                // frame — dragging it never rebakes. Range −6000..+6000
+                // (WO-0007: the abyssal plain sits near −5750, so a −4000
+                // floor could never expose the ocean floor).
+                let slider = ui.add(
+                    egui::Slider::new(&mut self.sea_level_m, -6000.0..=6000.0)
                         .suffix(" m")
                         .fixed_decimals(0),
                 );
+                // Land-fraction readout (WO-0007 step 3): every 8th cell of
+                // the VIEWED keyframe vs the slider level; refreshed on
+                // slider release and when the viewed world changes.
+                if let Some(history) = &self.history {
+                    let key = (self.values_gen, self.viewing_kf, self.sea_level_m.to_bits());
+                    if !slider.dragged() && self.land_frac_key != Some(key) {
+                        let kf =
+                            &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
+                        self.land_frac_pct =
+                            Some(legend::land_fraction_pct(&kf.elev_m, self.sea_level_m));
+                        self.land_frac_key = Some(key);
+                    }
+                }
+                if let Some(pct) = self.land_frac_pct {
+                    ui.label(format!("{pct:.1}% land"));
+                }
                 ui.separator();
 
                 // View resets (WO-0004 step 5).
@@ -1427,6 +1528,7 @@ impl WorldApp {
             ScriptState::Shot { .. } => self.drive_shot(ctx),
             ScriptState::Wo4Shot { .. } => self.drive_wo4(ctx),
             ScriptState::Wo6Shot { .. } => self.drive_wo6(ctx),
+            ScriptState::Wo7Shot { .. } => self.drive_wo7(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -1593,6 +1695,74 @@ impl WorldApp {
             };
         } else {
             self.script_state = ScriptState::Wo6Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0007 screenshot set: Elevation at sea level 0 and −4000 m (the
+    /// step-2 diagnosis pair, reused for the legend shots), then the Plates
+    /// and Overlay legends. Default Split view / equirectangular; seed and
+    /// preset come from the CLI (the WO pins seed cyrus, Draft6).
+    fn drive_wo7(&mut self, ctx: &egui::Context) {
+        const SHOTS: [(&str, f32, Layer); 4] = [
+            ("elevation-sea0", 0.0, Layer::Elevation),
+            ("elevation-sea-4000", -4000.0, Layer::Elevation),
+            ("plates-legend", 0.0, Layer::Plates),
+            ("overlay-legend", 0.0, Layer::Overlay),
+        ];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo7Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            let (name, sea_m, layer) = SHOTS[stage];
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            self.sea_level_m = sea_m;
+            self.layer = layer;
+            self.needs_bake = true;
+            log::info!("wo7 screenshot stage {stage}: {name}");
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo7_dir.clone().unwrap();
+            let name = SHOTS[stage].0;
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo7Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo7Shot {
                 stage,
                 frames,
                 requested,
@@ -1961,6 +2131,7 @@ impl eframe::App for WorldApp {
             .frame(egui::Frame::default().fill(egui::Color32::from_rgb(20, 22, 26)))
             .show(root, |ui| {
                 let full = ui.available_rect_before_wrap();
+                let mut seam_x = None;
                 match self.view_mode {
                     ViewMode::Globe => self.globe_canvas(ui, full),
                     ViewMode::Flat => self.flat_canvas(ui, full),
@@ -1976,8 +2147,10 @@ impl eframe::App for WorldApp {
                         );
                         self.globe_canvas(ui, left);
                         self.flat_canvas(ui, right);
+                        seam_x = Some(left.max.x);
                     }
                 }
+                self.legend_overlay(ctx, full, seam_x);
             });
 
         if self.needs_bake {
