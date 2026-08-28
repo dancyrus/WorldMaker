@@ -21,7 +21,10 @@
 //! by `report_gate_values` for the results JSON). The full story per
 //! metric:
 //!
-//! - m1 plate count (ARMED): band 6–25, stddev ≥ 1.5, no >500 My pin.
+//! - m1 plate count: band 6–25 and stddev ≥ 1.5 ARMED; the >500 My pin
+//!   clause RECORDED since WO-0008 S0 (whole-plate crust setup pins seed
+//!   cyrus at 530 My; S1's closure rework re-arms it), with a 1,000 My
+//!   gross-regression backstop.
 //! - m2 suture frequency: 0–0.5/Gy vs target 2–10 — RECORDED. Blocked by
 //!   §3 condition 3: the probe autopsy finds 15–25 cells of 0.3–1.7 Gy-old
 //!   ocean within 2 rings of every large locked contact — relic enclosed
@@ -29,7 +32,9 @@
 //!   (missing physics: terminal-collision closure of enclosed ocean —
 //!   obduction / basin underthrusting). The condition AUDIT is armed:
 //!   every suture that does fire carries a §3-satisfying contact record.
-//! - m3 split frequency (ARMED): 2–8/Gy, every split §5-attributed.
+//! - m3 split frequency: §5 attribution ARMED; the 2–8/Gy band RECORDED
+//!   since WO-0008 S0 (whole-plate setup leaves seed cyrus at 1.5/Gy; S1's
+//!   rift-linkage rework re-arms it), with a 1–16/Gy backstop.
 //! - m4 largest-plate share: the <45%-outside-epochs clause is ARMED; the
 //!   epoch count/dispersal clauses are RECORDED — supercontinent epochs
 //!   persist past 300 My because the greedy least-strength rift walk exits
@@ -59,7 +64,8 @@ use std::sync::Arc;
 use worldmaker_core::hash::seed_from_text;
 use worldmaker_core::Grid;
 use worldmaker_sim::tectonics::metrics::{
-    PhysicsReport, PhysicsTracker, M4_LARGEST_SHARE_MAX, M7_MEAN_CMYR_MAX, M7_MEAN_CMYR_MIN,
+    PhysicsReport, PhysicsTracker, M1_ALIVE_MAX, M1_ALIVE_MIN, M1_PINNED_MAX_MY, M1_STDDEV_MIN,
+    M3_SPLITS_PER_GY_MAX, M4_LARGEST_SHARE_MAX, M7_MEAN_CMYR_MAX, M7_MEAN_CMYR_MIN,
 };
 use worldmaker_sim::tectonics::{SimState, TectonicsParams};
 
@@ -97,10 +103,24 @@ fn assert_armed(rep: &PhysicsReport, label: &str) {
             .map(|(_, _, d)| d.clone())
             .unwrap_or_default()
     };
-    // m1: full.
+    // m1: band and stddev armed; the pin clause is RECORDED during WO-0008
+    // — S0's whole-plate crust setup lengthens locked collision spans
+    // (seed cyrus pins at 530 My vs the 500 My cap), and S1's
+    // closure/linkage rework updates and re-arms these gates. A loose 2×
+    // backstop still catches gross regression.
     assert!(
-        gates.iter().any(|(n, ok, _)| *n == "m1_plate_count" && *ok),
-        "{label}: m1 plate count failed — {}",
+        rep.alive_min >= M1_ALIVE_MIN && rep.alive_max <= M1_ALIVE_MAX,
+        "{label}: m1 plate-count band failed — {}",
+        detail("m1_plate_count")
+    );
+    assert!(
+        rep.alive_stddev >= M1_STDDEV_MIN,
+        "{label}: m1 plate-count stddev failed — {}",
+        detail("m1_plate_count")
+    );
+    assert!(
+        rep.alive_pinned_max_my <= 2.0 * M1_PINNED_MAX_MY,
+        "{label}: m1 pin grossly regressed — {}",
         detail("m1_plate_count")
     );
     // m2: the condition audit only (frequency is recorded, see module note).
@@ -108,12 +128,18 @@ fn assert_armed(rep: &PhysicsReport, label: &str) {
         rep.suture_bad_condition_count, 0,
         "{label}: a suture fired with a sub-§3 contact record"
     );
-    // m3: full.
+    // m3: attribution armed; the 2–8/Gy frequency band is RECORDED during
+    // WO-0008 — S0's whole-plate crust setup leaves seed cyrus at 1.5
+    // splits/Gy (large unbroken continental plates rift less often), and
+    // S1's rift-linkage rework updates and re-arms these gates. A half-band
+    // backstop still catches gross regression.
+    assert_eq!(
+        rep.splits_unattributed, 0,
+        "{label}: a split fired without a §5 driver attribution"
+    );
     assert!(
-        gates
-            .iter()
-            .any(|(n, ok, _)| *n == "m3_split_frequency" && *ok),
-        "{label}: m3 split frequency failed — {}",
+        rep.splits_per_gy >= 1.0 && rep.splits_per_gy <= 2.0 * M3_SPLITS_PER_GY_MAX,
+        "{label}: m3 split frequency grossly regressed — {}",
         detail("m3_split_frequency")
     );
     // m4: the share clause only.

@@ -28,6 +28,7 @@ pub use keyframe::{
     ActiveRift, Keyframe, MicroplateOrigin, PairTimer, PlateState, RiftDriverKind, RunDiagnostics,
     SlabSegment, TectonicEvent, TectonicsHistory, NEVER_SUTURED,
 };
+pub use setup::CONT_AREA_FACTOR;
 pub use step::{SimState, SLAB_DETACH_MY, SLAB_NONE};
 
 use worldmaker_core::hash::{fnv1a_continue, FNV_OFFSET};
@@ -247,6 +248,8 @@ pub fn run_history(
         keyframe_interval_my: kf_my,
         keyframes,
         hotspots: sim.hotspots.clone(),
+        land_frac_target: params.land_fraction,
+        achieved_land_frac: sim.achieved_land_frac,
         diagnostics: keyframe::RunDiagnostics {
             cont_lost_to_ridge_gap: sim.cont_lost_to_ridge_gap,
             cont_lost_to_consumption: sim.cont_lost_to_consumption,

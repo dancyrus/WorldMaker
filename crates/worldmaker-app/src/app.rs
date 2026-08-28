@@ -1168,6 +1168,15 @@ impl WorldApp {
                         .text("Land fraction")
                         .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                 );
+                // Whole-plate crust setup quantizes the achieved fraction by
+                // plate sizes (WO-0008 S0); show what this world landed on.
+                if let Some(h) = &self.history {
+                    ui.label(format!(
+                        "target {:.0}% → start {:.0}%",
+                        h.land_frac_target * 100.0,
+                        h.achieved_land_frac * 100.0
+                    ));
+                }
                 ui.add(
                     egui::Slider::new(&mut self.tectonic_vigor, 0.25..=2.0).text("Tectonic vigor"),
                 );

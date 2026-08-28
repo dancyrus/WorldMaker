@@ -417,6 +417,12 @@ pub struct TectonicsHistory {
     pub keyframes: Vec<Keyframe>,
     /// Fixed mantle hotspot points (unit vectors) used by the run.
     pub hotspots: Vec<[f32; 3]>,
+    /// Land-fraction target the run was built with, and the fraction the
+    /// whole-plate crust setup actually achieved (quantized by plate
+    /// sizes; WO-0008 S0). t = 0 diagnostics for the UI label; the
+    /// achieved value is 0 on resumed runs.
+    pub land_frac_target: f32,
+    pub achieved_land_frac: f32,
     pub diagnostics: RunDiagnostics,
 }
 
@@ -524,6 +530,8 @@ mod tests {
         let hist = TectonicsHistory {
             dt_my: 2.0,
             keyframe_interval_my: 10.0,
+            land_frac_target: 0.29,
+            achieved_land_frac: 0.29,
             keyframes: (0..51)
                 .map(|i| Keyframe {
                     t_my: i as f32 * 10.0,

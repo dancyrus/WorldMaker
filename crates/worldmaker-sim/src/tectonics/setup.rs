@@ -18,9 +18,17 @@ use super::{TectonicsParams, STAGE_ID};
 
 /// Continental crust fraction relative to the land-fraction target: the
 /// margin allows for shelves below the solved sea level (decision log).
-const CONT_AREA_FACTOR: f32 = 1.35;
-/// Fraction of plates drawn with no craton (pure ocean plates).
-const OCEAN_PLATE_CHANCE: f32 = 0.2;
+/// Public since WO-0008 S0 so the single-crust setup test can rebuild the
+/// budget it checks against.
+pub const CONT_AREA_FACTOR: f32 = 1.35;
+/// Craton core size as a fraction of its continental plate's area
+/// (WO-0008 S0).
+const CRATON_FRAC_MIN: f32 = 0.3;
+const CRATON_FRAC_MAX: f32 = 0.6;
+/// Non-craton continental crust age range (My): the younger platform crust
+/// surrounding each craton core (WO-0008 S0).
+const PLATFORM_AGE_MIN_MY: f32 = 200.0;
+const PLATFORM_AGE_MAX_MY: f32 = 800.0;
 /// Craton peak thickness range (km); edges taper to the 35 km base.
 const CRATON_BASE_KM: f32 = 35.0;
 const CRATON_PEAK_MIN_KM: f32 = 40.0;
@@ -109,35 +117,66 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         plate_cells[p as usize] += 1;
     }
 
-    // Craton area budget, distributed over non-oceanic plates by weighted area.
+    // Whole-plate crust assignment (WO-0008 S0, Dan's ruling 2026-08-28):
+    // at t = 0 every plate is entirely continental or entirely oceanic —
+    // mixed plates only arise later, through rifting and arc growth. Greedy
+    // subset pick: shuffle the plate order, then take each plate that moves
+    // the running cell sum closer to the continental budget.
     let total_cont =
         ((params.land_fraction * CONT_AREA_FACTOR).min(0.85) * n as f32).round() as u32;
     let mut crng = sub_rng(master_seed, STAGE_ID, "cratons");
-    let mut weights = vec![0.0f32; p_count];
-    for pid in 0..p_count {
-        let oceanic = uniform_f32(&mut crng) < OCEAN_PLATE_CHANCE;
-        weights[pid] = if oceanic {
-            0.0
-        } else {
-            plate_cells[pid] as f32 * uniform_range(&mut crng, 0.5, 1.5)
-        };
+    let mut order: Vec<usize> = (0..p_count).collect();
+    for i in (1..p_count).rev() {
+        let j = ((uniform_f32(&mut crng) * (i + 1) as f32) as usize).min(i);
+        order.swap(i, j);
     }
-    // Guarantee at least two continental plates.
-    if weights.iter().filter(|&&w| w > 0.0).count() < 2 {
-        weights[0] = plate_cells[0] as f32;
-        weights[1] = plate_cells[1] as f32;
+    let mut continental = vec![false; p_count];
+    let mut cont_sum = 0u32;
+    for &pid in &order {
+        let c = plate_cells[pid];
+        if (cont_sum + c).abs_diff(total_cont) < cont_sum.abs_diff(total_cont) {
+            continental[pid] = true;
+            cont_sum += c;
+        }
     }
-    let weight_sum: f32 = weights.iter().sum();
+    // Guarantee at least one plate of each kind (ties resolve to the
+    // earliest plate in the shuffled order — deterministic).
+    if cont_sum == 0 {
+        let &best = order
+            .iter()
+            .min_by_key(|&&pid| plate_cells[pid].abs_diff(total_cont))
+            .expect("at least one plate");
+        continental[best] = true;
+        cont_sum = plate_cells[best];
+    }
+    if continental.iter().all(|&c| c) {
+        let &drop = order
+            .iter()
+            .min_by_key(|&&pid| (cont_sum - plate_cells[pid]).abs_diff(total_cont))
+            .expect("at least one plate");
+        continental[drop] = false;
+        cont_sum -= plate_cells[drop];
+    }
+    // The achieved land fraction is quantized by plate sizes: record what
+    // the pick actually landed on (the budget carries the shelf margin, so
+    // divide it back out to compare against `params.land_fraction`).
+    s.achieved_land_frac = cont_sum as f32 / (CONT_AREA_FACTOR * n as f32);
+    for c in 0..n {
+        if continental[s.plate_id[c] as usize] {
+            s.crust_type[c] = 1;
+            s.thickness[c] = CRATON_BASE_KM;
+        }
+    }
 
+    // Cratons stay, as cores inside continental plates: one nucleus per
+    // plate at its most interior cell, grown to 30–60% of the plate area;
+    // the rest of the plate is younger platform crust at base thickness.
     for pid in 0..p_count {
-        if weights[pid] <= 0.0 {
+        if !continental[pid] {
             continue;
         }
-        let target =
-            ((total_cont as f32 * weights[pid] / weight_sum).round() as u32).min(plate_cells[pid]);
-        if target == 0 {
-            continue;
-        }
+        let frac = uniform_range(&mut crng, CRATON_FRAC_MIN, CRATON_FRAC_MAX);
+        let target = ((plate_cells[pid] as f32 * frac).round() as u32).clamp(1, plate_cells[pid]);
         // Nucleus: this plate's most interior cell (max boundary depth, tie
         // to the lower id).
         let mut nucleus = 0usize;
@@ -154,6 +193,7 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         // depth for the thickness taper.
         let peak = uniform_range(&mut crng, CRATON_PEAK_MIN_KM, CRATON_PEAK_MAX_KM);
         let age = uniform_range(&mut crng, CRATON_AGE_MIN_MY, CRATON_AGE_MAX_MY);
+        let platform_age = uniform_range(&mut crng, PLATFORM_AGE_MIN_MY, PLATFORM_AGE_MAX_MY);
         let mut cd = vec![u32::MAX; n];
         cd[nucleus] = 0;
         let mut q: VecDeque<u32> = VecDeque::new();
@@ -180,12 +220,20 @@ pub(super) fn setup(master_seed: u64, grid: &Arc<Grid>, params: &TectonicsParams
         let max_d = collected.iter().map(|&(_, d)| d).max().unwrap_or(0) as f32;
         for &(c, d) in &collected {
             let cu = c as usize;
-            s.crust_type[cu] = 1;
             let taper = 1.0 - d as f32 / (max_d + 1.0);
             s.thickness[cu] = CRATON_BASE_KM + (peak - CRATON_BASE_KM) * taper;
             s.crust_age[cu] = age;
             // Primordial: exempt from orogenic relaxation from the start.
             s.orogeny_age[cu] = age;
+        }
+        // Platform crust: every continental cell of this plate the craton
+        // BFS did not reach (cd untouched) keeps base thickness and gets
+        // the younger age.
+        for c in 0..n {
+            if s.plate_id[c] == pid as u32 && cd[c] == u32::MAX {
+                s.crust_age[c] = platform_age;
+                s.orogeny_age[c] = platform_age;
+            }
         }
     }
 
