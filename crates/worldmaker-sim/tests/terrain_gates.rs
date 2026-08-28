@@ -243,7 +243,7 @@ fn terrain_stage_runs_in_pipeline_and_caches_by_morpho() {
     assert!(world
         .fields
         .get_u32(terrain::TERRAIN_LITHOLOGY)
-        .is_some_and(|l| l.iter().any(|&v| v == tectonics::lithology::SU as u32)));
+        .is_some_and(|l| l.contains(&(tectonics::lithology::SU as u32))));
     // Clean cache: nothing re-runs.
     assert!(pipe.run(&ctx, &mut world).unwrap().is_empty());
     // A different morpho re-runs ONLY the terrain stage.

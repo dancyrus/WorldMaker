@@ -714,7 +714,7 @@ mod tests {
     fn precip_bands_have_the_right_shape() {
         let eq = precip_m_yr(0.0);
         let dry25 = precip_m_yr(0.4226);
-        let mid = precip_m_yr(0.7071);
+        let mid = precip_m_yr(std::f64::consts::FRAC_1_SQRT_2); // sin 45°
         let pole = precip_m_yr(1.0);
         assert!(eq > mid && mid > dry25, "{eq} {mid} {dry25}");
         assert!(dry25 > pole || pole < mid, "{dry25} {pole}");
