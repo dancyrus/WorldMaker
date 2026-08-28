@@ -62,7 +62,7 @@ const K_MANTLE: f32 = 0.10;
 const C_DRAG: f32 = 1.25;
 /// Continent-continent contact resistance per contact cell (strength = 1.0
 /// until WO-0006 S2 lands the strength field).
-const C_CONTACT: f32 = 450.0;
+const C_CONTACT: f32 = 900.0;
 /// Transform friction per transform-only boundary cell.
 const C_TRANSFORM: f32 = 0.5;
 /// Speed/pole relaxation time, My (mantle re-equilibration; India's
@@ -97,8 +97,39 @@ const ARC_GROWTH_CONT_KM_MY: f32 = 0.15;
 /// Oceanic overriding crust becomes continental (island arc) at this
 /// thickness, km (spec: island arcs ~20–25 km).
 const ISLAND_ARC_CONVERT_KM: f32 = 20.0;
-/// Continental collision thickening, km/My per cm/yr of convergence.
-const COLLISION_THICKEN: f32 = 0.12;
+// ----- distributed orogeny (WO-0008 S2, model §9/S2 items) -----
+/// Deformation-zone depth: W = W_BASE_KM / strength, walked inboard from
+/// each contact cell and clamped to 1..=W_MAX_CELLS cells; weak crust
+/// (strength ~0.3–0.8) gives 3–8 cells at L6 (300–900 km), cratonic
+/// crust ≤ 1 (deformation localizes in weak lithosphere and dies at
+/// cratons — Tarim and Sichuan stop the Himalayan front).
+const W_BASE_KM: f32 = 260.0;
+const W_MAX_CELLS: u32 = 8;
+/// The zone walk stops where strength reaches cratonic grade.
+const CRATON_STOP: f32 = 1.5;
+/// Gravitational spreading (lower-crustal channel flow, Tibet): one
+/// diffusion pass per step on continental cells above this thickness...
+const SPREAD_THRESHOLD_KM: f32 = 60.0;
+/// ...moving excess to the thinnest neighbor at this rate per km of
+/// excess.
+const SPREAD_KM_MY: f32 = 0.05;
+/// Discrete island arcs (WO-0008 S2): over an OCEANIC overrider the arc
+/// band grows volcanic edifices only at discrete sites — a greedy
+/// maximal independent set in cell-id order (no two sites adjacent, so
+/// islands emerge one by one and stay 1 cell wide) — approximating one
+/// site every ~2 cells along the band. Between sites the band gains this
+/// fraction of the site rate. Continent-margin arcs (Andes) stay
+/// continuous.
+const ARC_OFFSITE_FRACTION: f32 = 0.2;
+/// Clearance rings between arc sites (and from young islands): every
+/// ~4th band cell hosts an edifice. The band is one ring wide at L3-L6,
+/// so 1-ring spacing would put a site on every other band cell and the
+/// band would run half land; the < 30% band-land target needs this.
+const ARC_SITE_RINGS: u32 = 3;
+/// A new arc site never opens beside continental crust younger than this:
+/// the existing edifice focuses the magmatism, so islands stay discrete
+/// instead of creeping into walls as the band drifts.
+const ARC_SITE_ISLAND_BLOCK_MY: f32 = 60.0;
 /// Crust thickness cap (km, spec).
 const THICKNESS_CAP_KM: f32 = 70.0;
 /// Continental rifts thin after this much sustained divergence (My)...
@@ -210,7 +241,7 @@ const RIFT_PROP_KM_MY: f32 = 75.0;
 /// breakup recurs on ~2×10⁸ yr per plate). Without this, every plume
 /// re-fires the step after each failure or split and the census runs away
 /// (measured: 12 → 28 plates in 200 My at L5).
-const RIFT_REFRACTORY_MY: f32 = 180.0;
+const RIFT_REFRACTORY_MY: f32 = 240.0;
 /// Two active rift tips on the same plate within this many cells connect
 /// along the least-strength path and merge their systems (WO-0008 S1:
 /// East Africa–Red Sea–Gulf of Aden linkage).
@@ -228,7 +259,7 @@ const RIFT_ENTRY_PRUNE_MY: f32 = 400.0;
 /// freshly oceanized rift line (and pre-existing basins stay out of it).
 const CORRIDOR_MAX_AGE_MY: f32 = 60.0;
 /// A split component smaller than this stays with the parent (seam noise).
-const MIN_SPLIT_CELLS: u32 = 8;
+const MIN_SPLIT_CELLS: u32 = 24;
 /// Young-ocean boundary cells count as ridge drive even below the
 /// divergence threshold: a fresh corridor's ridge swell pushes its flanks
 /// apart before any divergence exists to classify (model §5: "their new
@@ -454,6 +485,45 @@ pub struct SimState {
     /// Cells reassigned by the connectivity backstop (cumulative). The §7
     /// invariant target: this fires only for advection seam noise.
     pub connectivity_reassigned: u64,
+
+    // ----- crust-volume ledger (WO-0008 S2) -----
+    // Continental crustal volume in exact quantized units of
+    // 0.01 km × cell area (all cells equal area up to the pentagon
+    // deficit, which the spec treats as noise). Each term is the phase's
+    // measured before/after delta, summed i64 in fixed order, so
+    // Δ(total) − Σ(terms) ≡ 0 by construction and the interesting gate is
+    // the collision path's internal exactness: volume removed from
+    // consumed margin cells reappears in the distributed zone, same step.
+    /// Net advection delta (consumption, accretion, gap ridges, repair).
+    pub vol_advect_q: i64,
+    /// Relic-basin closure conversions (WO-0008 S1 mechanic).
+    pub vol_closure_q: i64,
+    /// Arc growth and island conversions (creation: subduction magmatism).
+    pub vol_arc_q: i64,
+    /// Continental-collision distributed thickening — funded EXACTLY by
+    /// the underthrust budget (see below); no free creation since S2.
+    pub vol_collision_q: i64,
+    /// Rift thinning and oceanization (destruction).
+    pub vol_rift_q: i64,
+    /// Gravitational spreading (conservative up to f32 rounding).
+    pub vol_spread_q: i64,
+    /// Orogeny relaxation and related decay (pre-erosion sink).
+    pub vol_relax_q: i64,
+    /// Keyframe quantization rounding (booked by quantize_state).
+    pub vol_quantize_q: i64,
+    /// Underthrusting: continental volume removed at collision margins...
+    pub underthrust_removed_q: i64,
+    /// ...deposited into the pairs' distributed zones...
+    pub underthrust_deposited_q: i64,
+    /// ...or spilled when every zone cell sat at the thickness cap.
+    pub underthrust_spilled_q: i64,
+    /// Pre-existing oceanic columns incorporated when foreland shelf
+    /// cells convert under spilled load (ophiolite/foreland basement).
+    pub underthrust_incorporated_q: i64,
+    /// This step's per-pair underthrust budget (transient: filled by
+    /// advect, drained by apply_collisions the same step; never
+    /// keyframed).
+    underthrust_budget: Vec<(u32, u32, i64)>,
 }
 
 impl SimState {
@@ -518,6 +588,19 @@ impl SimState {
             rift_link_count: 0,
             microplate_count: 0,
             connectivity_reassigned: 0,
+            vol_advect_q: 0,
+            vol_closure_q: 0,
+            vol_arc_q: 0,
+            vol_collision_q: 0,
+            vol_rift_q: 0,
+            vol_spread_q: 0,
+            vol_relax_q: 0,
+            vol_quantize_q: 0,
+            underthrust_removed_q: 0,
+            underthrust_deposited_q: 0,
+            underthrust_spilled_q: 0,
+            underthrust_incorporated_q: 0,
+            underthrust_budget: Vec::new(),
         }
     }
 
@@ -533,6 +616,7 @@ impl SimState {
     /// probe, calibration harness, and gate tests can drive `step()` with
     /// the exact keyframe cadence `run_history` uses (idempotent, safe).
     pub fn quantize_state(&mut self) {
+        let v_before = self.cont_volume_q();
         // Must mirror Keyframe::encode's round-then-clamp exactly.
         let q_u16 = |v: f32| -> f32 { (v.round().clamp(0.0, 65_535.0) as u16) as f32 };
         // Suture cells mirror enc_suture/dec_suture: never-sutured stays the
@@ -556,6 +640,7 @@ impl SimState {
         for v in self.hotspot_cont_my.iter_mut() {
             *v = q_u16(*v);
         }
+        self.vol_quantize_q += self.cont_volume_q() - v_before;
     }
 
     /// Restore full state from a keyframe (plate-drag re-runs, branching).
@@ -650,24 +735,45 @@ impl SimState {
     /// last draw died with the random breakup); the seed/step parameters are
     /// kept for API stability and S3's calibration hooks.
     pub fn step(&mut self, _master_seed: u64, _step_idx: u32) {
+        // The crust-volume ledger (WO-0008 S2) measures each phase's
+        // continental-volume delta in exact quantized units: the terms
+        // telescope to the total change, so nothing is unexplained, and
+        // apply_collisions' delta must equal its underthrust deposits
+        // exactly (the conservation gate).
+        let v0 = self.cont_volume_q();
         self.motion_update();
         self.advect();
         self.enforce_connectivity();
+        let v1 = self.cont_volume_q();
+        self.vol_advect_q += v1 - v0;
         self.classify_boundaries();
         self.accumulate_boundary_stats();
         self.apply_arcs();
-        self.apply_collisions_and_rifts();
+        let v2 = self.cont_volume_q();
+        self.vol_arc_q += v2 - v1;
+        self.apply_collisions();
+        let v3 = self.cont_volume_q();
+        self.vol_collision_q += v3 - v2;
+        self.apply_spreading();
+        let v4 = self.cont_volume_q();
+        self.vol_spread_q += v4 - v3;
+        self.apply_rifts();
+        let v5 = self.cont_volume_q();
+        self.vol_rift_q += v5 - v4;
         // Sutures read this step's classification, so they run before the
         // split pass moves any cells: every ownership change after
         // enforce_connectivity is then connectivity-preserving by
         // construction (a weld is a contact union; split halves are built
         // connected).
         self.update_pair_timers_and_sutures();
+        let v6 = self.cont_volume_q();
+        self.vol_closure_q += v6 - v5;
         self.capture_fossilized_plates();
         self.check_rift_splits();
         self.grow_rifts();
         self.apply_hotspots();
         self.age_and_relax();
+        self.vol_relax_q += self.cont_volume_q() - v6;
         self.t_my += DT_MY;
     }
 
@@ -1307,14 +1413,17 @@ impl SimState {
             let mut losses: Vec<Vec<u32>> = vec![Vec::new(); np];
             for (c, o) in outs.iter().enumerate() {
                 let p = o.plate as usize;
-                // A gain is ocean turning into the plate's HARD continent —
-                // the block genuinely advancing. Accretion transfers
-                // (foreign continent docking onto p) are NOT gains: they
-                // move area between plates, so letting them offset p's own
-                // trailing losses would let jams keep grinding globally.
-                // Soft gains (thin arc fringe advancing) do not offset hard
-                // losses either — the ledger is hard-for-hard.
-                if o.ctype == 1 && prev_ctype[c] == 0 {
+                // A gain is any new continental cell under the plate's
+                // flag: ocean converting at the front, or a cross-plate
+                // acquisition (a jam win or docking terrane). Since
+                // WO-0008 S2 the jam grind is FUNDED — cross-plate
+                // consumption is captured as underthrust budget and
+                // deposited into the collision zone the same step — so
+                // counting acquisitions no longer lets collisions leak
+                // volume; excluding them (the S1 rule) made the guard
+                // revert trailing losses whose columns had ALSO been
+                // deposited, duplicating crust.
+                if o.ctype == 1 && (prev_ctype[c] == 0 || plate_id[c] != o.plate) {
                     gains[p] += 1;
                 } else if o.ctype == 0 && plate_id[c] == o.plate && prev_ctype[c] == 1 {
                     losses[p].push(c as u32);
@@ -1359,6 +1468,34 @@ impl SimState {
                 (1, 0) => self.cont_lost_to_consumption += 1,
                 (0, 1) => self.cont_gained_by_advection += 1,
                 _ => {}
+            }
+            // Underthrusting capture (WO-0008 S2): continental volume this
+            // cell loses to ANOTHER plate at a tracked continent-continent
+            // contact goes into that pair's budget — apply_collisions
+            // deposits it in the pair's distributed zone this same step
+            // (India's crust does not vanish under Tibet; it thickens it).
+            if self.crust_type[c] == 1 && o.plate != self.plate_id[c] {
+                // The removed crust is the loser's WHOLE column: the
+                // winner's incoming content is a conserved shift of its
+                // own crust, while the loser's column goes down as the
+                // underthrust slab (all of India's crust feeds Tibet,
+                // not just the thickness difference).
+                let prev_q = (self.thickness[c] * 100.0).round() as i64;
+                {
+                    let (a, b) = (self.plate_id[c].min(o.plate), self.plate_id[c].max(o.plate));
+                    if prev_q > 0 && self.collisions.iter().any(|t| t.a == a && t.b == b) {
+                        let lost = prev_q;
+                        self.underthrust_removed_q += lost;
+                        match self
+                            .underthrust_budget
+                            .iter_mut()
+                            .find(|e| e.0 == a && e.1 == b)
+                        {
+                            Some(e) => e.2 += lost,
+                            None => self.underthrust_budget.push((a, b, lost)),
+                        }
+                    }
+                }
             }
             self.plate_id[c] = o.plate;
             self.crust_type[c] = o.ctype;
@@ -1873,18 +2010,70 @@ impl SimState {
                 }
             }
         }
+        // Discrete island-arc sites (WO-0008 S2): over an OCEANIC
+        // overrider, edifices grow only at sites chosen as a greedy
+        // maximal independent set in cell-id order — no two sites
+        // adjacent, so islands surface one by one over tens of My and
+        // stay one cell wide (Marianas, Aleutians); between sites the
+        // band gains ARC_OFFSITE_FRACTION of the site rate and mostly
+        // stays submarine. A CONTINENTAL overrider keeps the continuous
+        // margin arc — that is the Andes, and it is correct.
+        let mut is_site = vec![false; self.bfs_depth.len()];
+        for c in 0..self.bfs_depth.len() {
+            let d = self.bfs_depth[c];
+            if d < ring_lo || d > ring_hi || self.crust_type[c] != 0 {
+                continue;
+            }
+            // A site needs ARC_SITE_RINGS of clearance from earlier
+            // sites and from young islands.
+            let mut blocked = false;
+            let mut frontier: Vec<u32> = vec![c as u32];
+            let mut seen: Vec<u32> = vec![c as u32];
+            'rings: for _ in 0..ARC_SITE_RINGS {
+                let mut next: Vec<u32> = Vec::new();
+                for &f in &frontier {
+                    for &nb in self.grid.neighbors_of(f) {
+                        let nbu = nb as usize;
+                        if seen.contains(&nb) {
+                            continue;
+                        }
+                        seen.push(nb);
+                        next.push(nb);
+                        if (nbu < c && is_site[nbu])
+                            || (self.crust_type[nbu] == 1
+                                && self.crust_age[nbu] < ARC_SITE_ISLAND_BLOCK_MY)
+                        {
+                            blocked = true;
+                            break 'rings;
+                        }
+                    }
+                }
+                frontier = next;
+            }
+            is_site[c] = !blocked;
+        }
         for (c, &d) in self.bfs_depth.iter().enumerate() {
             if d >= ring_lo && d <= ring_hi {
                 self.features[c] |= F_ARC;
-                let rate = if self.crust_type[c] == 0 {
+                let rate = if self.crust_type[c] != 0 {
+                    ARC_GROWTH_CONT_KM_MY
+                } else if is_site[c] {
                     ARC_GROWTH_OCEAN_KM_MY
                 } else {
-                    ARC_GROWTH_CONT_KM_MY
+                    ARC_GROWTH_OCEAN_KM_MY * ARC_OFFSITE_FRACTION
                 };
-                let t = &mut self.thickness[c];
-                *t = (*t + rate * DT_MY).min(THICKNESS_CAP_KM);
+                let t = (self.thickness[c] + rate * DT_MY).min(THICKNESS_CAP_KM);
+                self.thickness[c] = t;
                 self.orogeny_age[c] = 0.0;
-                if self.crust_type[c] == 0 && *t >= ISLAND_ARC_CONVERT_KM {
+                // Conversion is also island-blocked: an edifice beside a
+                // young island stays a submarine seamount (the wall
+                // never assembles); it converts once the neighbor island
+                // has matured.
+                let beside_young_island = self.grid.neighbors_of(c as u32).iter().any(|&nb| {
+                    let nbu = nb as usize;
+                    self.crust_type[nbu] == 1 && self.crust_age[nbu] < ARC_SITE_ISLAND_BLOCK_MY
+                });
+                if self.crust_type[c] == 0 && t >= ISLAND_ARC_CONVERT_KM && !beside_young_island {
                     self.crust_type[c] = 1; // island arc: young continental crust
                     self.crust_age[c] = 0.0;
                     self.cont_gained_by_arc += 1;
@@ -1893,27 +2082,308 @@ impl SimState {
         }
     }
 
-    /// Continental collision thickening and rift thinning/oceanization.
-    fn apply_collisions_and_rifts(&mut self) {
+    /// Total continental crustal volume in exact quantized units of
+    /// 0.01 km × cell (serial, id order): the crust-volume ledger's
+    /// measuring stick (WO-0008 S2).
+    fn cont_volume_q(&self) -> i64 {
+        let mut v = 0i64;
+        for c in 0..self.crust_type.len() {
+            if self.crust_type[c] == 1 {
+                v += (self.thickness[c] * 100.0).round() as i64;
+            }
+        }
+        v
+    }
+
+    /// Distributed continental-collision thickening (WO-0008 S2). The old
+    /// one-cell Andes wall is gone: each colliding pair's UNDERTHRUST
+    /// BUDGET — continental volume its collision margin consumed this
+    /// step, captured by advect — is deposited across a deformation zone
+    /// walked inboard from every contact cell: zone depth
+    /// W = W_BASE_KM / strength (3–8 cells for weak crust at L6), the
+    /// walk stopping where strength reaches CRATON_STOP (deformation dies
+    /// at cratons — Tarim, Sichuan), deposits linearly tapered from the
+    /// front. The collision path creates NO volume: every 0.01 km·cell
+    /// removed at the margin reappears in the zone, exactly, same step —
+    /// India underthrusting Tibet doubles crust inboard. Cells at the
+    /// thickness cap absorb nothing; budget nothing can absorb is booked
+    /// as spilled. Serial and id-ordered throughout.
+    fn apply_collisions(&mut self) {
         let n = self.plate_id.len();
+        // Contact cells (both sides) per colliding pair, id order, plus
+        // orogeny-age resets: an actively converging contact keeps its
+        // orogen young whether or not budget arrives this step.
+        let mut pair_contacts: Vec<(u32, u32, Vec<u32>)> = Vec::new();
+        let mut front: Vec<u32> = Vec::new();
         for c in 0..n {
-            let conv = self.class[c].conv_cont_cmyr;
+            let cl = &self.class[c];
             let collided_here = self.outs.get(c).is_some_and(|o| o.collided != NONE);
-            if self.crust_type[c] == 1 && (conv > 0.0 || collided_here) {
-                let rate_conv = if conv > 0.0 { conv } else { CLASSIFY_CMYR };
-                let dt_thick = COLLISION_THICKEN * rate_conv * DT_MY;
-                self.thickness[c] = (self.thickness[c] + dt_thick).min(THICKNESS_CAP_KM);
+            if self.crust_type[c] != 1 || (cl.contact_partner == NONE && !collided_here) {
+                continue;
+            }
+            if cl.conv_cont_cmyr > 0.0 || collided_here {
+                // Step-7 guard: continent-collision thickening must never
+                // sit on an ocean-ocean contact — classify only sets
+                // contact_partner on continent-continent edges and the
+                // filter above requires this cell continental.
+                debug_assert!(
+                    self.crust_type[c] == 1,
+                    "collision thickening reached oceanic crust at cell {c}"
+                );
                 self.orogeny_age[c] = 0.0;
-                for &nb in self.grid.neighbors_of(c as u32) {
-                    let nbu = nb as usize;
-                    if self.plate_id[nbu] == self.plate_id[c] && self.crust_type[nbu] == 1 {
-                        self.thickness[nbu] =
-                            (self.thickness[nbu] + 0.5 * dt_thick).min(THICKNESS_CAP_KM);
-                        self.orogeny_age[nbu] = 0.0;
-                    }
+                front.push(c as u32);
+            }
+            let partner = if cl.contact_partner != NONE {
+                cl.contact_partner
+            } else {
+                self.outs[c].collided
+            };
+            let p = self.plate_id[c];
+            let (a, b) = (p.min(partner), p.max(partner));
+            match pair_contacts.iter_mut().find(|e| e.0 == a && e.1 == b) {
+                Some(e) => e.2.push(c as u32),
+                None => pair_contacts.push((a, b, vec![c as u32])),
+            }
+        }
+        let budgets = std::mem::take(&mut self.underthrust_budget);
+        if budgets.iter().all(|&(_, _, q)| q <= 0) {
+            return;
+        }
+        // Depth-from-front over same-plate continental crust, for the
+        // inboard walk.
+        let mut depth = vec![u16::MAX; n];
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for &c in &front {
+            depth[c as usize] = 0;
+            queue.push_back(c);
+        }
+        while let Some(c) = queue.pop_front() {
+            let dc = depth[c as usize];
+            if dc >= W_MAX_CELLS as u16 {
+                continue;
+            }
+            let p = self.plate_id[c as usize];
+            for &nb in self.grid.neighbors_of(c) {
+                let nbu = nb as usize;
+                if depth[nbu] == u16::MAX && self.plate_id[nbu] == p && self.crust_type[nbu] == 1 {
+                    depth[nbu] = dc + 1;
+                    queue.push_back(nb);
                 }
             }
         }
+        let cap_q = (THICKNESS_CAP_KM * 100.0).round() as i64;
+        for (a, b, budget_q) in budgets {
+            if budget_q <= 0 {
+                continue;
+            }
+            let Some(contacts) = pair_contacts
+                .iter()
+                .find(|e| e.0 == a && e.1 == b)
+                .map(|e| e.2.clone())
+            else {
+                // The pair lost its contact this very step: nothing to
+                // deposit into — the volume spills (rare, reported).
+                self.underthrust_spilled_q += budget_q;
+                continue;
+            };
+            // The pair's zone: per contact cell, walk inboard up to W
+            // cells (strength-limited, craton-stopped) with linearly
+            // tapered weights (W' − i); shared cells add weight.
+            let mut zone: Vec<(u32, u32)> = Vec::new(); // (cell, weight)
+            for &c0 in &contacts {
+                let w_cells = ((W_BASE_KM / (self.strength(c0 as usize) * self.cell_spacing_km))
+                    .round() as u32)
+                    .clamp(1, W_MAX_CELLS);
+                let mut cur = c0;
+                let mut walk: Vec<u32> = vec![c0];
+                for _ in 1..w_cells {
+                    let mut nbs: Vec<u32> = self.grid.neighbors_of(cur).to_vec();
+                    nbs.sort_unstable();
+                    let mut best: Option<(u32, u16)> = None;
+                    for &nb in &nbs {
+                        let nbu = nb as usize;
+                        if self.plate_id[nbu] != self.plate_id[c0 as usize]
+                            || self.crust_type[nbu] != 1
+                            || depth[nbu] == u16::MAX
+                            || depth[nbu] <= depth[cur as usize]
+                            || self.strength(nbu) >= CRATON_STOP
+                        {
+                            continue;
+                        }
+                        if best.is_none_or(|(_, bd)| depth[nbu] > bd) {
+                            best = Some((nb, depth[nbu]));
+                        }
+                    }
+                    let Some((nb, _)) = best else { break };
+                    walk.push(nb);
+                    cur = nb;
+                }
+                let w_len = walk.len() as u32;
+                for (i, &c) in walk.iter().enumerate() {
+                    let weight = w_len - i as u32; // linear taper
+                    match zone.iter_mut().find(|e| e.0 == c) {
+                        Some(e) => e.1 += weight,
+                        None => zone.push((c, weight)),
+                    }
+                }
+            }
+            zone.sort_unstable();
+            // Half the budget loads the pair's foreland shelf directly —
+            // a collision builds its plateau AND its foreland fill
+            // together, and the foreland conversions return the AREA the
+            // margin consumed (without this the area budget bled 20-40%
+            // over 2 Gy while volume sat parked in the zone).
+            let mut remaining = budget_q / 3;
+            let mut foreland_budget = budget_q - budget_q / 3;
+            while remaining > 0 {
+                let mut weight_sum = 0i64;
+                for &(c, w) in &zone {
+                    if ((self.thickness[c as usize] * 100.0).round() as i64) < cap_q {
+                        weight_sum += w as i64;
+                    }
+                }
+                if weight_sum == 0 {
+                    break;
+                }
+                let mut deposited_any = false;
+                for &(c, w) in &zone {
+                    if remaining <= 0 {
+                        break;
+                    }
+                    let cu = c as usize;
+                    let before = (self.thickness[cu] * 100.0).round() as i64;
+                    let room = cap_q - before;
+                    if room <= 0 {
+                        continue;
+                    }
+                    let share = (remaining * w as i64 / weight_sum)
+                        .clamp(1, room)
+                        .min(remaining);
+                    self.thickness[cu] = ((before + share) as f32) * 0.01;
+                    let after = (self.thickness[cu] * 100.0).round() as i64;
+                    let got = after - before;
+                    self.orogeny_age[cu] = 0.0;
+                    remaining -= got;
+                    self.underthrust_deposited_q += got;
+                    if got > 0 {
+                        deposited_any = true;
+                    }
+                }
+                if !deposited_any {
+                    break;
+                }
+            }
+            foreland_budget += remaining.max(0);
+            let mut remaining = foreland_budget;
+            if remaining > 0 {
+                // Foreland loading: oceanic same-plate cells adjacent to
+                // the zone (id order), converted one full column at a
+                // time.
+                let mut shelf: Vec<u32> = Vec::new();
+                for &(zc, _) in &zone {
+                    for &nb in self.grid.neighbors_of(zc) {
+                        let nbu = nb as usize;
+                        if self.crust_type[nbu] == 0
+                            && self.plate_id[nbu] == self.plate_id[zc as usize]
+                            && !shelf.contains(&nb)
+                        {
+                            shelf.push(nb);
+                        }
+                    }
+                }
+                shelf.sort_unstable();
+                let cont_q = (SUBDUCTIBLE_CONT_KM * 100.0).round() as i64;
+                for &sc in &shelf {
+                    let cu = sc as usize;
+                    let before = (self.thickness[cu] * 100.0).round() as i64;
+                    let need = cont_q - before;
+                    if need <= 0 || remaining < need {
+                        continue;
+                    }
+                    // One full column at a time: the cell converts within
+                    // the same phase, so the ledger stays exact — the
+                    // spilled load supplies `need`, the cell's own oceanic
+                    // column (`before`) is incorporated basement.
+                    self.thickness[cu] = (cont_q as f32) * 0.01;
+                    self.crust_type[cu] = 1;
+                    // The foreland is consolidated margin lithosphere
+                    // under fresh load: platform-grade strength, never
+                    // juvenile — age-0 (and young-shelf) forelands turned
+                    // into weak-line attractors and the split rate
+                    // doubled.
+                    self.crust_age[cu] = self.crust_age[cu].max(300.0);
+                    self.orogeny_age[cu] = self.crust_age[cu];
+                    remaining -= need;
+                    self.underthrust_deposited_q += need;
+                    self.underthrust_incorporated_q += before;
+                    if remaining <= 0 {
+                        break;
+                    }
+                }
+                if remaining > 0 {
+                    self.underthrust_spilled_q += remaining;
+                }
+            }
+        }
+    }
+
+    /// Gravitational spreading (WO-0008 S2): one diffusion pass per step —
+    /// each continental cell above SPREAD_THRESHOLD_KM moves excess
+    /// thickness toward its thinnest same-plate continental neighbor at
+    /// SPREAD_KM_MY per km of excess (downhill only, never past the
+    /// midpoint, receiver honors the cap). Lower-crustal channel flow:
+    /// walls become plateaus (Tibet). Serial, id-ordered, in place —
+    /// deterministic.
+    fn apply_spreading(&mut self) {
+        let n = self.plate_id.len();
+        for c in 0..n {
+            if self.crust_type[c] != 1 || self.thickness[c] <= SPREAD_THRESHOLD_KM {
+                continue;
+            }
+            // The thinnest same-plate neighbor, continental OR oceanic:
+            // collapse also spreads crust over the plate's own foreland
+            // shelf (Tibet extrudes; orogens shed nappes onto their
+            // margins) — the reverse of the collision's area→thickness
+            // trade, and what keeps continental AREA in balance while
+            // funded underthrusting consumes it at the fronts.
+            let mut nbs: Vec<u32> = self.grid.neighbors_of(c as u32).to_vec();
+            nbs.sort_unstable();
+            let mut best: Option<(usize, f32)> = None;
+            for &nb in &nbs {
+                let nbu = nb as usize;
+                if self.plate_id[nbu] != self.plate_id[c] {
+                    continue;
+                }
+                if best.is_none_or(|(_, bt)| self.thickness[nbu] < bt) {
+                    best = Some((nbu, self.thickness[nbu]));
+                }
+            }
+            let Some((nbu, nb_t)) = best else { continue };
+            if nb_t >= self.thickness[c] {
+                continue;
+            }
+            let excess = self.thickness[c] - SPREAD_THRESHOLD_KM;
+            let flow = (SPREAD_KM_MY * excess * DT_MY)
+                .min(0.5 * (self.thickness[c] - nb_t))
+                .min(THICKNESS_CAP_KM - nb_t)
+                .max(0.0);
+            self.thickness[c] -= flow;
+            self.thickness[nbu] += flow;
+            // A loaded shelf cell becomes continent once it carries a
+            // full continental column — old margin lithosphere under
+            // fresh load, so it keeps platform-grade strength.
+            if self.crust_type[nbu] == 0 && self.thickness[nbu] >= SUBDUCTIBLE_CONT_KM {
+                self.crust_type[nbu] = 1;
+                self.crust_age[nbu] = self.crust_age[nbu].max(300.0);
+                self.orogeny_age[nbu] = self.crust_age[nbu];
+            }
+        }
+    }
+
+    /// Rift thinning and oceanization (the rift half of the former
+    /// apply_collisions_and_rifts).
+    fn apply_rifts(&mut self) {
+        let n = self.plate_id.len();
         // Rifting with hysteresis below onset: sustained continent-continent
         // divergence accumulates rift_age; anything else decays it at 2× so
         // classification noise near transforms cannot mature a rift. PAST
@@ -3618,6 +4088,229 @@ mod tests {
         // suture_at_my = fire time.
         let scarred = s.suture_at_my.iter().filter(|&&v| v == *t).count();
         assert!(scarred > 10, "suture scar missing ({scarred} cells)");
+    }
+
+    /// A two-plate jam world for the WO-0008 S2 collision tests: plate 1
+    /// (x > 0) converges on stationary plate 0 about the +y pole, so the
+    /// northern half of their shared meridian collides.
+    fn jam_world(speed_0: f32, speed_1: f32) -> SimState {
+        let grid = Arc::new(Grid::build(3));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        // Both plates converge: a stationary plate never covers foreign
+        // cells, so a one-sided push consumes nothing — the jam simply
+        // denies the mover's advance.
+        s.plates.push(test_plate(0, speed_0));
+        s.plates[0].pole = [0.0, -1.0, 0.0];
+        s.plates.push(test_plate(1, speed_1));
+        s.plates[1].pole = [0.0, 1.0, 0.0];
+        for c in 0..n {
+            s.plate_id[c] = u32::from(grid.positions[c][0] > 0.0);
+            s.crust_type[c] = 1;
+            s.thickness[c] = 35.0;
+            s.crust_age[c] = 300.0;
+            s.orogeny_age[c] = 300.0;
+        }
+        s.t_my = 500.0;
+        s.init_stats();
+        s
+    }
+
+    /// WO-0008 S2: the distributed deformation zone stops at a synthetic
+    /// craton, and the underthrust ledger balances exactly while the jam
+    /// grinds. Sub-steps are driven manually with the continental census
+    /// pinned below the amendment-B threshold each iteration (this test
+    /// isolates the craton/zone mechanics from mantle insulation) and
+    /// without relaxation, so the craton's thickness must be
+    /// bit-identical, not just close.
+    #[test]
+    fn distributed_zone_stops_at_craton_and_ledger_balances() {
+        let mut s = jam_world(1.0, 1.2);
+        let n = s.grid.cell_count() as usize;
+        let mut craton: Vec<usize> = Vec::new();
+        for c in 0..n {
+            let x = s.grid.positions[c][0];
+            if (-0.45..-0.25).contains(&x) {
+                s.crust_age[c] = 2500.0;
+                s.orogeny_age[c] = 2500.0;
+                s.thickness[c] = 43.0;
+                craton.push(c);
+            }
+        }
+        s.t_my = 3000.0;
+        s.init_stats();
+        s.cont_cells_per_plate = vec![10, 10];
+        s.cont_total_cells = 100;
+        assert!(s.strength(craton[0]) >= CRATON_STOP);
+        let craton_before: Vec<f32> = craton.iter().map(|&c| s.thickness[c]).collect();
+        let total_before: f32 = s.thickness.iter().sum();
+        let mut collision_sum = 0i64;
+        for _ in 0..100 {
+            s.motion_update();
+            s.advect();
+            s.enforce_connectivity();
+            s.classify_boundaries();
+            s.accumulate_boundary_stats();
+            s.cont_cells_per_plate = vec![10, 10];
+            s.cont_total_cells = 100;
+            let vb = s.cont_volume_q();
+            s.apply_collisions();
+            collision_sum += s.cont_volume_q() - vb;
+            s.update_pair_timers_and_sutures();
+            s.t_my += DT_MY;
+        }
+        // The ledger's exactness: what the margins lost, the zones got.
+        assert!(s.underthrust_removed_q > 0, "the jam must consume margin");
+        assert_eq!(
+            s.underthrust_removed_q,
+            s.underthrust_deposited_q + s.underthrust_spilled_q
+        );
+        assert_eq!(
+            collision_sum,
+            s.underthrust_deposited_q + s.underthrust_incorporated_q
+        );
+        // The step-6 conservation property is the exact continental
+        // ledger asserted above (phase delta ≡ deposits + incorporated,
+        // removed ≡ deposited + spilled); the all-cells thickness total
+        // additionally must not run away (flip chains end in fresh
+        // ridge-floor cells, so it drifts slightly rather than balancing
+        // to zero).
+        let total_after: f32 = s.thickness.iter().sum();
+        assert!(
+            (total_after - total_before).abs() / total_before < 0.03,
+            "total thickness ran away: {total_before} -> {total_after}"
+        );
+        // Deposits never land on the craton. The craton CONTENT advects
+        // with its plate (cell ids are grid-fixed), so find it by its
+        // marker age: every cell carrying craton crust still reads its
+        // setup thickness exactly, while somewhere off-craton the zone
+        // visibly thickened.
+        let mut craton_cells = 0;
+        let mut zone_thickened = false;
+        for c in 0..n {
+            if s.crust_type[c] != 1 {
+                continue;
+            }
+            if s.orogeny_age[c] >= 2400.0 {
+                craton_cells += 1;
+                assert_eq!(s.thickness[c], 43.0, "craton content at {c} deformed");
+            } else if s.thickness[c] > 36.5 {
+                zone_thickened = true;
+            }
+        }
+        assert!(craton_cells > 10, "craton content lost ({craton_cells})");
+        assert!(zone_thickened, "no deformation zone thickened");
+        let _ = craton_before;
+    }
+
+    /// WO-0008 S2: one gravitational-spreading pass conserves total
+    /// thickness and lowers the peak.
+    #[test]
+    fn spreading_conserves_thickness_and_lowers_peaks() {
+        let grid = Arc::new(Grid::build(3));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.0));
+        for c in 0..n {
+            s.plate_id[c] = 0;
+            s.crust_type[c] = 1;
+            s.thickness[c] = 35.0;
+            s.crust_age[c] = 500.0;
+            s.orogeny_age[c] = 500.0;
+        }
+        s.thickness[100] = 68.0; // a Tibetan wall cell
+        s.init_stats();
+        let before: f64 = s.thickness.iter().map(|&t| t as f64).sum();
+        s.apply_spreading();
+        let after: f64 = s.thickness.iter().map(|&t| t as f64).sum();
+        assert!(
+            (before - after).abs() < 1e-3,
+            "spreading must conserve thickness: {before} -> {after}"
+        );
+        assert!(s.thickness[100] < 68.0, "the wall must spread");
+        let moved: f32 = s
+            .grid
+            .neighbors_of(100)
+            .iter()
+            .map(|&nb| s.thickness[nb as usize] - 35.0)
+            .sum();
+        assert!(moved > 0.0, "a neighbor must have received the excess");
+    }
+
+    /// WO-0008 S2: an ocean-ocean convergence band produces discrete
+    /// islands, not a wall — land fraction of the arc band under 30% at
+    /// 50 My, and no two converted cells adjacent (the overriding plate
+    /// is stationary here, so no advection smearing muddies the check).
+    #[test]
+    fn ocean_ocean_band_produces_islands_not_a_wall() {
+        let grid = Arc::new(Grid::build(3));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.0));
+        // Fast enough to commit every couple of steps at L3, so the arc
+        // band grows at its real cadence; an attached slab sustains the
+        // convergence against the relaxation.
+        s.plates.push(test_plate(1, 2.0));
+        s.plates[1].pole = [0.0, 1.0, 0.0];
+        s.plates[1].slab.push(SlabSegment {
+            area_cells: 800,
+            age_at_subduction_my: 150.0,
+            subducted_at_my: 495.0,
+            attached: true,
+        });
+        for c in 0..n {
+            let p1 = grid.positions[c][0] > 0.0;
+            s.plate_id[c] = u32::from(p1);
+            s.crust_type[c] = 0;
+            s.thickness[c] = OCEAN_THICKNESS_KM;
+            // Plate 1 is older (denser): it subducts under plate 0.
+            s.crust_age[c] = if p1 { 150.0 } else { 40.0 };
+        }
+        s.t_my = 500.0;
+        s.init_stats();
+        for i in 0..25 {
+            s.step(0, i); // 50 My
+        }
+        // The band: plate-0 crust the arc actually grew (ocean above the
+        // ridge-floor thickness, or converted young continent) — robust
+        // to whether the final step happened to be a commit step.
+        let band: Vec<usize> = (0..n)
+            .filter(|&c| {
+                s.plate_id[c] == 0
+                    && ((s.crust_type[c] == 0 && s.thickness[c] > OCEAN_THICKNESS_KM + 1.0)
+                        || (s.crust_type[c] == 1 && s.crust_age[c] < 60.0))
+            })
+            .collect();
+        assert!(
+            band.len() >= 8,
+            "the trench must have grown an arc band ({} cells)",
+            band.len()
+        );
+        let land: Vec<usize> = band
+            .iter()
+            .copied()
+            .filter(|&c| s.crust_type[c] == 1)
+            .collect();
+        assert!(
+            !land.is_empty(),
+            "islands must have emerged by 50 My (sites convert in ~22 My)"
+        );
+        let frac = land.len() as f32 / band.len() as f32;
+        assert!(
+            frac < 0.3,
+            "band land fraction {frac} must stay under 30% at 50 My"
+        );
+        for &c in &land {
+            let wall = s
+                .grid
+                .neighbors_of(c as u32)
+                .iter()
+                .any(|&nb| land.contains(&(nb as usize)));
+            assert!(
+                !wall,
+                "adjacent converted cells at {c}: a wall, not islands"
+            );
+        }
     }
 
     /// Rift linkage (WO-0008 S1): two rift systems on one plate whose

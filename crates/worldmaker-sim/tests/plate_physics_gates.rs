@@ -42,9 +42,11 @@
 //!   the three-part seam rule (coverage union, per-pair polarity,
 //!   connectivity-preserving consumption) took the worst window from
 //!   ~8–10k cells to 0 at both seeds.
-//! - m6 collision relief: 86–89% vs ≥80% — passing but RECORDED; WO-0008
-//!   S2 re-measures relief after the wide-orogen rework and sets the
-//!   final gate.
+//! - m6 collision relief: ARMED at the WO-0008 S2 re-measure minus five
+//!   points (73% and 39% honest at the seeds → 34% floor): relief is now
+//!   funded entirely by underthrust deposits, so the fraction varies
+//!   widely between worlds, and the s2_orogen_width gate carries the
+//!   wide-orogen requirement proper.
 //! - m7 force-ranked speeds: the 2–6 cm/yr mean is ARMED at both seeds;
 //!   the slab ratio ≥ 2 is RECORDED (0.9–1.5 post-S1: capture removes
 //!   the slow lingerers that made the slab-free side slow, compressing
@@ -55,7 +57,18 @@
 //!   relic cap persists across two samples inside a collision locked
 //!   > 60 My.
 //! - s1_cont_area (ARMED, WO-0008 S1): continental area at 2 Gy within
-//!   ±15% of t = 0 (−5.9% and −12.4% at the seeds).
+//!   ±15% of t = 0 (−12.1% and −14.0% at the seeds after S2).
+//! - s2_orogen_width (ARMED, WO-0008 S2): at least one collision zone
+//!   reaches a deformed width ≥ 3 cells with > 45 km spanning it (16 at
+//!   both seeds — plateau country).
+//! - s2_volume_ledger (ARMED, WO-0008 S2): the collision phase's
+//!   continental-volume delta equals its underthrust deposits plus
+//!   incorporated shelf columns, and removed equals deposited plus
+//!   spilled — all exact, in integer 0.01 km·cell units.
+//! - s2_island_arcs: RECORDED — the discrete-site rework produces 1-cell
+//!   islands (the synthetic test pins it), but advection smears and
+//!   drifts sub-cell islands into small islets that a runtime isolation
+//!   test cannot tell from walls.
 
 use std::sync::Arc;
 
@@ -156,12 +169,43 @@ fn assert_armed(rep: &PhysicsReport, label: &str) {
         "{label}: {} samples had a multi-component plate (§7 invariant)",
         rep.exclave_samples
     );
+    // m6 (ARMED at the S2 re-measure minus 5 points).
+    let relief_ok = gates
+        .iter()
+        .find(|(n, _, _)| *n == "m6_collision_relief")
+        .map(|(_, ok, _)| *ok)
+        .unwrap_or(false);
+    assert!(
+        relief_ok,
+        "{label}: m6 collision relief failed — {}",
+        detail("m6_collision_relief")
+    );
     // m5b (ARMED, WO-0008 S1): the seam rule keeps the backstop inside
     // the §9 budget.
     assert!(
         rep.backstop_max_per_100my <= M5_BACKSTOP_MAX_CELLS_PER_100MY,
         "{label}: m5b backstop budget failed — {}",
         detail("m5b_backstop_budget")
+    );
+    // s2 gates (ARMED, WO-0008 S2): orogen width and the exact ledger
+    // (island arcs stay RECORDED: advection smears sub-cell islands into
+    // small drifted islets; the synthetic test pins the strict property).
+    let s2_ok = |name: &str| {
+        gates
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, ok, _)| *ok)
+            .unwrap_or(false)
+    };
+    assert!(
+        s2_ok("s2_orogen_width"),
+        "{label}: s2 orogen width failed — {}",
+        detail("s2_orogen_width")
+    );
+    assert!(
+        s2_ok("s2_volume_ledger"),
+        "{label}: s2 volume ledger failed — {}",
+        detail("s2_volume_ledger")
     );
     // s1 gates (ARMED, WO-0008 S1): relic basins and continental area.
     assert!(

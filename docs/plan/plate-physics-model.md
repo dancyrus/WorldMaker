@@ -414,6 +414,45 @@ mechanism grounded the same way as the rest of this model:
   vanishing into the grid. The convergence that "should" have shortened
   it becomes S2's crust-volume ledger.
 
+**S2 close (2026-08-28).** The S2 items landed as follows:
+
+- **Distributed shortening + underthrusting, volume-exact.** Continental
+  collision thickening no longer creates volume (COLLISION_THICKEN is
+  gone). Each colliding pair's margin consumption is captured in advect
+  as an underthrust budget (the loser's whole column), and deposited the
+  same step across a deformation zone walked inboard from every contact
+  cell — depth `W = 260 km / strength`, clamped 1–8 cells, the walk
+  stopping at cratonic strength (Tarim/Sichuan) — with linear taper, in
+  exact integer 0.01 km·cell units. One third of each budget thickens the
+  zone; two thirds load the pair's foreland shelf (oceanic same-plate
+  cells adjacent to the zone) one full continental column at a time,
+  converting them to consolidated platform-grade continent. Foreland
+  loading is what returns the AREA the margin consumed: without it, the
+  funded jams bled 20–45% of continental area over 2 Gy while volume sat
+  parked in the zones.
+- **Gravitational spreading.** One diffusion pass per step above 60 km
+  toward the thinnest same-plate neighbor — continental or shelf, so
+  collapse also spreads crust over the foreland (Tibet extrudes).
+- **Discrete island arcs.** Over an oceanic overrider, edifices grow at
+  discrete sites (greedy independent set in cell-id order with 3 rings of
+  clearance from earlier sites and young islands; between sites 20% of
+  the site rate; conversion also island-blocked). The order's 2-cell site
+  spacing and its <30% band-land target are mutually inconsistent on a
+  one-ring band (2-spacing → 50% land); the spacing was widened to keep
+  the measurable target. Continental margins stay Andes-continuous.
+- **Crust-volume ledger.** Continental volume is measured per phase in
+  exact quantized units; every term is a phase delta so nothing is
+  unexplained, and the collision path's internal identity — phase delta ≡
+  deposits + incorporated shelf columns, removed ≡ deposited + spilled —
+  is gated exact and holds bit-for-bit over 2 Gy at both seeds.
+- **Re-calibration.** C_CONTACT 450 → 900 (thin wide orogens weakened
+  contact resistance and the world over-sped), rift refractory 240 My,
+  MIN_SPLIT_CELLS 8 → 24 (sub-plate split children churned the census),
+  W_BASE 260 km. §9 metric 6 re-measured honestly at 73% / 39% (relief is
+  now entirely underthrust-funded) and gated at 34% per the S2 order; the
+  wide-orogen requirement proper lives in the S2 orogen-width gate
+  (≥ 3 cells above 45 km — measured 16 at both seeds).
+
 **Marked S2** (session 2 of WO-0008): distributed orogen width
 (`W = W_BASE / strength`, craton-stopped), gravitational spreading,
 underthrusting transfer, and discrete island-arc sites replacing the

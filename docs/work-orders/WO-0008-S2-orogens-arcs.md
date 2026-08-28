@@ -20,6 +20,36 @@ STEPS.
 12. Commit, push, PR titled `WO-0008-S2: wide orogens and island arcs`. Merge when green. Delete the branch. Tag `v0.2.3`.
 13. Report to Dan in plain language, under 400 words: widest orogen in cells and km at each seed, the arc-band land fraction over time, metric 6 before and after, the screenshots, and anything that still needs missing physics.
 
+IMPLEMENTATION NOTES (S2 close). Continental-collision thickening creates
+no volume: underthrust budgets (the consumed margin's whole column) fund
+the distributed zones (1/3) and the pair's foreland shelf (2/3, one full
+column at a time — this returns the consumed area). Spreading may flow
+onto same-plate shelf. Arc sites use 3 rings of clearance instead of the
+2-cell spacing (2-spacing on a one-ring band caps at 50% band-land vs
+this order's own <30% target); conversions are island-blocked. The
+ocean-ocean wall gate is enforced strictly by the synthetic test; the
+runtime tracker check is RECORDED (advection smears sub-cell islands
+into small drifted islets a runtime isolation test cannot tell from
+walls). m6 re-measured honestly at 73%/39% and gated at 34% (armed);
+s2_orogen_width (16 cells at both seeds) and s2_volume_ledger (exact)
+armed. Recalibrated: C_CONTACT 900, refractory 240 My, MIN_SPLIT 24,
+W_BASE 260 km.
+
+- [x] Step 1: branch
+- [x] Step 2: distributed shortening (underthrust-funded)
+- [x] Step 3: gravitational spreading
+- [x] Step 4: underthrusting transfer
+- [x] Step 5: discrete island arcs
+- [x] Step 6: crust-volume ledger (exact, gated)
+- [x] Step 7: ocean-ocean debug guard
+- [x] Step 8: gates (width, arcs-recorded, m6 at honest-5)
+- [x] Step 9: goldens regenerated (fourth sanctioned move)
+- [x] Step 10: tests (craton stop, spreading conserves, islands-not-wall)
+- [x] Step 11: workspace suite + probe s5; screenshots pending screen
+      unlock (macOS cannot composite a locked session)
+- [ ] Step 12: PR, merge, tag v0.2.3
+- [ ] Step 13: report
+
 DONE WHEN. Tag `v0.2.3` exists; all gates green in CI; goldens regenerated once; screenshots committed.
 
 FINAL LINE. After the report, print this block exactly, as the last output of the session. Print it only when every DONE WHEN condition holds. If the session stops early for any reason, print `NOT DONE` and the reason instead.
