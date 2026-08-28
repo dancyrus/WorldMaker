@@ -113,7 +113,10 @@ Until it returns, this MacBook Air (M1, 16 GB) is the primary dev machine:
   so closing the Terminal window doesn't kill it.
 - Scripted screenshot/perf runs hang at their first stage if the Mac's
   display is asleep (the window never gets redraw events): wrap them in
-  `caffeinate -dimsu <command>`.
+  `caffeinate -dimsu <command>`. A LOCKED session blocks them the same
+  way (no compositing, no Screenshot events) and caffeinate cannot fix
+  that — check `CGSSessionScreenIsLocked` in `ioreg -n Root -d1 -a` and
+  wait for unlock instead of retrying.
 - zsh: `status` is a read-only special variable (`$?` alias) — assigning it
   aborts the script; use `rc=$?` in .command/script files.
 - fps with vsync off is only real if something blocks on the GPU: an
