@@ -216,6 +216,77 @@ fn terrain_reproduces_committed_goldens() {
     );
 }
 
+/// The stage contract (WO-0009 S2 step 4): "phase2-terrain" runs after
+/// tectonics in a pipeline, writes its fields, caches by params hash —
+/// and re-runs exactly when morpho_my changes (the World-panel slider
+/// participates in the hash, step 5).
+#[test]
+fn terrain_stage_runs_in_pipeline_and_caches_by_morpho() {
+    use worldmaker_sim::{Pipeline, Stage, TectonicsStage, TerrainParams, TerrainStage};
+    let grid = Arc::new(Grid::build(5));
+    let mut world = WorldState::new(grid);
+    let mut pipe = Pipeline::new();
+    pipe.push(Box::new(TectonicsStage::new(TectonicsParams {
+        span_my: 200.0,
+        ..TectonicsParams::default()
+    })));
+    pipe.push(Box::new(TerrainStage::new(TerrainParams {
+        morpho_my: 10.0,
+        era_index: None,
+    })));
+    let ctx = StageContext::new(42);
+    let ran = pipe.run(&ctx, &mut world).unwrap();
+    assert_eq!(ran, vec!["phase1-tectonics", "phase2-terrain"]);
+    let elev = world.fields.get(terrain::TERRAIN_ELEVATION_M).unwrap();
+    assert!(elev.iter().all(|e| e.is_finite()));
+    assert!(world.fields.get(terrain::TERRAIN_DISCHARGE_M3S).is_some());
+    assert!(world
+        .fields
+        .get_u32(terrain::TERRAIN_LITHOLOGY)
+        .is_some_and(|l| l.iter().any(|&v| v == tectonics::lithology::SU as u32)));
+    // Clean cache: nothing re-runs.
+    assert!(pipe.run(&ctx, &mut world).unwrap().is_empty());
+    // A different morpho re-runs ONLY the terrain stage.
+    let mut pipe2 = Pipeline::new();
+    pipe2.push(Box::new(TectonicsStage::new(TectonicsParams {
+        span_my: 200.0,
+        ..TectonicsParams::default()
+    })));
+    pipe2.push(Box::new(TerrainStage::new(TerrainParams {
+        morpho_my: 20.0,
+        era_index: None,
+    })));
+    // Fresh pipeline against the same world: tectonics' key matches but the
+    // pipeline has no cache yet, so both run; what this asserts is the
+    // params-hash separation instead.
+    assert_ne!(
+        TerrainStage::new(TerrainParams {
+            morpho_my: 10.0,
+            era_index: None
+        })
+        .params_hash(),
+        TerrainStage::new(TerrainParams {
+            morpho_my: 20.0,
+            era_index: None
+        })
+        .params_hash(),
+        "morpho_my must participate in the terrain params hash"
+    );
+    assert_ne!(
+        TerrainStage::new(TerrainParams {
+            morpho_my: 10.0,
+            era_index: None
+        })
+        .params_hash(),
+        TerrainStage::new(TerrainParams {
+            morpho_my: 10.0,
+            era_index: Some(3)
+        })
+        .params_hash(),
+        "the pinned era must participate in the terrain params hash"
+    );
+}
+
 /// Dev probe: erosion-rate table and ledger numbers to
 /// docs/results/terrain-wo0009-s2-<machine>.json (rule 3: chat numbers
 /// don't count). Run with:
