@@ -6,7 +6,7 @@
 //! latest one — the caller hands the keyframe in (WO-0007 step 5).
 
 use eframe::egui;
-use worldmaker_sim::tectonics::{Keyframe, SLAB_DETACH_MY};
+use worldmaker_sim::tectonics::{lithology, Keyframe, SLAB_DETACH_MY};
 
 use crate::layers::{self, Layer};
 
@@ -207,6 +207,41 @@ pub fn legend_spec(layer: Layer, kf: &Keyframe, sea_level_m: f32) -> LegendSpec 
                     colors,
                     ticks,
                     marker: None,
+                },
+            }
+        }
+        Layer::Lithology => {
+            // Only the classes actually present in the viewed keyframe
+            // (WO-0009 S2 step 3), largest area first, id tie-break.
+            let n = kf.lithology.len().max(1);
+            let mut counts = [0usize; lithology::CLASS_COUNT];
+            for &l in &kf.lithology {
+                counts[(l as usize).min(lithology::CLASS_COUNT - 1)] += 1;
+            }
+            let mut present: Vec<(usize, usize)> = counts
+                .iter()
+                .enumerate()
+                .filter(|&(_, &c)| c > 0)
+                .map(|(i, &c)| (i, c))
+                .collect();
+            present.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            let rows = present
+                .into_iter()
+                .map(|(class, cells)| SwatchRow {
+                    color: layers::lithology_color(class),
+                    label: format!(
+                        "{} {:.1}%  {}",
+                        lithology::CODES[class],
+                        cells as f32 * 100.0 / n as f32,
+                        lithology::NAMES[class],
+                    ),
+                })
+                .collect();
+            LegendSpec {
+                title: "Lithology",
+                kind: LegendKind::Swatches {
+                    rows,
+                    more_count: 0,
                 },
             }
         }

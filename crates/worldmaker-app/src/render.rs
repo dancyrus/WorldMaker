@@ -146,8 +146,9 @@ pub fn rotate_inv(m: &[[f32; 4]; 4], v: [f32; 3]) -> [f32; 3] {
 // ----- live shading parameters (uniform-only view controls) -----
 
 /// `layer_flags` bit layout (shader must match): bits 0..=3 layer id
-/// (0 elevation, 1 plates, 2 crust age, 3 thickness); bit 8 debug true-cell
-/// boundaries; bit 9 debug legacy one-cell boundary bands.
+/// (0 elevation, 1 plates, 2 crust age, 3 thickness, 4 overlay,
+/// 5 lithology); bit 8 debug true-cell boundaries; bit 9 debug legacy
+/// one-cell boundary bands.
 pub const LF_DEBUG_CELL_BOUNDS: u32 = 1 << 8;
 pub const LF_DEBUG_LEGACY_BANDS: u32 = 1 << 9;
 
@@ -207,6 +208,7 @@ pub fn layer_flags(layer: Layer, debug_cell_bounds: bool, debug_legacy_bands: bo
         Layer::CrustAge => 2,
         Layer::Thickness => 3,
         Layer::Overlay => 4,
+        Layer::Lithology => 5,
     };
     id | if debug_cell_bounds {
         LF_DEBUG_CELL_BOUNDS

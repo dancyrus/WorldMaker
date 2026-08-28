@@ -31,14 +31,17 @@ pub enum Layer {
     /// to 40% with each cell above a subducted slab drawn in the slab
     /// plate's color, fading as the slab ages toward detachment.
     Overlay,
+    /// WO-0009 S2: per-cell GLiM lithology class, categorical.
+    Lithology,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 7] = [
+    pub const ALL: [Layer; 8] = [
         Layer::Elevation,
         Layer::Plates,
         Layer::CrustAge,
         Layer::Thickness,
+        Layer::Lithology,
         Layer::PlateVelocity,
         Layer::VelocityField,
         Layer::Overlay,
@@ -49,6 +52,7 @@ impl Layer {
             Layer::Plates => "Plates",
             Layer::CrustAge => "Crust age",
             Layer::Thickness => "Thickness",
+            Layer::Lithology => "Lithology",
             Layer::PlateVelocity => "Plate velocity",
             Layer::VelocityField => "Velocity field",
             Layer::Overlay => "Overlay",
@@ -180,6 +184,36 @@ const PLATE_COLORS: [[f32; 3]; 48] = [
     rgb(60, 110, 20),
 ];
 
+/// 16 categorical lithology colors, indexed by GLiM class value
+/// (WO-0009 S2): earth-toned but pairwise distinct (tested below) —
+/// sediments sand/khaki, volcanics warm-to-dark, plutonics red-brown,
+/// metamorphics purple, ocean-floor basalt (vb) dark slate so continents
+/// carry the story.
+const LITHOLOGY_COLORS: [[f32; 3]; 16] = [
+    rgb(245, 222, 179), // su unconsolidated sediment
+    rgb(210, 180, 140), // ss siliciclastic
+    rgb(189, 183, 107), // sm mixed sedimentary
+    rgb(135, 206, 235), // sc carbonate
+    rgb(255, 140, 0),   // py pyroclastics
+    rgb(255, 182, 193), // ev evaporites
+    rgb(147, 112, 219), // mt metamorphic
+    rgb(205, 92, 92),   // pa acid plutonic
+    rgb(233, 150, 122), // pi intermediate plutonic
+    rgb(139, 69, 19),   // pb basic plutonic
+    rgb(255, 215, 0),   // va acid volcanic
+    rgb(154, 205, 50),  // vi intermediate volcanic
+    rgb(47, 79, 79),    // vb basic volcanic (ocean floor)
+    rgb(220, 20, 60),   // ig undifferentiated igneous
+    rgb(70, 130, 180),  // wb water body
+    rgb(128, 128, 128), // nd no data
+];
+
+/// The lithology class color (legend rows; LUT row 6 is baked from the
+/// same table).
+pub fn lithology_color(class: usize) -> [f32; 3] {
+    LITHOLOGY_COLORS[class.min(LITHOLOGY_COLORS.len() - 1)]
+}
+
 /// Boundary-line styling on the plates layer, by classified type.
 const BOUNDARY_RIDGE: [f32; 3] = rgb(235, 60, 40); // divergent
 const BOUNDARY_TRENCH: [f32; 3] = rgb(15, 20, 60); // convergent
@@ -279,6 +313,8 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
                 Layer::Thickness => {
                     ((kf.thickness_ckm[c] as f32 * 0.01 - 5.0) / 65.0).clamp(0.0, 1.0)
                 }
+                // Categorical: the class rides the category word.
+                Layer::Lithology => 0.0,
                 Layer::Overlay => {
                     // Slab fade: 1.0 the step it went under, 0.0 at the
                     // detachment age — detached slabs fade out into the
@@ -297,6 +333,11 @@ pub fn bake_values(layer: Layer, kf: &Keyframe) -> Vec<[u32; 2]> {
                 // color never changes as the census around it does; id % 48
                 // (WO-0006 S2) accepts occasional collisions in exchange.
                 cat |= (kf.plate_id[c] as u32 % PLATE_COLORS.len() as u32) & 0xFF;
+            }
+            if layer == Layer::Lithology {
+                // Bits 0..=7: the GLiM class — the shader's layer-5 branch
+                // reads it as the LUT row 6 texel index.
+                cat |= (kf.lithology[c] as u32) & 0xFF;
             }
             if layer == Layer::Overlay && kf.slab_plate[c] != SLAB_NONE {
                 // Bits 20..=27: the slab plate's color index (same stable
@@ -340,7 +381,8 @@ pub const LUT_ROWS: u32 = 8;
 ///   5  fixed colors: 0 trench, 1 ridge, 2 transform, 3 age-continent,
 ///      4 paint-continent, 5 paint-ocean, 6 hotspot, 7 outside-map
 ///      background, 8 velocity-arrow white
-///   6–7 reserved (zero)
+///   6  16 lithology colors in texels 0..16 (WO-0009 S2)
+///   7  reserved (zero)
 pub fn bake_palette_lut() -> Vec<u8> {
     let w = LUT_W as usize;
     let mut out = vec![0u8; w * LUT_ROWS as usize * 4];
@@ -374,6 +416,9 @@ pub fn bake_palette_lut() -> Vec<u8> {
     .enumerate()
     {
         set(5, i, *c);
+    }
+    for (i, c) in LITHOLOGY_COLORS.iter().enumerate() {
+        set(6, i, *c);
     }
     out
 }
@@ -458,10 +503,14 @@ mod tests {
         for i in 9..256 {
             assert_eq!(texel(5, i), 0);
         }
-        for row in 6..8 {
-            for i in 0..256 {
-                assert_eq!(texel(row, i), 0);
-            }
+        for (i, c) in LITHOLOGY_COLORS.iter().enumerate() {
+            assert_eq!(texel(6, i), pack3(*c));
+        }
+        for i in 16..256 {
+            assert_eq!(texel(6, i), 0);
+        }
+        for i in 0..256 {
+            assert_eq!(texel(7, i), 0);
         }
     }
 
@@ -470,7 +519,7 @@ mod tests {
     /// variant is added, forcing this test — and ALL — to be updated.
     #[test]
     fn layer_all_lists_every_variant_once() {
-        const VARIANT_COUNT: usize = 7;
+        const VARIANT_COUNT: usize = 8;
         assert_eq!(Layer::ALL.len(), VARIANT_COUNT);
         for l in Layer::ALL {
             match l {
@@ -478,6 +527,7 @@ mod tests {
                 | Layer::Plates
                 | Layer::CrustAge
                 | Layer::Thickness
+                | Layer::Lithology
                 | Layer::PlateVelocity
                 | Layer::VelocityField
                 | Layer::Overlay => {}
@@ -488,6 +538,24 @@ mod tests {
                 assert!(a != b, "Layer::ALL contains a duplicate");
             }
         }
+    }
+
+    #[test]
+    fn lithology_colors_are_pairwise_distinct() {
+        for (i, a) in LITHOLOGY_COLORS.iter().enumerate() {
+            for (j, b) in LITHOLOGY_COLORS.iter().enumerate().skip(i + 1) {
+                let d2 = (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2);
+                assert!(
+                    d2 > 0.015,
+                    "lithology colors {i} and {j} too similar (d2 = {d2})"
+                );
+            }
+        }
+        // The table indexes by class value, so it must cover every class.
+        assert_eq!(
+            LITHOLOGY_COLORS.len(),
+            worldmaker_sim::tectonics::lithology::CLASS_COUNT
+        );
     }
 
     #[test]
