@@ -203,6 +203,32 @@ pub enum TectonicEvent {
     },
 }
 
+/// One live progressive weld (WO-0011 S2): the pair passed the §3 gate and
+/// the suture event fired, but the loser's cells transfer front-limited —
+/// the deformation front advances `WELD_FRONT_KM_MY` into the loser from
+/// the contact, the way the India–Eurasia suture propagated into Asia —
+/// instead of the old wholesale relabel (which welded dumbbells out of
+/// partial contacts). A weld is permanent: it never un-matures, and it
+/// retires only when the loser's last cell has transferred. Keyframed:
+/// front state is sim state, so resume must replay it bit-exactly.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Weld {
+    pub winner: u32,
+    pub loser: u32,
+    /// When the weld matured (My): the front only advances from scar cells
+    /// stamped at or after this time, so it grows out of the sutured
+    /// contact and never from unrelated far-side boundary segments the
+    /// pair may also share.
+    pub fired_my: f32,
+    /// Cumulative front advance (km) since the weld matured. Raw f32 in
+    /// the keyframe (like `ActiveRift::stress`), so it round-trips exactly.
+    pub front_km: f32,
+    /// Hop-layers of loser cells already transferred. `front_km` alone
+    /// cannot recover this after the pair advects (the original contact's
+    /// grid ids drift off the material), so it is stored, not derived.
+    pub layers_done: u32,
+}
+
 /// Slow-collision timer for one unordered plate pair (a < b), for the suture
 /// rule. Kept sorted by (a, b) — fixed iteration order.
 #[derive(Clone, Debug)]
@@ -257,6 +283,8 @@ pub struct Keyframe {
     pub rifts: Vec<ActiveRift>,
     pub plates: Vec<PlateState>,
     pub collisions: Vec<PairTimer>,
+    /// Live progressive welds (WO-0011 S2), raw — a handful at most.
+    pub welds: Vec<Weld>,
 }
 
 /// `suture_at_my` cell encoding: `u16::MAX` is the NEVER_SUTURED sentinel,
@@ -332,6 +360,7 @@ impl Keyframe {
         rifts: Vec<ActiveRift>,
         plates: Vec<PlateState>,
         collisions: Vec<PairTimer>,
+        welds: Vec<Weld>,
     ) -> Keyframe {
         let n = elev.len();
         let mut kf = Keyframe {
@@ -353,6 +382,7 @@ impl Keyframe {
             rifts,
             plates,
             collisions,
+            welds,
         };
         for i in 0..n {
             kf.elev_m.push(enc_i16(elev[i]));
@@ -518,6 +548,13 @@ mod tests {
             done_b: false,
             started_my: 100.0,
         }];
+        let welds = vec![Weld {
+            winner: 1,
+            loser: 3,
+            fired_my: 96.0,
+            front_km: 350.25,
+            layers_done: 4,
+        }];
         let kf = Keyframe::encode(
             120.0,
             -230.0,
@@ -538,6 +575,7 @@ mod tests {
             rifts.clone(),
             vec![],
             vec![],
+            welds.clone(),
         );
         // Saturation behaves.
         assert_eq!(kf.elev_m[3], -32_768);
@@ -555,6 +593,8 @@ mod tests {
         // Hotspot residence clocks and the rift ledger survive the trip.
         assert_eq!(kf.hotspot_cont_my, &[0u16, 24, 8]);
         assert_eq!(kf.rifts, rifts);
+        // Live welds ride raw and bit-exact (WO-0011 S2).
+        assert_eq!(kf.welds, welds);
         // The water inventory rides along as raw f64, bit-exact (WO-0009).
         assert_eq!(kf.water_mass_kg, 1.234e21);
 
@@ -602,6 +642,7 @@ mod tests {
                     rifts: vec![],
                     plates: vec![],
                     collisions: vec![],
+                    welds: vec![],
                 })
                 .collect(),
             hotspots: vec![],

@@ -29,7 +29,7 @@ use worldmaker_core::Grid;
 
 use super::keyframe::{
     dec_suture, ActiveRift, Keyframe, MicroplateOrigin, PairTimer, PlateState, RiftDriverKind,
-    SlabSegment, TectonicEvent, IDENTITY3, NEVER_SUTURED,
+    SlabSegment, TectonicEvent, Weld, IDENTITY3, NEVER_SUTURED,
 };
 use super::{
     TectonicsParams, DT_MY, F_ARC, F_BND_CONVERGENT, F_BND_DIVERGENT, F_BND_TRANSFORM, F_HOTSPOT,
@@ -171,6 +171,13 @@ const SUTURE_LOCK_CMYR: f32 = 0.4;
 /// intervening ocean is consumed (Wilson 1966), but a consumed-down relic
 /// sea no longer blocks the weld.
 pub(super) const SUTURE_OCEAN_RINGS: u16 = 2;
+/// Front advance rate of a matured weld (km/My, WO-0011 S2): a weld
+/// transfers the loser's cells progressively from the contact instead of
+/// relabelling them in one step (which welded a dumbbell out of any
+/// partial contact). Physical range 20–100: the India–Eurasia deformation
+/// front propagated on the order of 2,000 km into Asia in ~50 My. The
+/// rate is in km, not cells, so the merge speed is grid-level independent.
+pub(super) const WELD_FRONT_KM_MY: f32 = 50.0;
 
 // ----- relic-basin closure (WO-0008 S1, model §3 addendum) -----
 /// A basin consumed down to this many cells survives as a relic sea
@@ -462,6 +469,12 @@ pub struct SimState {
     // Plate-level state.
     pub plates: Vec<PlateState>,
     pub collisions: Vec<PairTimer>,
+    /// Live progressive welds (WO-0011 S2): matured pairs whose loser is
+    /// transferring front-limited. Fixed order (append at maturity, retire
+    /// in place); a plate appears as loser of at most one motion-slaving
+    /// weld at a time, but a shrinking loser can be claimed by a second
+    /// weld and both fronts advance independently.
+    pub welds: Vec<Weld>,
     pub hotspots: Vec<[f32; 3]>,
     /// Per hotspot: continuous time under continental crust (My) — the
     /// plume rift driver's clock.
@@ -618,6 +631,7 @@ impl SimState {
             suture_at_my: vec![NEVER_SUTURED; n],
             plates: Vec::new(),
             collisions: Vec::new(),
+            welds: Vec::new(),
             hotspots: Vec::new(),
             hotspot_cont_my: Vec::new(),
             rifts: Vec::new(),
@@ -747,6 +761,7 @@ impl SimState {
         }
         s.plates = kf.plates.clone();
         s.collisions = kf.collisions.clone();
+        s.welds = kf.welds.clone();
         s.rifts = kf.rifts.clone();
         s.hotspots = hotspots.to_vec();
         s.hotspot_cont_my = kf.hotspot_cont_my.iter().map(|&v| v as f32).collect();
@@ -839,11 +854,13 @@ impl SimState {
         // Sutures read this step's classification, so they run before the
         // split pass moves any cells: every ownership change after
         // enforce_connectivity is then connectivity-preserving by
-        // construction (a weld is a contact union; split halves are built
+        // construction (a weld front grows off the winner's interface and
+        // sweeps severed remainder fragments; split halves are built
         // connected).
         self.update_pair_timers_and_sutures();
         let v6 = self.cont_volume_q();
         self.vol_closure_q += v6 - v5;
+        self.advance_weld_fronts();
         self.capture_fossilized_plates();
         self.check_rift_splits();
         self.grow_rifts();
@@ -923,8 +940,20 @@ impl SimState {
     /// direction. RNG-free — poles wander exactly when the plate's boundary
     /// makeup changes.
     fn motion_update(&mut self) {
+        // Slaved motion (WO-0011 S2): while a weld is live the loser is
+        // mechanically part of the winner — it copies the winner's pole and
+        // speed instead of running its own balance (the pair already passed
+        // the §3 lock gate, so this is a small correction, and it stops the
+        // advancing front from shearing against an independently rotating
+        // loser). Slaving is by the OLDEST weld claiming the loser.
+        let mut slaved_by: Vec<u32> = vec![NONE; self.plates.len()];
+        for w in &self.welds {
+            if slaved_by[w.loser as usize] == NONE {
+                slaved_by[w.loser as usize] = w.winner;
+            }
+        }
         for pid in 0..self.plates.len() {
-            if !self.plates[pid].alive {
+            if !self.plates[pid].alive || slaved_by[pid] != NONE {
                 continue;
             }
             // Slab pull from attached ledger segments, weighted by thermal
@@ -962,6 +991,29 @@ impl SimState {
             }
             // Bank this step's rotation; advection commits it when it
             // reaches a usable fraction of a cell.
+            let step_rot = rotation3(p.pole, p.speed_deg_my * DEG2RAD * DT_MY);
+            p.pending_rot = mat3_mul3(&step_rot, &p.pending_rot);
+            p.pending_deg += p.speed_deg_my * DT_MY;
+        }
+        // Second pass, weld order: slaved losers copy their winner's
+        // (already-updated) pole and speed, then bank their own pending
+        // rotation as usual — pending phases can differ, so commits may
+        // interleave by a step; the seam noise that leaves is exactly what
+        // the regularization/backstop passes absorb.
+        for i in 0..self.welds.len() {
+            let w = self.welds[i];
+            let lu = w.loser as usize;
+            if slaved_by[lu] != w.winner || !self.plates[lu].alive {
+                continue; // a later weld on an already-slaved loser
+            }
+            slaved_by[lu] = NONE; // bank each slaved loser exactly once
+            let (pole, speed) = {
+                let win = &self.plates[w.winner as usize];
+                (win.pole, win.speed_deg_my)
+            };
+            let p = &mut self.plates[lu];
+            p.pole = pole;
+            p.speed_deg_my = speed;
             let step_rot = rotation3(p.pole, p.speed_deg_my * DEG2RAD * DT_MY);
             p.pending_rot = mat3_mul3(&step_rot, &p.pending_rot);
             p.pending_deg += p.speed_deg_my * DT_MY;
@@ -2967,8 +3019,10 @@ impl SimState {
     /// plate's perimeter, (2) mean relative speed across the contact below
     /// SUTURE_LOCK_CMYR, (3) every cell within 2 rings of the contact on
     /// both sides continental. Any lapse resets the timer ("sustained" is
-    /// literal). At SUTURE_AFTER_MY the pair welds: smaller merges into
-    /// larger and every contact cell records the suture scar. Serial and
+    /// literal). At SUTURE_AFTER_MY the pair welds: the suture event fires,
+    /// every contact cell records the scar, and a [`Weld`] is appended —
+    /// the smaller plate then merges into the larger FRONT-LIMITED via
+    /// `advance_weld_fronts` (WO-0011 S2), not in one step. Serial and
     /// id-ordered throughout.
     fn update_pair_timers_and_sutures(&mut self) {
         struct PairAcc {
@@ -2988,6 +3042,16 @@ impl SimState {
             }
             let p = self.plate_id[c];
             let (a, b) = (p.min(cl.contact_partner), p.max(cl.contact_partner));
+            // A pair with a live weld is already merging: its front does the
+            // work and it runs no pair timer (WO-0011 S2). Third-party
+            // contacts of either plate still accumulate normally.
+            if self
+                .welds
+                .iter()
+                .any(|w| (w.winner.min(w.loser), w.winner.max(w.loser)) == (a, b))
+            {
+                continue;
+            }
             let e = match pairs.iter_mut().find(|e| e.a == a && e.b == b) {
                 Some(e) => e,
                 None => {
@@ -3116,28 +3180,231 @@ impl SimState {
         for &c in &e.contact_cells {
             self.suture_at_my[c as usize] = self.t_my;
         }
-        for pid in self.plate_id.iter_mut() {
-            if *pid == loser {
-                *pid = winner;
-            }
-        }
-        self.plate_cells[winner as usize] += self.plate_cells[loser as usize];
-        self.plate_cells[loser as usize] = 0;
-        self.cont_cells_per_plate[winner as usize] += self.cont_cells_per_plate[loser as usize];
-        self.cont_cells_per_plate[loser as usize] = 0;
-        self.plates[loser as usize].alive = false;
         self.plates[winner as usize].youngest_suture_my = self.t_my;
-        // The merged plate inherits the loser's slab ledger (slabs keep
-        // sinking under the weld) and its live rifts (the scar cells are
-        // its cells now).
-        let segs = std::mem::take(&mut self.plates[loser as usize].slab);
-        self.plates[winner as usize].slab.extend(segs);
-        for r in self.rifts.iter_mut() {
-            if r.plate == loser {
-                r.plate = winner;
+        // The merge ACTION is front-limited (WO-0011 S2): no wholesale
+        // relabel. The weld is permanent — it never un-matures — and the
+        // pair leaves the pair-timer bookkeeping; `advance_weld_fronts`
+        // transfers the loser's cells from the contact at
+        // `WELD_FRONT_KM_MY` until retirement.
+        self.welds.push(Weld {
+            winner,
+            loser,
+            fired_my: self.t_my,
+            front_km: 0.0,
+            layers_done: 0,
+        });
+        self.collisions.retain(|t| !(t.a == a && t.b == b));
+    }
+
+    /// Front-limited weld merge (WO-0011 S2). Each live weld's deformation
+    /// front advances `WELD_FRONT_KM_MY`; every loser cell within the front
+    /// of the contact transfers to the winner, whole hop-layers at a time
+    /// (distance = hops × `cell_spacing_km`; serial, id-ordered BFS).
+    /// Because the loser is slaved to the winner the pair moves rigidly, so
+    /// depth from the CURRENT winner–loser interface plus the layers already
+    /// transferred equals graph distance from the originally stamped
+    /// contact — the cumulative rule survives advection, whose re-sampling
+    /// would otherwise drift the original contact's grid ids off the
+    /// material. The scar advances with the front: transferred cells still
+    /// touching remaining loser cells stamp `suture_at_my` at transfer
+    /// time. Bookkeeping is per transferred cell, never in one lump; the
+    /// crust-volume ledger is untouched because an ownership relabel moves
+    /// no continental volume. When the loser's last cell transfers, the
+    /// weld retires it: slab ledger and remaining live rifts transfer to
+    /// the winner exactly as the wholesale path did.
+    fn advance_weld_fronts(&mut self) {
+        if self.welds.is_empty() {
+            return;
+        }
+        let n = self.grid.cell_count() as usize;
+        for i in 0..self.welds.len() {
+            let Weld { winner, loser, .. } = self.welds[i];
+            let (wu, lu) = (winner as usize, loser as usize);
+            // A loser consumed by another path (trench, second weld), or a
+            // dead winner: the retain below drops the weld.
+            if !self.plates[lu].alive || !self.plates[wu].alive {
+                continue;
+            }
+            self.welds[i].front_km += WELD_FRONT_KM_MY * DT_MY;
+            // Layers 0..=floor(front/spacing) are within the front; layer 0
+            // is the loser-side contact itself (graph distance 0 from the
+            // stamped contact cells).
+            let target_layers = (self.welds[i].front_km / self.cell_spacing_km) as u32 + 1;
+            let nlayers = target_layers.saturating_sub(self.welds[i].layers_done);
+            if nlayers == 0 {
+                continue;
+            }
+            // Seeds: loser cells on the current interface whose winner-side
+            // neighbor carries this weld's scar (stamped at maturity or by
+            // an earlier front step — the scar advects with the material,
+            // so it anchors the front to the sutured contact and never to
+            // unrelated far-side boundary segments the pair also shares).
+            let fired = self.welds[i].fired_my;
+            let mut depth = vec![u16::MAX; n];
+            let mut queue: VecDeque<u32> = VecDeque::new();
+            let mut transfer: Vec<u32> = Vec::new();
+            for c in 0..n {
+                if self.plate_id[c] != loser {
+                    continue;
+                }
+                if self.grid.neighbors_of(c as u32).iter().any(|&nb| {
+                    let nbu = nb as usize;
+                    self.plate_id[nbu] == winner && self.suture_at_my[nbu] >= fired
+                }) {
+                    depth[c] = 0;
+                    queue.push_back(c as u32);
+                    transfer.push(c as u32);
+                }
+            }
+            if transfer.is_empty() {
+                // Front detached (advection seam noise): the budget keeps
+                // accruing in front_km and transfers as a burst when the
+                // interface re-forms — the cumulative rule, unchanged.
+                continue;
+            }
+            self.welds[i].layers_done = target_layers;
+            while let Some(c) = queue.pop_front() {
+                let dc = depth[c as usize];
+                if dc + 1 >= nlayers as u16 {
+                    continue;
+                }
+                for &nb in self.grid.neighbors_of(c) {
+                    let nbu = nb as usize;
+                    if depth[nbu] == u16::MAX && self.plate_id[nbu] == loser {
+                        depth[nbu] = dc + 1;
+                        queue.push_back(nb);
+                        transfer.push(nb);
+                    }
+                }
+            }
+            transfer.sort_unstable();
+            for &c in &transfer {
+                let cu = c as usize;
+                self.plate_id[cu] = winner;
+                self.plate_cells[lu] -= 1;
+                self.plate_cells[wu] += 1;
+                if self.crust_type[cu] == 1 {
+                    self.cont_cells_per_plate[lu] -= 1;
+                    self.cont_cells_per_plate[wu] += 1;
+                }
+            }
+            for &c in &transfer {
+                if self
+                    .grid
+                    .neighbors_of(c)
+                    .iter()
+                    .any(|&nb| self.plate_id[nb as usize] == loser)
+                {
+                    self.suture_at_my[c as usize] = self.t_my;
+                }
+            }
+            // §7 stays true by construction: the transferred set grows off
+            // the winner's interface, but the front can sever the REMAINDER
+            // (a bite spanning a narrow loser waist). Any remainder
+            // fragment besides the largest component (tie → the one holding
+            // the lowest cell id) was cut off inside the collision zone and
+            // transfers to the winner too, per cell.
+            if self.plate_cells[lu] > 0 {
+                self.transfer_severed_loser_fragments(winner, loser);
+            }
+            if self.plate_cells[lu] == 0 {
+                self.plates[lu].alive = false;
+                let segs = std::mem::take(&mut self.plates[lu].slab);
+                self.plates[wu].slab.extend(segs);
+                for r in self.rifts.iter_mut() {
+                    if r.plate == loser {
+                        r.plate = winner;
+                    }
+                }
+                self.collisions.retain(|t| t.a != loser && t.b != loser);
+                // A chained weld this loser was winning continues under the
+                // plate its mass merged into.
+                for w in self.welds.iter_mut() {
+                    if w.winner == loser {
+                        w.winner = winner;
+                    }
+                }
+                log::debug!("t={} My: weld consumed plate {loser} into {winner}", self.t_my);
+            } else {
+                // Rifts follow their cells (WO-0011 S2): a rift whose path
+                // has fully crossed the front belongs to the winner now.
+                for r in self.rifts.iter_mut() {
+                    if r.plate != loser {
+                        continue;
+                    }
+                    let mut on_loser = false;
+                    let mut on_winner = false;
+                    for &c in &r.cells {
+                        let p = self.plate_id[c as usize];
+                        on_loser |= p == loser;
+                        on_winner |= p == winner;
+                    }
+                    if !on_loser && on_winner {
+                        r.plate = winner;
+                    }
+                }
             }
         }
-        self.collisions.retain(|t| t.a != loser && t.b != loser);
+        self.welds.retain(|w| {
+            self.plates[w.loser as usize].alive && self.plates[w.winner as usize].alive
+        });
+    }
+
+    /// Reassign every component of the loser's remaining cells except the
+    /// largest (tie → the component holding the lowest cell id) to the
+    /// winner, per cell. Serial BFS in cell-id order, mirroring
+    /// `enforce_connectivity`'s keep rule.
+    fn transfer_severed_loser_fragments(&mut self, winner: u32, loser: u32) {
+        let n = self.grid.cell_count() as usize;
+        let (wu, lu) = (winner as usize, loser as usize);
+        let mut seen = vec![false; n];
+        // (cells, first-cell) per component, discovered in ascending id.
+        let mut comps: Vec<Vec<u32>> = Vec::new();
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for c0 in 0..n {
+            if self.plate_id[c0] != loser || seen[c0] {
+                continue;
+            }
+            let mut comp = vec![c0 as u32];
+            seen[c0] = true;
+            queue.push_back(c0 as u32);
+            while let Some(c) = queue.pop_front() {
+                for &nb in self.grid.neighbors_of(c) {
+                    let nbu = nb as usize;
+                    if !seen[nbu] && self.plate_id[nbu] == loser {
+                        seen[nbu] = true;
+                        queue.push_back(nb);
+                        comp.push(nb);
+                    }
+                }
+            }
+            comps.push(comp);
+        }
+        if comps.len() <= 1 {
+            return;
+        }
+        // Strict > keeps the earliest (lowest first-cell-id) on ties.
+        let mut keep = 0;
+        for (k, comp) in comps.iter().enumerate() {
+            if comp.len() > comps[keep].len() {
+                keep = k;
+            }
+        }
+        for (k, comp) in comps.iter().enumerate() {
+            if k == keep {
+                continue;
+            }
+            for &c in comp {
+                let cu = c as usize;
+                self.plate_id[cu] = winner;
+                self.plate_cells[lu] -= 1;
+                self.plate_cells[wu] += 1;
+                if self.crust_type[cu] == 1 {
+                    self.cont_cells_per_plate[lu] -= 1;
+                    self.cont_cells_per_plate[wu] += 1;
+                }
+            }
+        }
     }
 
     /// Oceanic cells within SUTURE_OCEAN_RINGS rings of the contact on
@@ -3886,6 +4153,13 @@ impl SimState {
             if border[pid].is_empty() || rel_n[pid] == 0 {
                 continue;
             }
+            // A weld loser is quiet BECAUSE it is slaved to its winner
+            // (WO-0011 S2) — capturing it would wholesale-merge it and
+            // recreate the dumbbell the front-limited weld exists to
+            // prevent. Its death path is weld retirement.
+            if self.welds.iter().any(|w| w.loser == pid as u32) {
+                continue;
+            }
             let quiet = (rel_sum[pid] / rel_n[pid] as f64) < CLASSIFY_CMYR as f64;
             if !quiet {
                 self.plates[pid].quiet_my = 0.0;
@@ -4217,6 +4491,7 @@ impl SimState {
             self.rifts.clone(),
             plates,
             self.collisions.clone(),
+            self.welds.clone(),
         )
     }
 
@@ -4421,6 +4696,7 @@ mod tests {
             s.classify_boundaries();
             s.accumulate_boundary_stats();
             s.update_pair_timers_and_sutures();
+            s.advance_weld_fronts();
             s.t_my += DT_MY;
         }
     }
@@ -4600,8 +4876,15 @@ mod tests {
         s.init_stats();
 
         suture_steps(&mut s, 40);
-        assert_eq!(s.alive_plates(), 1, "the relic sea must not block the weld");
-        assert_eq!(s.suture_count, 1);
+        assert_eq!(s.suture_count, 1, "the relic sea must not block the weld");
+        // The weld is front-limited (WO-0011 S2): the loser is still being
+        // consumed at 40 steps, not relabelled in one lump...
+        assert_eq!(s.alive_plates(), 2, "the merge must be progressive");
+        assert_eq!(s.welds.len(), 1);
+        // ...and finishes once the front has crossed the hemisphere.
+        suture_steps(&mut s, 150);
+        assert_eq!(s.alive_plates(), 1, "the weld must consume the loser");
+        assert!(s.welds.is_empty(), "a finished weld retires");
         let ocean_left = s.crust_type.iter().filter(|&&t| t == 0).count() as u32;
         assert_eq!(
             ocean_left, RELIC_BASIN_KEEP_CELLS,
@@ -4610,32 +4893,234 @@ mod tests {
     }
 
     /// ...and the same contact with the ocean closed sutures at 30 My,
-    /// writing the scar on the contact cells and logging the conditions.
+    /// writing the scar on the contact cells and logging the conditions —
+    /// then consumes the loser front-limited (WO-0011 S2), never in one
+    /// lump.
     #[test]
     fn locked_continental_contact_sutures_at_30_my() {
         let mut s = two_plate_cont_state();
         let t0 = s.t_my;
+        let cells_at_start = s.plate_cells.clone();
         suture_steps(&mut s, 16);
-        assert_eq!(s.alive_plates(), 1, "closed locked contact must weld");
-        assert_eq!(s.suture_count, 1);
-        let Some(TectonicEvent::Suture {
-            t,
-            contact_fraction,
-            ..
-        }) = s.events.first()
-        else {
-            panic!("expected a suture event, got {:?}", s.events.first());
+        assert_eq!(s.suture_count, 1, "closed locked contact must weld");
+        assert_eq!(s.welds.len(), 1, "the weld must be live, not wholesale");
+        assert_eq!(s.alive_plates(), 2, "the merge must be progressive");
+        let fire_t = {
+            let Some(TectonicEvent::Suture {
+                t,
+                contact_fraction,
+                ..
+            }) = s.events.first()
+            else {
+                panic!("expected a suture event, got {:?}", s.events.first());
+            };
+            // Timer hits 30 My on the 15th accumulation (timers start at 0).
+            assert_eq!(*t, t0 + 14.0 * DT_MY);
+            assert!(
+                *contact_fraction >= SUTURE_CONTACT_FRACTION,
+                "recorded contact fraction {contact_fraction} under the §3 minimum"
+            );
+            *t
         };
-        // Timer hits 30 My on the 15th accumulation (timers start at 0).
-        assert_eq!(*t, t0 + 14.0 * DT_MY);
-        assert!(
-            *contact_fraction >= SUTURE_CONTACT_FRACTION,
-            "recorded contact fraction {contact_fraction} under the §3 minimum"
-        );
         // The scar is on the cells: every cell of the old contact carries
         // suture_at_my = fire time.
-        let scarred = s.suture_at_my.iter().filter(|&&v| v == *t).count();
+        let scarred = s.suture_at_my.iter().filter(|&&v| v == fire_t).count();
         assert!(scarred > 10, "suture scar missing ({scarred} cells)");
+        // The loser (the smaller plate) shrinks monotonically, one front
+        // band at a time, and never by more than a few layers per step.
+        let loser = s.welds[0].loser as usize;
+        assert!(
+            s.plate_cells[loser] > 0 && s.plate_cells[loser] < cells_at_start[loser],
+            "the front must have started consuming the loser"
+        );
+        // The front crosses the hemisphere in ~11 layers (~9 steps each at
+        // L3's 891 km spacing); the weld then retires the loser with its
+        // ledger, exactly like the old wholesale path did in one step.
+        suture_steps(&mut s, 130);
+        assert_eq!(s.alive_plates(), 1, "the weld must consume the loser");
+        assert!(s.welds.is_empty(), "a finished weld retires");
+        assert_eq!(s.plate_cells[loser], 0);
+        // The advancing scar was stamped beyond the original contact.
+        let scarred_late = s.suture_at_my.iter().filter(|&&v| v > fire_t).count();
+        assert!(
+            scarred_late > scarred,
+            "the scar must advance with the front ({scarred_late} late cells)"
+        );
+    }
+
+    /// WO-0011 S2 dumbbell probe: a two-plate L7 world with an off-centre
+    /// PARTIAL contact (a ~3-cell arc, ~170 km — exactly the pinprick-scale
+    /// neck Dan's bound rules out), forced to maturity by installing the
+    /// weld state directly (the §3 GATE is sound and tested above; the
+    /// merge ACTION is what this probes). The old wholesale relabel turned
+    /// this geometry into a dumbbell in one step: two masses each above 2%
+    /// of the sphere joined by the 3-cell contact. The front-limited weld
+    /// must instead grow the winner as ONE mass. Deterministic: serial
+    /// id-ordered BFS throughout, no RNG, no advection.
+    #[test]
+    fn dumbbell_probe_partial_contact_welds_as_one_mass() {
+        let grid = Arc::new(Grid::build(7));
+        let n = grid.cell_count() as usize;
+        let mut s = SimState::new_empty(&grid);
+        s.plates.push(test_plate(0, 0.0));
+        s.plates.push(test_plate(1, 0.0));
+        // Loser = an 18° continental cap (2.45% of the sphere, above the
+        // 2%-mass bound) around an off-axis center; winner = the rest.
+        let axis = normalize3([1.0, 0.0, 0.3]);
+        let cos_cap = (18.0f32 * DEG2RAD).cos();
+        for c in 0..n {
+            s.plate_id[c] = u32::from(dot3(grid.positions[c], axis) >= cos_cap);
+            s.crust_type[c] = 1;
+            s.thickness[c] = 35.0;
+            s.crust_age[c] = 500.0;
+            s.orogeny_age[c] = 500.0;
+        }
+        s.t_my = 500.0;
+        s.init_stats();
+        let cap_cells = s.plate_cells[1];
+        assert!(
+            cap_cells as f32 > 0.02 * n as f32,
+            "the cap must be above the 2% mass bound ({cap_cells} cells)"
+        );
+
+        // The partial contact: the topmost rim cell of the cap and its
+        // rim neighbors within 1 hop — a ~3-cell arc (~170 km at L7's
+        // 55.8 km spacing). Stamp the scar on both sides, install the
+        // weld at maturity state (what update_pair_timers_and_sutures
+        // does, minus the 30 My wait).
+        let on_rim = |s: &SimState, c: u32| {
+            let p = s.plate_id[c as usize];
+            s.grid
+                .neighbors_of(c)
+                .iter()
+                .any(|&nb| s.plate_id[nb as usize] != p)
+        };
+        let p_top = (0..n as u32)
+            .filter(|&c| s.plate_id[c as usize] == 1 && on_rim(&s, c))
+            .max_by(|&a, &b| {
+                grid.positions[a as usize][2]
+                    .partial_cmp(&grid.positions[b as usize][2])
+                    .unwrap()
+            })
+            .unwrap();
+        let mut contact: Vec<u32> = vec![p_top];
+        for &nb in grid.neighbors_of(p_top) {
+            if on_rim(&s, nb) {
+                contact.push(nb);
+            }
+        }
+        for &c in &contact {
+            s.suture_at_my[c as usize] = s.t_my;
+        }
+        s.suture_count += 1;
+        s.plates[0].youngest_suture_my = s.t_my;
+        s.welds.push(Weld {
+            winner: 0,
+            loser: 1,
+            fired_my: s.t_my,
+            front_km: 0.0,
+            layers_done: 0,
+        });
+
+        // Erode the winner by 2 rings, then component-scan: a neck of
+        // width ≤ 4 cells (~223 km at L7 — conservative on the ruled
+        // 170 km / 3-cell bound, one grid quantum stricter) vanishes
+        // under the erosion, so a dumbbell shows up as TWO surviving
+        // components each above 2% of the sphere.
+        let mass_min = (0.02 * n as f32) as usize;
+        let no_dumbbell = |s: &SimState| {
+            let mut keep: Vec<bool> = (0..n as u32)
+                .map(|c| s.plate_id[c as usize] == 0)
+                .collect();
+            for _ in 0..2 {
+                let interior: Vec<bool> = (0..n as u32)
+                    .map(|c| {
+                        keep[c as usize]
+                            && s.grid.neighbors_of(c).iter().all(|&nb| keep[nb as usize])
+                    })
+                    .collect();
+                keep = interior;
+            }
+            let mut seen = vec![false; n];
+            let mut queue: VecDeque<u32> = VecDeque::new();
+            let mut big = 0u32;
+            for c0 in 0..n {
+                if !keep[c0] || seen[c0] {
+                    continue;
+                }
+                seen[c0] = true;
+                queue.push_back(c0 as u32);
+                let mut count = 0usize;
+                while let Some(c) = queue.pop_front() {
+                    count += 1;
+                    for &nb in s.grid.neighbors_of(c) {
+                        if keep[nb as usize] && !seen[nb as usize] {
+                            seen[nb as usize] = true;
+                            queue.push_back(nb);
+                        }
+                    }
+                }
+                if count >= mass_min {
+                    big += 1;
+                }
+            }
+            big <= 1
+        };
+
+        // Clean-run bounds (measured on this exact setup, commented in
+        // the asserts): the largest one-step transfer band and the
+        // largest one-step boundary-cell growth of the winner.
+        let mut max_area_step = 0u32;
+        let mut max_boundary_step = 0i64;
+        let winner_boundary = |s: &SimState| -> i64 {
+            (0..n as u32)
+                .filter(|&c| s.plate_id[c as usize] == 0 && on_rim(s, c))
+                .count() as i64
+        };
+        let mut prev_area = s.plate_cells[0];
+        let mut prev_boundary = winner_boundary(&s);
+        let mut steps = 0u32;
+        while s.plates[1].alive {
+            s.advance_weld_fronts();
+            s.t_my += DT_MY;
+            steps += 1;
+            assert!(steps <= 200, "the weld must finish consuming the cap");
+            let area = s.plate_cells[0];
+            max_area_step = max_area_step.max(area - prev_area);
+            let boundary = winner_boundary(&s);
+            max_boundary_step = max_boundary_step.max(boundary - prev_boundary);
+            prev_area = area;
+            prev_boundary = boundary;
+            assert!(
+                no_dumbbell(&s),
+                "step {steps}: the winner holds a sub-170 km neck joining \
+                 two masses each above 2% of the sphere (Dan's ruled bound)"
+            );
+        }
+        assert!(s.welds.is_empty(), "a finished weld retires");
+        assert_eq!(s.plate_cells[1], 0);
+        assert_eq!(s.plate_cells[0] as usize, n);
+        // The whole cap carries the advancing scar (stamped at transfer).
+        let scarred = s.suture_at_my.iter().filter(|&&v| v >= 500.0).count();
+        assert!(
+            scarred as u32 > cap_cells / 2,
+            "the scar must advance with the front ({scarred} cells)"
+        );
+        // No lump transfer: the wholesale relabel moved all ~4,000 cap
+        // cells in one step; the front moves band-sized slices (clean run
+        // on this setup: 42 steps to consume the cap, max 166 cells/step —
+        // bound 400 leaves margin without admitting a lump).
+        assert!(
+            max_area_step < 400,
+            "one-step transfer of {max_area_step} cells is a lump, not a front"
+        );
+        // The winner's boundary never spikes either (clean-run max +2
+        // boundary cells in a step; the wholesale relabel added the cap's
+        // whole ~200-cell rim at once).
+        assert!(
+            max_boundary_step < 50,
+            "one-step boundary growth of {max_boundary_step} is a spike"
+        );
     }
 
     /// A two-plate jam world for the WO-0008 S2 collision tests: plate 1
