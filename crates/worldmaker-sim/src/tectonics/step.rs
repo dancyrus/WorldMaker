@@ -355,6 +355,11 @@ pub struct SimState {
     pub events: Vec<TectonicEvent>,
     /// Deterministic seed for the elevation detail noise.
     pub noise_seed: u64,
+    /// Land fraction the whole-plate crust setup actually achieved
+    /// (WO-0008 S0): continental cells over the shelf-margin budget's
+    /// denominator, quantized by plate sizes. Set once at setup; a
+    /// resumed run leaves it 0 (setup-only diagnostic).
+    pub achieved_land_frac: f32,
 
     // Per-plate stats from the previous step (indexed by plate id). Mirrored
     // into PlateState at keyframe encode for bit-exact resume.
@@ -436,6 +441,7 @@ impl SimState {
             rifts: Vec::new(),
             events: Vec::new(),
             noise_seed: 0,
+            achieved_land_frac: 0.0,
             boundary_cells: Vec::new(),
             subducting_cells: Vec::new(),
             colliding_cells: Vec::new(),

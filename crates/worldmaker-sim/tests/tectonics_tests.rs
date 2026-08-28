@@ -443,3 +443,74 @@ fn stage_cache_reacts_to_overlay_changes() {
     let stage_b = TectonicsStage::new(with_overlay);
     assert_ne!(stage_a.params_hash(), stage_b.params_hash());
 }
+
+/// WO-0008 S0: at t = 0 every plate is entirely continental or entirely
+/// oceanic, at least one plate of each kind exists, and the achieved
+/// continental area lands within one largest-plate area of the budget —
+/// the quantization whole-plate assignment cannot avoid.
+#[test]
+fn whole_plate_crust_setup_at_t0() {
+    for seed in [
+        42u64,
+        0xc4be_0bf8_f497_a575, /* seed_from_text("cyrus") */
+    ] {
+        let grid = Arc::new(Grid::build(6));
+        let params = TectonicsParams::default();
+        let s = tectonics::SimState::setup(seed, &grid, &params);
+        let n = grid.cell_count() as usize;
+        let p_count = s.plates.len();
+
+        // Single-crust plates: the first cell of each plate fixes its kind.
+        let mut kind: Vec<Option<u32>> = vec![None; p_count];
+        for c in 0..n {
+            let pid = s.plate_id[c] as usize;
+            match kind[pid] {
+                None => kind[pid] = Some(s.crust_type[c]),
+                Some(k) => assert_eq!(
+                    k, s.crust_type[c],
+                    "plate {pid} is mixed-crust at t=0 (seed {seed:#x})"
+                ),
+            }
+        }
+        assert!(
+            kind.contains(&Some(1)),
+            "no continental plate at seed {seed:#x}"
+        );
+        assert!(
+            kind.contains(&Some(0)),
+            "no oceanic plate at seed {seed:#x}"
+        );
+
+        // Achieved continental area within one largest-plate area of the
+        // budget the setup targets.
+        let mut plate_cells = vec![0u32; p_count];
+        for &p in &s.plate_id {
+            plate_cells[p as usize] += 1;
+        }
+        let largest = *plate_cells.iter().max().unwrap();
+        let cont_cells = s.crust_type.iter().filter(|&&t| t == 1).count() as u32;
+        let total_cont = ((params.land_fraction * tectonics::CONT_AREA_FACTOR).min(0.85) * n as f32)
+            .round() as u32;
+        assert!(
+            cont_cells.abs_diff(total_cont) <= largest,
+            "achieved {cont_cells} vs target {total_cont} differs by more than \
+             the largest plate ({largest}) at seed {seed:#x}"
+        );
+
+        // The recorded fraction matches the cell census.
+        let expect = cont_cells as f32 / (tectonics::CONT_AREA_FACTOR * n as f32);
+        assert!(
+            (s.achieved_land_frac - expect).abs() < 1e-6,
+            "achieved_land_frac {} != census {expect} at seed {seed:#x}",
+            s.achieved_land_frac
+        );
+
+        // Visible with --nocapture: the achieved-vs-target record.
+        println!(
+            "seed {seed:#x}: target {:.1}% -> start {:.2}% ({cont_cells} of {total_cont} \
+             budget cells, largest plate {largest})",
+            params.land_fraction * 100.0,
+            s.achieved_land_frac * 100.0
+        );
+    }
+}
