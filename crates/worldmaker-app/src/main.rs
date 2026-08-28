@@ -28,6 +28,7 @@ struct Args {
     wo4_dir: Option<PathBuf>,
     wo6_dir: Option<PathBuf>,
     wo7_dir: Option<PathBuf>,
+    wo8_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
     tectonics_out: Option<PathBuf>,
@@ -45,6 +46,7 @@ fn parse_args() -> Args {
         wo4_dir: None,
         wo6_dir: None,
         wo7_dir: None,
+        wo8_dir: None,
         perf_out: None,
         determinism_out: None,
         tectonics_out: None,
@@ -68,6 +70,9 @@ fn parse_args() -> Args {
             // WO-0007 sea-level/legend shots (elevation-sea0,
             // elevation-sea-4000, plates-legend, overlay-legend).
             "--wo7-shots" => out.wo7_dir = take_value(&a, args.next()).map(PathBuf::from),
+            // WO-0008 S0 setup shot (setup-t0.png: t=0 Elevation + Plates,
+            // stacked).
+            "--wo8-shots" => out.wo8_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--perf-out" => out.perf_out = take_value(&a, args.next()).map(PathBuf::from),
             "--determinism-out" => {
                 out.determinism_out = take_value(&a, args.next()).map(PathBuf::from)
@@ -355,6 +360,7 @@ fn main() {
         && args.screenshots_dir.is_none()
         && args.wo4_dir.is_none()
         && args.wo7_dir.is_none()
+        && args.wo8_dir.is_none()
     {
         return;
     }
@@ -382,6 +388,7 @@ fn main() {
         wo4_dir: args.wo4_dir,
         wo6_dir: args.wo6_dir,
         wo7_dir: args.wo7_dir,
+        wo8_dir: args.wo8_dir,
         perf_out: args.perf_out,
         grid_build_ms,
         seed: args.seed,

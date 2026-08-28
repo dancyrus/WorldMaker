@@ -124,6 +124,11 @@ pub struct Script {
     /// default Split view) into this directory. Seed and preset come from
     /// the CLI (the WO pins seed cyrus, Draft6).
     pub wo7_dir: Option<PathBuf>,
+    /// `--wo8-shots`: the WO-0008 S0 setup shot — the t = 0 world,
+    /// Elevation and Plates layers stacked into one `setup-t0.png` in this
+    /// directory. Seed and preset come from the CLI (the WO pins seed
+    /// cyrus, Draft6).
+    pub wo8_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -183,6 +188,12 @@ enum ScriptState {
     },
     /// WO-0007 sea-level/legend screenshot set (step 8).
     Wo7Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0008 S0 setup shot (step 7).
+    Wo8Shot {
         stage: usize,
         frames: u32,
         requested: bool,
@@ -335,6 +346,8 @@ pub struct WorldApp {
     // Scripted modes.
     script: Script,
     script_state: ScriptState,
+    /// Captured wo8 layer shots, stacked into one file at the last stage.
+    wo8_shots: Vec<std::sync::Arc<egui::ColorImage>>,
 }
 
 impl WorldApp {
@@ -500,10 +513,17 @@ impl WorldApp {
                     frames: 0,
                     requested: false,
                 }
+            } else if script.wo8_dir.is_some() {
+                ScriptState::Wo8Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
+                }
             } else {
                 ScriptState::Idle
             },
             script,
+            wo8_shots: Vec::new(),
         };
         app.rebuild_grid(app.preset.level());
         app
@@ -1170,9 +1190,10 @@ impl WorldApp {
                 );
                 // Whole-plate crust setup quantizes the achieved fraction by
                 // plate sizes (WO-0008 S0); show what this world landed on.
+                // ASCII arrow: egui's default font has no U+2192 glyph.
                 if let Some(h) = &self.history {
                     ui.label(format!(
-                        "target {:.0}% → start {:.0}%",
+                        "target {:.0}% -> start {:.0}%",
                         h.land_frac_target * 100.0,
                         h.achieved_land_frac * 100.0
                     ));
@@ -1538,6 +1559,7 @@ impl WorldApp {
             ScriptState::Wo4Shot { .. } => self.drive_wo4(ctx),
             ScriptState::Wo6Shot { .. } => self.drive_wo6(ctx),
             ScriptState::Wo7Shot { .. } => self.drive_wo7(ctx),
+            ScriptState::Wo8Shot { .. } => self.drive_wo8(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -1772,6 +1794,70 @@ impl WorldApp {
             };
         } else {
             self.script_state = ScriptState::Wo7Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0008 S0 setup shot (step 7): the t = 0 world at the CLI seed and
+    /// preset (the WO pins seed cyrus, Draft6), Elevation then Plates,
+    /// stacked vertically into one `setup-t0.png`.
+    fn drive_wo8(&mut self, ctx: &egui::Context) {
+        const SHOTS: [(&str, Layer); 2] =
+            [("elevation", Layer::Elevation), ("plates", Layer::Plates)];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo8Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            let (name, layer) = SHOTS[stage];
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+                self.viewing_kf = 0;
+            }
+            self.layer = layer;
+            self.needs_bake = true;
+            log::info!("wo8 screenshot stage {stage}: {name}");
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            self.wo8_shots.push(image);
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo8Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                let dir = self.script.wo8_dir.clone().unwrap();
+                let shots = std::mem::take(&mut self.wo8_shots);
+                if let Err(e) = save_stacked_images(&shots, &dir.join("setup-t0.png")) {
+                    log::error!("failed to save setup-t0.png: {e:#}");
+                } else {
+                    log::info!("saved setup-t0.png");
+                }
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo8Shot {
                 stage,
                 frames,
                 requested,
@@ -2084,6 +2170,33 @@ fn placeholder_bundle(
         values_gen,
         overlay_gen,
     }
+}
+
+/// Stack captured frames vertically into one PNG (wo8's two-layer shot).
+fn save_stacked_images(
+    images: &[std::sync::Arc<egui::ColorImage>],
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let width = images.iter().map(|i| i.size[0]).max().unwrap_or(0) as u32;
+    let height: u32 = images.iter().map(|i| i.size[1] as u32).sum();
+    let mut canvas = image::RgbaImage::new(width, height);
+    let mut y = 0i64;
+    for img in images {
+        let [w, h] = img.size;
+        let mut bytes = Vec::with_capacity(w * h * 4);
+        for px in &img.pixels {
+            bytes.extend_from_slice(&px.to_array());
+        }
+        let rgba = image::RgbaImage::from_raw(w as u32, h as u32, bytes)
+            .ok_or_else(|| anyhow::anyhow!("screenshot buffer size mismatch"))?;
+        image::imageops::replace(&mut canvas, &rgba, 0, y);
+        y += h as i64;
+    }
+    canvas.save(path)?;
+    Ok(())
 }
 
 fn save_color_image(image: &egui::ColorImage, path: &std::path::Path) -> anyhow::Result<()> {

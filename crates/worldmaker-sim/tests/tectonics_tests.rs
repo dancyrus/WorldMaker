@@ -504,5 +504,13 @@ fn whole_plate_crust_setup_at_t0() {
             "achieved_land_frac {} != census {expect} at seed {seed:#x}",
             s.achieved_land_frac
         );
+
+        // Visible with --nocapture: the achieved-vs-target record.
+        println!(
+            "seed {seed:#x}: target {:.1}% -> start {:.2}% ({cont_cells} of {total_cont} \
+             budget cells, largest plate {largest})",
+            params.land_fraction * 100.0,
+            s.achieved_land_frac * 100.0
+        );
     }
 }
