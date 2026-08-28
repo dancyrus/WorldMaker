@@ -589,6 +589,25 @@ pub const RELIC_LOCKED_GATE_MY: f32 = 60.0;
 /// WO-0008 S1 continental-area gate: total continental cell count at the
 /// end of a 2 Gy run within this fraction of its t = 0 value.
 pub const CONT_AREA_TOLERANCE: f64 = 0.15;
+/// WO-0008 S2 orogen-width gate: at least one collision zone per run
+/// reaches a deformed width of this many cells...
+pub const S2_OROGEN_WIDTH_CELLS: u32 = 3;
+/// ...with crust at least this thick spanning it.
+pub const S2_OROGEN_THICK_KM: f32 = 45.0;
+/// WO-0008 S2 island-arc gate: a connected landmass that is entirely
+/// younger than this and isolated from older continent flags as an
+/// ocean-ocean arc WALL when it reaches `S2_ARC_WALL_CELLS` cells. The
+/// discrete-site rework produces 1-cell islands; separately-born islands
+/// drift together and dock into small islets (arcs assemble — real), and
+/// advection rasterization can briefly duplicate an island into a
+/// neighbor cell — but a band-length WALL (the pre-S2 failure: a
+/// continuous ridge of land the moment a band matured) must never
+/// appear. The strict per-boundary production property is enforced by
+/// the synthetic ocean-ocean test; this runtime gate catches wall-scale
+/// regressions.
+pub const S2_ARC_WALL_AGE_MY: f32 = 50.0;
+/// See [`S2_ARC_WALL_AGE_MY`].
+pub const S2_ARC_WALL_CELLS: usize = 8;
 /// Metric 3: rift-to-oceanization splits per Gy, each §5-attributed.
 pub const M3_SPLITS_PER_GY_MIN: f64 = 2.0;
 /// See [`M3_SPLITS_PER_GY_MIN`].
@@ -725,6 +744,13 @@ pub struct PhysicsTracker {
     slow_my: Vec<f32>,
     slow_flagged: Vec<bool>,
     slow_violations: Vec<String>,
+    // WO-0008 S2 gates.
+    /// Widest contiguous >45 km run walked inboard from a contact cell,
+    /// over all samples (cells).
+    max_orogen_width: u32,
+    /// Samples where an isolated all-young landmass of 2+ cells existed
+    /// (the ocean-ocean arc-wall violation).
+    arc_wall_violations: Vec<String>,
     // WO-0008 S1 gates: relic basins inside old locked collisions, and
     // the continental-area balance. A basin flags only when it PERSISTS
     // across two consecutive samples (closure clears a late-enclosed
@@ -778,6 +804,22 @@ pub struct PhysicsReport {
     /// WO-0008 S1: continental cell count at the first and last sample.
     pub cont_cells_start: u64,
     pub cont_cells_end: u64,
+    /// WO-0008 S2: widest contiguous >45 km inboard run from a contact.
+    pub max_orogen_width: u32,
+    /// WO-0008 S2: isolated all-young landmasses of 2+ cells (arc walls).
+    pub arc_wall_violations: Vec<String>,
+    /// WO-0008 S2 crust-volume ledger (quantized 0.01 km·cell units).
+    pub vol_advect_q: i64,
+    pub vol_closure_q: i64,
+    pub vol_arc_q: i64,
+    pub vol_collision_q: i64,
+    pub vol_rift_q: i64,
+    pub vol_spread_q: i64,
+    pub vol_relax_q: i64,
+    pub vol_quantize_q: i64,
+    pub underthrust_removed_q: i64,
+    pub underthrust_deposited_q: i64,
+    pub underthrust_spilled_q: i64,
 }
 
 impl PhysicsReport {
@@ -944,6 +986,44 @@ impl PhysicsReport {
                 },
             ),
             (
+                "s2_orogen_width",
+                self.max_orogen_width >= S2_OROGEN_WIDTH_CELLS,
+                format!(
+                    "widest >45 km inboard run: {} cells (need >= {})",
+                    self.max_orogen_width, S2_OROGEN_WIDTH_CELLS
+                ),
+            ),
+            (
+                "s2_island_arcs",
+                self.arc_wall_violations.is_empty(),
+                if self.arc_wall_violations.is_empty() {
+                    "no isolated all-young landmass wider than 1 cell".to_owned()
+                } else {
+                    self.arc_wall_violations.join("; ")
+                },
+            ),
+            (
+                "s2_volume_ledger",
+                self.vol_collision_q == self.underthrust_deposited_q
+                    && self.underthrust_removed_q
+                        == self.underthrust_deposited_q + self.underthrust_spilled_q,
+                format!(
+                    "collision {} vs deposited {} (removed {} = deposited + spilled {}); \
+                     advect {} closure {} arc {} rift {} spread {} relax {} quantize {}",
+                    self.vol_collision_q,
+                    self.underthrust_deposited_q,
+                    self.underthrust_removed_q,
+                    self.underthrust_deposited_q + self.underthrust_spilled_q,
+                    self.vol_advect_q,
+                    self.vol_closure_q,
+                    self.vol_arc_q,
+                    self.vol_rift_q,
+                    self.vol_spread_q,
+                    self.vol_relax_q,
+                    self.vol_quantize_q
+                ),
+            ),
+            (
                 "s1_cont_area",
                 (cont_ratio - 1.0).abs() <= CONT_AREA_TOLERANCE,
                 format!(
@@ -999,6 +1079,8 @@ impl PhysicsTracker {
             slow_my: Vec::new(),
             slow_flagged: Vec::new(),
             slow_violations: Vec::new(),
+            max_orogen_width: 0,
+            arc_wall_violations: Vec::new(),
             relic_violations: Vec::new(),
             relic_pending: Vec::new(),
             cont_cells_first: None,
@@ -1065,6 +1147,120 @@ impl PhysicsTracker {
             }
         }
         self.relic_pending = pending;
+
+        // WO-0008 S2 orogen width: from every continent-continent contact
+        // cell, walk inboard (away from the partner) while thickness stays
+        // above the gate threshold; record the longest run. Serial, id
+        // order; the walk picks the thickest qualifying neighbor not yet
+        // visited on this walk.
+        for c in 0..sim.plate_id.len() {
+            if sim.crust_type[c] != 1 || sim.thickness[c] <= S2_OROGEN_THICK_KM {
+                continue;
+            }
+            let p = sim.plate_id[c];
+            let touches_partner = sim.grid.neighbors_of(c as u32).iter().any(|&nb| {
+                sim.plate_id[nb as usize] != p && sim.crust_type[nb as usize] == 1
+            });
+            if !touches_partner {
+                continue;
+            }
+            let mut width = 1u32;
+            let mut cur = c as u32;
+            let mut prev = u32::MAX;
+            loop {
+                let mut best: Option<(u32, f32)> = Some((u32::MAX, S2_OROGEN_THICK_KM));
+                for &nb in sim.grid.neighbors_of(cur) {
+                    let nbu = nb as usize;
+                    if nb == prev
+                        || sim.plate_id[nbu] != p
+                        || sim.crust_type[nbu] != 1
+                        || sim.thickness[nbu] <= S2_OROGEN_THICK_KM
+                        || sim
+                            .grid
+                            .neighbors_of(nb)
+                            .iter()
+                            .any(|&x| sim.plate_id[x as usize] != p)
+                    {
+                        continue;
+                    }
+                    if best.is_none_or(|(_, bt)| sim.thickness[nbu] > bt) {
+                        best = Some((nb, sim.thickness[nbu]));
+                    }
+                }
+                match best {
+                    Some((nb, _)) if nb != u32::MAX && width < 16 => {
+                        prev = cur;
+                        cur = nb;
+                        width += 1;
+                    }
+                    _ => break,
+                }
+            }
+            self.max_orogen_width = self.max_orogen_width.max(width);
+        }
+
+        // WO-0008 S2 arc-wall gate: a connected landmass of 2+ continental
+        // cells, ALL younger than S2_ARC_WALL_AGE_MY, with no older
+        // continental neighbor, is an ocean-ocean arc wall (discrete-site
+        // islands stay 1 cell; margin accretion touches old continent).
+        {
+            let seen = &mut self.comp_seen;
+            for v in seen.iter_mut() {
+                *v = false;
+            }
+            let mut queue: VecDeque<u32> = VecDeque::new();
+            for c0 in 0..sim.plate_id.len() {
+                if seen[c0]
+                    || sim.crust_type[c0] != 1
+                    || sim.crust_age[c0] >= S2_ARC_WALL_AGE_MY
+                {
+                    continue;
+                }
+                let mut cells: Vec<u32> = Vec::new();
+                let mut touches_old = false;
+                let mut closure_filled = false;
+                seen[c0] = true;
+                queue.push_back(c0 as u32);
+                while let Some(c) = queue.pop_front() {
+                    cells.push(c);
+                    // Relic-basin closure marks its conversions with an
+                    // internal slab under the cell's own plate: a landmass
+                    // containing them is a FILLED BASIN at a locked
+                    // collision (arc-terrane amalgamation), not an arc
+                    // wall.
+                    if sim.slab_plate[c as usize] == sim.plate_id[c as usize] as u16 {
+                        closure_filled = true;
+                    }
+                    for &nb in sim.grid.neighbors_of(c) {
+                        let nbu = nb as usize;
+                        if sim.crust_type[nbu] != 1 {
+                            continue;
+                        }
+                        if sim.crust_age[nbu] >= S2_ARC_WALL_AGE_MY {
+                            touches_old = true;
+                        } else if !seen[nbu] {
+                            seen[nbu] = true;
+                            queue.push_back(nb);
+                        }
+                    }
+                }
+                if !touches_old
+                    && !closure_filled
+                    && cells.len() >= S2_ARC_WALL_CELLS
+                    && self.arc_wall_violations.len() < 20
+                {
+                    self.arc_wall_violations.push(format!(
+                        "t={} My: isolated all-young landmass of {} cells (first cell {})",
+                        sim.t_my,
+                        cells.len(),
+                        cells[0]
+                    ));
+                }
+            }
+            for v in self.comp_seen.iter_mut() {
+                *v = false;
+            }
+        }
 
         // Metric 1: alive count, band + pin runs.
         let alive: u32 = sim.plates.iter().filter(|p| p.alive).count() as u32;
@@ -1457,6 +1653,19 @@ impl PhysicsTracker {
             relic_basin_violations: self.relic_violations,
             cont_cells_start: self.cont_cells_first.unwrap_or(0),
             cont_cells_end: self.cont_cells_last,
+            max_orogen_width: self.max_orogen_width,
+            arc_wall_violations: self.arc_wall_violations,
+            vol_advect_q: sim.vol_advect_q,
+            vol_closure_q: sim.vol_closure_q,
+            vol_arc_q: sim.vol_arc_q,
+            vol_collision_q: sim.vol_collision_q,
+            vol_rift_q: sim.vol_rift_q,
+            vol_spread_q: sim.vol_spread_q,
+            vol_relax_q: sim.vol_relax_q,
+            vol_quantize_q: sim.vol_quantize_q,
+            underthrust_removed_q: sim.underthrust_removed_q,
+            underthrust_deposited_q: sim.underthrust_deposited_q,
+            underthrust_spilled_q: sim.underthrust_spilled_q,
         }
     }
 }
