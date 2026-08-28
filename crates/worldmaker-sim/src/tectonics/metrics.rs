@@ -85,6 +85,89 @@ pub fn largest_plate_share(plate_id: &[u32], plate_count: usize) -> f64 {
     *area.iter().max().unwrap_or(&0) as f64 / plate_id.len() as f64
 }
 
+/// Area-weighted compactness: the fraction of ALL cells that sit on an
+/// inter-plate boundary — Σ boundary / Σ area, i.e. the area-weighted mean
+/// of boundary/area. WO-0011 S3 arms Dan's ruled 1.15× compactness bound
+/// on this form: `mean_boundary_per_area`'s unweighted per-plate mean is
+/// census-skewed (a healthy churn of small plates raises it with no shape
+/// change — measured 1.82× at seed 42 while this stayed at 1.06×), where
+/// total boundary length is exactly what the gerrymander artifact
+/// multiplied.
+pub fn boundary_cell_fraction(grid: &Grid, plate_id: &[u32]) -> f64 {
+    let mut boundary = 0u64;
+    for (c, &p) in plate_id.iter().enumerate() {
+        if grid
+            .neighbors_of(c as u32)
+            .iter()
+            .any(|&nb| plate_id[nb as usize] != p)
+        {
+            boundary += 1;
+        }
+    }
+    boundary as f64 / plate_id.len() as f64
+}
+
+/// Dan's ruled neck bound (WO-0011): no plate may hold two masses, each
+/// above `NECK_MASS_FRAC` of the sphere, joined only by a neck narrower
+/// than `NECK_MIN_KM`. Stated in km so the clause is level-independent
+/// (170 km is 3 cells at L7).
+pub const NECK_MIN_KM: f32 = 170.0;
+/// See `NECK_MIN_KM`.
+pub const NECK_MASS_FRAC: f64 = 0.02;
+
+/// Does `plate` hold a neck narrower than `neck_km` joining two masses
+/// each above `mass_frac` of the sphere? Erosion component scan: eroding
+/// the plate's mask by `r = ceil(neck_km / spacing / 2)` rings removes any
+/// neck of width `<= 2r` cells (at L7, 170 km → 2 rings → necks ≤ 4 cells
+/// ≈ 223 km — one grid quantum stricter than the ruled bound, i.e.
+/// conservative), so a dumbbell survives as TWO components each above the
+/// mass bound. Serial, cell-id order, deterministic.
+pub fn holds_narrow_neck(
+    grid: &Grid,
+    plate_id: &[u32],
+    plate: u32,
+    neck_km: f32,
+    mass_frac: f64,
+    cell_spacing_km: f32,
+) -> bool {
+    let n = plate_id.len();
+    let rings = ((neck_km / cell_spacing_km) as f64 / 2.0).ceil().max(1.0) as usize;
+    let mut keep: Vec<bool> = plate_id.iter().map(|&p| p == plate).collect();
+    for _ in 0..rings {
+        let interior: Vec<bool> = (0..n as u32)
+            .map(|c| {
+                keep[c as usize] && grid.neighbors_of(c).iter().all(|&nb| keep[nb as usize])
+            })
+            .collect();
+        keep = interior;
+    }
+    let mass_min = (mass_frac * n as f64) as usize;
+    let mut seen = vec![false; n];
+    let mut queue: VecDeque<u32> = VecDeque::new();
+    let mut big = 0u32;
+    for c0 in 0..n {
+        if !keep[c0] || seen[c0] {
+            continue;
+        }
+        seen[c0] = true;
+        queue.push_back(c0 as u32);
+        let mut count = 0usize;
+        while let Some(c) = queue.pop_front() {
+            count += 1;
+            for &nb in grid.neighbors_of(c) {
+                if keep[nb as usize] && !seen[nb as usize] {
+                    seen[nb as usize] = true;
+                    queue.push_back(nb);
+                }
+            }
+        }
+        if count >= mass_min {
+            big += 1;
+        }
+    }
+    big > 1
+}
+
 /// Coefficient of variation of plate areas, on cell counts (pinned; the
 /// pentagon area deficit is noise at this precision).
 ///

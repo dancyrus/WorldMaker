@@ -1960,8 +1960,10 @@ impl SimState {
     ///   their irregularity.
     /// * Craton floor: a cell in the craton strength regime (exactly the
     ///   `strength()` branch) never transfers, except at an active trench
-    ///   consuming its plate. Transfers that survive the step anyway are
-    ///   counted in `craton_transfer_violations` (S3 arms it at zero).
+    ///   consuming its plate. Transfers that survive the step outside a
+    ///   recorded process are counted in `craton_transfer_violations`
+    ///   (armed at zero by WO-0011 S3; the counter's exemptions are at its
+    ///   scan below).
     /// * Sliver capture (S1 addition, see the in-body comment): static
     ///   sliver debris — cells holding to their plate by at most one edge,
     ///   or two mutually-adjacent ones — is captured by the surrounding
@@ -2289,10 +2291,22 @@ impl SimState {
             }
         }
 
-        // Craton-floor instrumentation: transfers that survived anyway
-        // (connectivity reassignment, dead previous owner, a severed
-        // craton fragment, ...). Judged on the previous column, exactly
-        // like the floor above.
+        // Craton-floor instrumentation: transfers of craton-regime cells
+        // that the regularization machinery let stand OUTSIDE a recorded
+        // process. Judged on the previous column, exactly like the floor
+        // above. Armed at zero by WO-0011 S3 (plate_shape_gates.rs), with
+        // the same process exemptions the flip-revert scan itself grants:
+        // an active trench consuming the cell's plate, and a
+        // continent-continent jam transfer (`outs.collided` — how a
+        // matured weld's front advances through craton-on-craton contact:
+        // measured 324 of 330 counts over 2 Gy at both gate seeds, 188 of
+        // them at weld fronts). Sliver capture (`captured`: a cell holding
+        // to its plate by at most one edge, or two mutually-adjacent ones
+        // — the scan doc's "severed craton fragment", trailing a jam or
+        // weld front that already moved its craton body: the remaining 6
+        // of 330) is likewise cleanup of a real process, not the floor
+        // failing.
+        // Write-only diagnostic — refining the count moves no goldens.
         for c in 0..n {
             let prevp = self.prev.plate[c];
             if self.plate_id[c] == prevp {
@@ -2304,7 +2318,12 @@ impl SimState {
             } else {
                 self.prev.age[c]
             };
-            if cont && age_ref >= OROGENY_RELAX_MAX_AGE_MY && !self.trench_consuming_here(c) {
+            if cont
+                && age_ref >= OROGENY_RELAX_MAX_AGE_MY
+                && !self.trench_consuming_here(c)
+                && self.outs[c].collided == NONE
+                && !captured[c]
+            {
                 self.craton_transfer_violations += 1;
             }
         }
@@ -4515,6 +4534,7 @@ impl SimState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tectonics::metrics;
 
     fn test_plate(id: u32, speed: f32) -> PlateState {
         PlateState {
@@ -5025,47 +5045,20 @@ mod tests {
             layers_done: 0,
         });
 
-        // Erode the winner by 2 rings, then component-scan: a neck of
-        // width ≤ 4 cells (~223 km at L7 — conservative on the ruled
-        // 170 km / 3-cell bound, one grid quantum stricter) vanishes
-        // under the erosion, so a dumbbell shows up as TWO surviving
-        // components each above 2% of the sphere.
-        let mass_min = (0.02 * n as f32) as usize;
+        // Dan's ruled neck bound, via the shared metrics scan stated in km
+        // (WO-0011 S3 armed this clause; the erosion-ring derivation and
+        // the one-grid-quantum-stricter caveat live on `holds_narrow_neck`
+        // — at L7's 55.8 km spacing, 170 km erodes 2 rings, identical to
+        // the S2 original's hard-coded scan).
         let no_dumbbell = |s: &SimState| {
-            let mut keep: Vec<bool> = (0..n as u32).map(|c| s.plate_id[c as usize] == 0).collect();
-            for _ in 0..2 {
-                let interior: Vec<bool> = (0..n as u32)
-                    .map(|c| {
-                        keep[c as usize]
-                            && s.grid.neighbors_of(c).iter().all(|&nb| keep[nb as usize])
-                    })
-                    .collect();
-                keep = interior;
-            }
-            let mut seen = vec![false; n];
-            let mut queue: VecDeque<u32> = VecDeque::new();
-            let mut big = 0u32;
-            for c0 in 0..n {
-                if !keep[c0] || seen[c0] {
-                    continue;
-                }
-                seen[c0] = true;
-                queue.push_back(c0 as u32);
-                let mut count = 0usize;
-                while let Some(c) = queue.pop_front() {
-                    count += 1;
-                    for &nb in s.grid.neighbors_of(c) {
-                        if keep[nb as usize] && !seen[nb as usize] {
-                            seen[nb as usize] = true;
-                            queue.push_back(nb);
-                        }
-                    }
-                }
-                if count >= mass_min {
-                    big += 1;
-                }
-            }
-            big <= 1
+            !metrics::holds_narrow_neck(
+                &s.grid,
+                &s.plate_id,
+                0,
+                metrics::NECK_MIN_KM,
+                metrics::NECK_MASS_FRAC,
+                s.cell_spacing_km,
+            )
         };
 
         // Clean-run bounds (measured on this exact setup, commented in
