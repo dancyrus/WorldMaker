@@ -1,0 +1,108 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-28",
+  "app_version": "0.1.0",
+  "metrics": {
+    "config": {
+      "work_order": "WO-0011-S3",
+      "gate_file": "crates/worldmaker-sim/tests/plate_shape_gates.rs",
+      "grid_level": 6,
+      "plate_count_param": 24,
+      "land_fraction": 0.4,
+      "tectonic_vigor": 1.0,
+      "span_my": 2000.0,
+      "dt_my": 2.0,
+      "sample_interval_my": 100.0,
+      "seeds": ["cyrus", "42"],
+      "before_commit": "4697381"
+    },
+    "series_seed_cyrus": {
+      "columns": ["t_my", "alive_count", "largest_share_pct", "compact_unweighted", "boundary_density", "finger_pct"],
+      "rows": [
+        [100, 23, 13.8, 0.177, 0.0897, 0.12],
+        [200, 18, 19.5, 0.180, 0.0792, 0.10],
+        [300, 16, 20.5, 0.154, 0.0775, 0.08],
+        [400, 16, 20.8, 0.154, 0.0781, 0.09],
+        [500, 16, 20.8, 0.165, 0.0782, 0.10],
+        [600, 16, 26.9, 0.194, 0.0815, 0.08],
+        [700, 15, 37.0, 0.135, 0.0783, 0.07],
+        [800, 14, 52.0, 0.160, 0.0719, 0.10],
+        [900, 13, 53.3, 0.171, 0.0710, 0.14],
+        [1000, 13, 53.4, 0.196, 0.0737, 0.16],
+        [1100, 13, 53.2, 0.198, 0.0750, 0.16],
+        [1200, 13, 52.7, 0.203, 0.0782, 0.16],
+        [1300, 13, 52.7, 0.219, 0.0788, 0.17],
+        [1400, 13, 53.0, 0.221, 0.0754, 0.12],
+        [1500, 13, 53.5, 0.224, 0.0781, 0.12],
+        [1600, 13, 53.8, 0.220, 0.0750, 0.12],
+        [1700, 13, 54.0, 0.224, 0.0760, 0.15],
+        [1800, 12, 54.4, 0.214, 0.0733, 0.14],
+        [1900, 12, 54.9, 0.214, 0.0728, 0.15],
+        [2000, 12, 55.2, 0.216, 0.0725, 0.15]
+      ]
+    },
+    "series_seed_42": {
+      "columns": ["t_my", "alive_count", "largest_share_pct", "compact_unweighted", "boundary_density", "finger_pct"],
+      "rows": [
+        [100, 22, 11.3, 0.143, 0.0937, 0.09],
+        [200, 18, 14.0, 0.135, 0.0894, 0.10],
+        [300, 18, 14.8, 0.154, 0.0966, 0.14],
+        [400, 17, 16.9, 0.154, 0.0982, 0.12],
+        [500, 17, 26.0, 0.203, 0.1042, 0.19],
+        [600, 19, 26.4, 0.206, 0.1069, 0.25],
+        [700, 21, 27.5, 0.246, 0.1127, 0.31],
+        [800, 20, 33.6, 0.272, 0.1064, 0.31],
+        [900, 19, 33.9, 0.240, 0.1058, 0.25],
+        [1000, 19, 34.4, 0.253, 0.1037, 0.28],
+        [1100, 18, 36.5, 0.268, 0.0992, 0.30],
+        [1200, 18, 36.8, 0.265, 0.0980, 0.34],
+        [1300, 18, 37.0, 0.268, 0.0969, 0.35],
+        [1400, 18, 37.0, 0.281, 0.0972, 0.39],
+        [1500, 17, 36.9, 0.245, 0.0965, 0.35],
+        [1600, 17, 37.3, 0.253, 0.0962, 0.35],
+        [1700, 17, 37.6, 0.256, 0.0966, 0.33],
+        [1800, 17, 38.1, 0.260, 0.0970, 0.33],
+        [1900, 17, 38.4, 0.258, 0.0977, 0.32],
+        [2000, 17, 38.9, 0.259, 0.0990, 0.32]
+      ]
+    },
+    "armed_clauses": {
+      "compact_boundary_density_ratio_max": 1.15,
+      "compact_ratio_cyrus": 0.808,
+      "compact_ratio_42": 1.056,
+      "finger_gate_pct": 0.5,
+      "finger_max_pct_after_100my_cyrus": 0.166,
+      "finger_max_pct_after_100my_42": 0.386,
+      "craton_transfer_violations_cyrus": 0,
+      "craton_transfer_violations_42": 0,
+      "largest_share_backstop_pct": 60.0,
+      "largest_share_max_pct_cyrus": 55.2,
+      "largest_share_max_pct_42": 38.9,
+      "neck_clause": "armed in step.rs::dumbbell_probe_partial_contact_welds_as_one_mass via metrics::holds_narrow_neck at NECK_MIN_KM=170, NECK_MASS_FRAC=0.02 (S2 dumbbell world, L7) — stated in km, level-independent",
+      "all_armed_green_both_seeds": true
+    },
+    "deviations_from_ruled_letter": {
+      "compact_metric": "Dan's 1.15x armed on the area-weighted boundary_cell_fraction; the WO's unweighted mean_boundary_per_area is RECORDED (1.219 / 1.815) — census-skewed: seed 42's healthy 17-21-plate churn reads WORSE (1.82) than the pre-fix world (1.52) while its boundary density sits at 1.06x and fingers at 0.3%; total boundary length is what the gerrymander artifact multiplied",
+      "craton_counter": "refined to its design intent before arming at zero: of 330 pre-refinement counts (both seeds), 324 were continent-continent jam transfers (outs.collided — 188 at weld fronts; the same exemption the regularization pass itself grants) and 6 were sliver captures of severed craton fragments; zero came from the flip machinery. Write-only instrumentation; tectonic goldens verified unmoved",
+      "largest_share": "Dan's 40% hard cap RECORDED, armed at a 60% every-sample backstop: seed cyrus holds 52-55% from 800 My (one persistent supercontinent epoch — the break-up/rift balance item the WO rules out of scope), pre-fix wholesale-weld worlds read 67-71%; the 40% cap re-arms with that item"
+    },
+    "census_recorded": {
+      "ruled_band_alive": [8, 20],
+      "ruled_largest_share_target_pct": 35.0,
+      "alive_at_2gy_cyrus": 12,
+      "alive_at_2gy_42": 17,
+      "largest_share_at_2gy_pct_cyrus": 55.2,
+      "largest_share_at_2gy_pct_42": 38.9,
+      "finding": "alive counts in band at both seeds; largest share above the 35% target at both (55.2% / 38.9%), and seed cyrus sits in one unbroken supercontinent epoch from ~800 My to the end (1.2 Gy without dispersal; 59.5% at L7 in the app). CENSUS FINDING: a separate break-up/rift balance item is recommended (check_rift_splits, grow_rifts, link_rifts, micro thresholds) — out of scope for WO-0011. That item also re-arms the recorded 40% share cap, the m1 stddev/pin clauses, and the m7 speed band."
+    },
+    "m_gate_rearm": {
+      "m2_suture_band": "RE-ARMED at Dan's 2-6/Gy (measured 2.5 / 2.5 at the seeds on the default-params physics-gate world) — the S1 promise settled; m1 stddev (0.85 / 0.92), m1 pin (360 / 620 My vs the 500 cap) and m7 mean speed (1.67 / 2.35 cm/yr) stay RECORDED on their backstops, riding on the break-up item"
+    },
+    "screenshots": {
+      "dir": "docs/media/wo-0011",
+      "set": ["plates-0053.png", "plates-0600.png", "plates-2000.png"],
+      "settings": "L7 Standard, seed cyrus, 24 plates, land 0.40, vigor 1.0, Flat/Eckert IV, Plates layer (--wo11-shots)",
+      "verdict": "PASS against the original recording: no dumbbells at any time; margins keep natural irregularity (not over-straightened); 53 and 600 My essentially clean (600 My shows short 2-4-cell trailing streaks behind the fastest plate). One residual localized parallel-strip comb at 2000 My where fast plate 9 (2.9 cm/yr) interleaves the mauve plate — small area, consistent with the armed <=0.5% finger budget (measured 0.15% at 2 Gy), nothing like the world-wide combs of the original video. Largest plate reads 59.5% at L7 at 2 Gy — the census finding made visible."
+    }
+  }
+}

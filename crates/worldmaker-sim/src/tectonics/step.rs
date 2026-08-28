@@ -2307,7 +2307,7 @@ impl SimState {
         // of 330) is likewise cleanup of a real process, not the floor
         // failing.
         // Write-only diagnostic — refining the count moves no goldens.
-        for c in 0..n {
+        for (c, &was_captured) in captured.iter().enumerate() {
             let prevp = self.prev.plate[c];
             if self.plate_id[c] == prevp {
                 continue;
@@ -2322,7 +2322,7 @@ impl SimState {
                 && age_ref >= OROGENY_RELAX_MAX_AGE_MY
                 && !self.trench_consuming_here(c)
                 && self.outs[c].collided == NONE
-                && !captured[c]
+                && !was_captured
             {
                 self.craton_transfer_violations += 1;
             }
