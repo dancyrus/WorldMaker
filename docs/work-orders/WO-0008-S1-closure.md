@@ -50,9 +50,10 @@ Measured at L6 (both seeds, 2 Gy): `connectivity_reassigned` fell from
 - [x] Step 4: rift linkage
 - [x] Step 5: seam fix (rule above)
 - [x] Step 6: continental balance (accretion guard + inventory guard)
-- [ ] Step 7: gates armed (calibration in progress)
-- [x] Step 8: tests (basin closure, relic sea; linkage + seam pending)
-- [ ] Step 9: probe s4 committed
+- [x] Step 7: gates armed (m2 2-6/Gy, m5b <= 10, s1 relic, s1 area; m1
+      band/stddev kept armed; m3 band + m1 pin recorded with backstops)
+- [x] Step 8: tests (basin closure, relic sea, rift linkage, seam rule)
+- [x] Step 9: probe s4 committed (both seeds)
 - [ ] Step 10: PR merged
 - [ ] Step 11: report
 

@@ -132,10 +132,10 @@ pub struct ActiveRift {
     /// long time after starting if their split never materializes.
     pub started_my: f32,
     /// Cells this rift has claimed (nucleation site + every tip-walk and
-    /// linkage claim), WO-0008 S1: when the rift FAILS, these cells' scar
-    /// maturation is capped at the onset threshold so a failed rift thins
-    /// but never oceanizes — an aulacogen (North Sea, Midcontinent Rift),
-    /// not new ocean floor.
+    /// linkage claim), WO-0008 S1: the rift's own path, recorded for
+    /// linkage bookkeeping and for later sessions that need to attribute
+    /// a corridor to the rift that cut it. Note the ids are grid
+    /// positions from claim time — the plate drifts under them.
     pub cells: Vec<u32>,
 }
 

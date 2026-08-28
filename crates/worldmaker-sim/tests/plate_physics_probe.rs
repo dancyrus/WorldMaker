@@ -107,6 +107,7 @@ fn event_json(e: &TectonicEvent) -> serde_json::Value {
                 MicroplateOrigin::TrenchTrapped => "trench_trapped",
                 MicroplateOrigin::BackArcBasin => "back_arc_basin",
                 MicroplateOrigin::RidgeJump => "ridge_jump",
+                MicroplateOrigin::Severed => "severed",
             },
         }),
     }

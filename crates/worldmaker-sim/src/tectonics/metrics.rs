@@ -1355,8 +1355,7 @@ impl PhysicsTracker {
                 } => {
                     // §3 condition 1 (amended WO-0008 S1): the fraction
                     // threshold OR the absolute margin-span floor.
-                    let abs_cells =
-                        super::step::SUTURE_ABS_CONTACT_KM / sim.cell_spacing_km;
+                    let abs_cells = super::step::SUTURE_ABS_CONTACT_KM / sim.cell_spacing_km;
                     if *contact_fraction < super::step::SUTURE_CONTACT_FRACTION
                         && (*contact_cells as f32) < abs_cells
                     {
@@ -1475,6 +1474,7 @@ fn oversized_enclosed_basin(sim: &SimState, a: u32, b: u32) -> Option<(u32, f64)
     // plate's continent (both sides, id order).
     let mut depth = vec![u16::MAX; n];
     let mut queue: Dq<u32> = Dq::new();
+    #[allow(clippy::needless_range_loop)] // depth is written at c, not iterated
     for c in 0..n {
         if sim.crust_type[c] != 1 {
             continue;
@@ -1487,9 +1487,11 @@ fn oversized_enclosed_basin(sim: &SimState, a: u32, b: u32) -> Option<(u32, f64)
         } else {
             continue;
         };
-        let touches = sim.grid.neighbors_of(c as u32).iter().any(|&nb| {
-            sim.plate_id[nb as usize] == other && sim.crust_type[nb as usize] == 1
-        });
+        let touches = sim
+            .grid
+            .neighbors_of(c as u32)
+            .iter()
+            .any(|&nb| sim.plate_id[nb as usize] == other && sim.crust_type[nb as usize] == 1);
         if touches {
             depth[c] = 0;
             queue.push_back(c as u32);
