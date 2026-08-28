@@ -21,17 +21,17 @@
 //!
 //! - m1 plate count: band 6–25 ARMED. The stddev ≥ 1.5 clause moved to
 //!   RECORDED in WO-0011 S1 (boundary regularization removed the
-//!   fray-driven census churn it was calibrated against; measured 0.89 /
-//!   0.82 post-fix) with a /3 gross-regression backstop; the >500 My pin
-//!   clause's backstop widened 2× → 4× in the same move (pins 1050 /
-//!   1310 My — compact plates cycle more slowly). S2's weld rework
-//!   re-measures the cycle rate; S3 re-arms both.
-//! - m2 suture frequency: Dan's 2–6/Gy band moved to RECORDED in
-//!   WO-0011 S1 with a 1–12/Gy backstop (seed cyrus 1.5/Gy, seed 42
-//!   2.0/Gy post-regularization — same slower cycling as m1); S2
-//!   rewrites the weld action and re-measures, S3 re-arms. The condition
-//!   AUDIT stays armed: every suture carries a §3-satisfying contact
-//!   record (fraction or absolute span).
+//!   fray-driven census churn it was calibrated against) with a /3
+//!   gross-regression backstop; the >500 My pin clause's backstop widened
+//!   2× → 4× in the same move. S3 re-measured both (stddev 0.85 / 0.92,
+//!   pins 360 / 620 My): still outside the old clauses, so both STAY
+//!   RECORDED and re-arm with the break-up/rift balance item the S3
+//!   census finding recommends (plate_shape_gates.rs module note).
+//! - m2 suture frequency: Dan's 2–6/Gy band RE-ARMED in WO-0011 S3 —
+//!   S2's front-limited welds brought both seeds back inside the band
+//!   (2.5 / 2.5, from 1.5 / 2.0 under S1's wholesale-weld states). The
+//!   condition AUDIT stays armed: every suture carries a §3-satisfying
+//!   contact record (fraction or absolute span).
 //! - m3 split frequency: §5 attribution ARMED; the 2–8/Gy band holds at
 //!   seed cyrus (7.0) but seed 42's active Wilson cycle splits at 11/Gy
 //!   — band RECORDED with the 1–16/Gy backstop armed. (More welds feed
@@ -52,12 +52,13 @@
 //!   widely between worlds, and the s2_orogen_width gate carries the
 //!   wide-orogen requirement proper.
 //! - m7 force-ranked speeds: the 2–6 cm/yr mean moved to RECORDED in
-//!   WO-0011 S1 with a 1–12 backstop (seed cyrus 1.66 cm/yr under a
-//!   wholesale-weld 71% supercontinent — S2's front-limited welds will
-//!   not build that state; S3 re-arms); the slab ratio ≥ 2 was already
-//!   RECORDED (0.9–1.5 post-WO-0008-S1: capture removes the slow
-//!   lingerers that made the slab-free side slow, compressing the
-//!   contrast; genuinely settled slab-free plates remain scarce).
+//!   WO-0011 S1 with a 1–12 backstop. S3 re-measured 1.67 / 2.35 cm/yr —
+//!   seed cyrus still idles under a persistent 55% supercontinent (the
+//!   break-up/rift balance item; the band re-arms with it). The slab
+//!   ratio ≥ 2 was already RECORDED (0.9–1.5 post-WO-0008-S1: capture
+//!   removes the slow lingerers that made the slab-free side slow,
+//!   compressing the contrast; genuinely settled slab-free plates remain
+//!   scarce).
 //! - m8 liveliness (ARMED): no plate < 0.05 deg/My for > 200 My outside a
 //!   continent-continent collision, as an emergent property.
 //! - s1_relic_basins (ARMED, WO-0008 S1): no enclosed basin above the
@@ -135,32 +136,33 @@ fn assert_armed(rep: &PhysicsReport, label: &str) {
     // boundary regularization removed the fray-driven census churn —
     // shredded fragments dying and re-spawning — that the 1.5 floor was
     // calibrated against, and the census now breathes through real Wilson
-    // events only (measured 0.97 / 0.86 at the seeds, band 8–12 / 9–12).
-    // A /3 backstop guards against a genuinely pinned census; WO-0011 S3
-    // re-calibrates and re-arms.
+    // events only. S3 re-measured 0.85 / 0.92 at the seeds — still under
+    // the old floor, so it STAYS RECORDED with the /3 backstop; census
+    // churn re-calibration rides on the break-up/rift balance item the
+    // S3 census finding recommends (see plate_shape_gates.rs).
     assert!(
         rep.alive_stddev >= M1_STDDEV_MIN / 3.0,
         "{label}: m1 plate-count stddev grossly regressed — {}",
         detail("m1_plate_count")
     );
     // The pin clause's 2× backstop moved to 4× in WO-0011 S1 (with the
-    // stddev clause above): compact-plate dynamics cycle more slowly
-    // (measured pins 1050 / 1310 My at the seeds), and the census-rate
-    // recalibration belongs to S2's welding rework + S3's re-arming.
+    // stddev clause above): compact-plate dynamics cycle more slowly.
+    // S3 re-measured pins 360 / 620 My — S2's welds halved them, but
+    // seed 42 still exceeds the 500 My cap, so the clause STAYS RECORDED
+    // at the 4× backstop; it re-arms with the break-up/rift balance item.
     assert!(
         rep.alive_pinned_max_my <= 4.0 * M1_PINNED_MAX_MY,
         "{label}: m1 pin grossly regressed — {}",
         detail("m1_plate_count")
     );
-    // m2: Dan's 2–6 welds/Gy band moved to RECORDED in WO-0011 S1 with a
-    // half-band backstop (seed cyrus reads 1.5/Gy post-regularization —
-    // slower cycling, same cause as m1's pin above); S2 rewrites the weld
-    // ACTION wholesale and re-measures, S3 re-arms. The condition audit
-    // stays ARMED in full.
+    // m2: Dan's 2–6 welds/Gy band RE-ARMED in WO-0011 S3 as S1 promised
+    // (S1 had moved it to RECORDED at 1.5/2.0 under the wholesale-weld
+    // supercontinents; S2's front-limited welds brought both seeds back
+    // inside the band at 2.5/2.5). The condition audit stays ARMED in
+    // full.
     assert!(
-        rep.sutures_per_gy >= M2_SUTURES_PER_GY_MIN / 2.0
-            && rep.sutures_per_gy <= 2.0 * M2_SUTURES_PER_GY_MAX,
-        "{label}: m2 weld frequency grossly regressed — {}",
+        rep.sutures_per_gy >= M2_SUTURES_PER_GY_MIN && rep.sutures_per_gy <= M2_SUTURES_PER_GY_MAX,
+        "{label}: m2 weld frequency outside Dan's band — {}",
         detail("m2_suture_frequency")
     );
     assert_eq!(
@@ -247,9 +249,11 @@ fn assert_armed(rep: &PhysicsReport, label: &str) {
     );
     // m7: the 2–6 cm/yr mean band moved to RECORDED in WO-0011 S1 with a
     // half-band backstop (the ratio was already recorded, see module
-    // note): seed cyrus reads 1.66 cm/yr in a world the wholesale weld
-    // action locked under a 71%-of-sphere supercontinent — a state S2's
-    // front-limited welds will not build. S2 re-measures, S3 re-arms.
+    // note). S3 re-measured 1.67 / 2.35 cm/yr: seed cyrus still sits
+    // under a long-lived 55%-of-sphere supercontinent (S2's welds capped
+    // it below the old 71%, but its persistence is the break-up/rift
+    // balance item), so the band STAYS RECORDED and re-arms with that
+    // item.
     assert!(
         rep.mean_speed_cmyr >= M7_MEAN_CMYR_MIN / 2.0
             && rep.mean_speed_cmyr <= 2.0 * M7_MEAN_CMYR_MAX,

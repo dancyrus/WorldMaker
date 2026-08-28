@@ -147,6 +147,12 @@ pub struct Script {
     /// NOT part of `scripted()`: proving the interactive defaults is the
     /// point.
     pub wo10_dir: Option<PathBuf>,
+    /// `--wo11-shots`: the WO-0011 S3 plate-shape verdict set — the
+    /// Plates layer at 53, 600 and 2000 My (plates-0053/0600/2000), Flat
+    /// view, Eckert IV, at Dan's recording settings (the run forces
+    /// 24 plates, land 0.40, vigor 1.0, 2 Gy). Seed and preset come from
+    /// the CLI (the WO pins seed cyrus, Standard7).
+    pub wo11_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -186,6 +192,7 @@ impl Script {
             || self.wo8_dir.is_some()
             || self.wo8_s2_dir.is_some()
             || self.wo9_dir.is_some()
+            || self.wo11_dir.is_some()
             || self.perf_out.is_some()
     }
     /// Startup state (WO-0010): interactive launches open in Draft, Flat
@@ -257,6 +264,12 @@ enum ScriptState {
     },
     /// WO-0010 proof shot (step 6): the untouched interactive startup.
     Wo10Shot {
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0011 S3 plate-shape verdict set (step 3).
+    Wo11Shot {
+        stage: usize,
         frames: u32,
         requested: bool,
     },
@@ -495,12 +508,20 @@ impl WorldApp {
             needs_bake: false,
             pending: PendingEdits::new(),
             hotspot_baseline: None,
-            plate_count: 12,
-            land_fraction: 0.29,
+            // The WO-0011 verdict set reproduces Dan's recording settings
+            // (24 plates, land 0.40, vigor 1.0) — the world of the
+            // original plate-shape report.
+            plate_count: if script.wo11_dir.is_some() { 24 } else { 12 },
+            land_fraction: if script.wo11_dir.is_some() {
+                0.40
+            } else {
+                0.29
+            },
             tectonic_vigor: 1.0,
             // The WO-0004 shot set views t = 600 My, past the default
-            // span; the WO-0006 set spans the full 2 Gy history.
-            span_my: if script.wo6_dir.is_some() {
+            // span; the WO-0006 and WO-0011 sets span the full 2 Gy
+            // history.
+            span_my: if script.wo6_dir.is_some() || script.wo11_dir.is_some() {
                 2000.0
             } else if script.wo4_dir.is_some() {
                 1000.0
@@ -601,6 +622,12 @@ impl WorldApp {
                 }
             } else if script.wo10_dir.is_some() {
                 ScriptState::Wo10Shot {
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo11_dir.is_some() {
+                ScriptState::Wo11Shot {
+                    stage: 0,
                     frames: 0,
                     requested: false,
                 }
@@ -1689,6 +1716,7 @@ impl WorldApp {
             ScriptState::Wo8Shot { .. } => self.drive_wo8(ctx),
             ScriptState::Wo9Shot { .. } => self.drive_wo9(ctx),
             ScriptState::Wo10Shot { .. } => self.drive_wo10(ctx),
+            ScriptState::Wo11Shot { .. } => self.drive_wo11(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -1855,6 +1883,83 @@ impl WorldApp {
             };
         } else {
             self.script_state = ScriptState::Wo6Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0011 S3 verdict set: the Plates layer at 53, 600 and 2000 My,
+    /// Flat view, Eckert IV — the view of Dan's original recording (world
+    /// flags forced to his settings at construction). Times land on the
+    /// nearest keyframe (10 My cadence at Standard7, so 53 My shows the
+    /// t = 50 My keyframe).
+    fn drive_wo11(&mut self, ctx: &egui::Context) {
+        const SHOTS: [(&str, f32); 3] = [
+            ("plates-0053", 53.0),
+            ("plates-0600", 600.0),
+            ("plates-2000", 2000.0),
+        ];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo11Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            let (name, t_my) = SHOTS[stage];
+            let kf = self
+                .history
+                .as_ref()
+                .map(|h| {
+                    ((t_my / h.keyframe_interval_my).round() as usize).min(h.keyframes.len() - 1)
+                })
+                .unwrap_or(0);
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            self.view_mode = ViewMode::Flat;
+            self.projection = Projection::EckertIv;
+            self.viewing_kf = kf;
+            self.layer = Layer::Plates;
+            self.needs_bake = true;
+            log::info!("wo11 screenshot stage {stage}: {name}");
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo11_dir.clone().unwrap();
+            let name = SHOTS[stage].0;
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo11Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo11Shot {
                 stage,
                 frames,
                 requested,
