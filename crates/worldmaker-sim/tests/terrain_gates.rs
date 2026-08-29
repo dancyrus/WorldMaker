@@ -184,8 +184,14 @@ fn no_river_flows_uphill_seed_cyrus() {
 /// Terrain goldens at L6, seed 42, morpho 30 My — NEW in WO-0009 S2
 /// (decision log). Regenerating them needs the same sanction as every
 /// golden move.
-const GOLDEN_TERRAIN_ELEVATION_L6_SEED42_M30: u64 = 0x096b_981f_aff6_811b;
-const GOLDEN_TERRAIN_DISCHARGE_L6_SEED42_M30: u64 = 0xc114_7e21_dc39_db10;
+///
+/// Regenerated 2026-08-28 for WO-0012 S1 — the eighth sanctioned golden
+/// move (announced in the WO; see determinism_tests.rs): conservative
+/// land transport changes every tectonic trajectory, and terrain derives
+/// from the tectonic world. Old WO-0009 S2 values 0x096b_981f_aff6_811b /
+/// 0xc114_7e21_dc39_db10.
+const GOLDEN_TERRAIN_ELEVATION_L6_SEED42_M30: u64 = 0x4414_6782_b4bd_1f1c;
+const GOLDEN_TERRAIN_DISCHARGE_L6_SEED42_M30: u64 = 0xabb4_efa0_6a9b_dc25;
 
 #[test]
 #[ignore = "dev aid: prints the terrain golden hashes"]

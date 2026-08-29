@@ -166,6 +166,12 @@ pub struct Script {
     /// 24 plates, land 0.40, vigor 1.0, 2 Gy). Seed and preset come from
     /// the CLI (the WO pins seed cyrus, Standard7).
     pub wo11_dir: Option<PathBuf>,
+    /// `--wo12-shots`: the WO-0012 S1 anti-striping verdict set — the
+    /// Elevation layer at 53, 600 and 2000 My (land-0053/0600/2000), Flat
+    /// view, Eckert IV, at Dan's striping-report settings (12 plates,
+    /// land 0.29, vigor 1.0, 2 Gy — the defaults). Seed and preset come
+    /// from the CLI (the WO pins seed cyrus, Standard7).
+    pub wo12_dir: Option<PathBuf>,
     pub perf_out: Option<PathBuf>,
     /// Grid-build timings measured in main() before the window opened.
     pub grid_build_ms: Vec<(u32, f64)>,
@@ -208,6 +214,7 @@ impl Script {
             || self.wo9_s2_dir.is_some()
             || self.wo9_s3_dir.is_some()
             || self.wo11_dir.is_some()
+            || self.wo12_dir.is_some()
             || self.perf_out.is_some()
     }
     /// Startup state (WO-0010): interactive launches open in Draft, Flat
@@ -298,6 +305,12 @@ enum ScriptState {
     },
     /// WO-0011 S3 plate-shape verdict set (step 3).
     Wo11Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+    },
+    /// WO-0012 S1 anti-striping verdict set (step 4).
+    Wo12Shot {
         stage: usize,
         frames: u32,
         requested: bool,
@@ -589,7 +602,10 @@ impl WorldApp {
             // The WO-0004 shot set views t = 600 My, past the default
             // span; the WO-0006 and WO-0011 sets span the full 2 Gy
             // history.
-            span_my: if script.wo6_dir.is_some() || script.wo11_dir.is_some() {
+            span_my: if script.wo6_dir.is_some()
+                || script.wo11_dir.is_some()
+                || script.wo12_dir.is_some()
+            {
                 2000.0
             } else if script.wo4_dir.is_some() {
                 1000.0
@@ -714,6 +730,12 @@ impl WorldApp {
                 }
             } else if script.wo11_dir.is_some() {
                 ScriptState::Wo11Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
+                }
+            } else if script.wo12_dir.is_some() {
+                ScriptState::Wo12Shot {
                     stage: 0,
                     frames: 0,
                     requested: false,
@@ -1961,6 +1983,7 @@ impl WorldApp {
             ScriptState::Wo9S3Shot { .. } => self.drive_wo9_s3(ctx),
             ScriptState::Wo10Shot { .. } => self.drive_wo10(ctx),
             ScriptState::Wo11Shot { .. } => self.drive_wo11(ctx),
+            ScriptState::Wo12Shot { .. } => self.drive_wo12(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
         }
     }
@@ -2404,6 +2427,83 @@ impl WorldApp {
             };
         } else {
             self.script_state = ScriptState::Wo11Shot {
+                stage,
+                frames,
+                requested,
+            };
+        }
+    }
+
+    /// WO-0012 S1 anti-striping verdict set: the Elevation layer (land
+    /// shapes) at 53, 600 and 2000 My, Flat view, Eckert IV — the same
+    /// cadence as the WO-0011 set, at Dan's striping-report settings
+    /// (12 plates / land 0.29 / 6 hotspots — the defaults; seed and
+    /// preset come from the CLI, the WO pins seed cyrus, Standard7).
+    fn drive_wo12(&mut self, ctx: &egui::Context) {
+        const SHOTS: [(&str, f32); 3] = [
+            ("land-0053", 53.0),
+            ("land-0600", 600.0),
+            ("land-2000", 2000.0),
+        ];
+        let (stage, frames, requested) = match &self.script_state {
+            ScriptState::Wo12Shot {
+                stage,
+                frames,
+                requested,
+            } => (*stage, *frames, *requested),
+            _ => return,
+        };
+        let frames = frames + 1;
+        let mut requested = requested;
+        if frames == 1 {
+            let (name, t_my) = SHOTS[stage];
+            let kf = self
+                .history
+                .as_ref()
+                .map(|h| {
+                    ((t_my / h.keyframe_interval_my).round() as usize).min(h.keyframes.len() - 1)
+                })
+                .unwrap_or(0);
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            self.view_mode = ViewMode::Flat;
+            self.projection = Projection::EckertIv;
+            self.viewing_kf = kf;
+            self.layer = Layer::Elevation;
+            self.needs_bake = true;
+            log::info!("wo12 screenshot stage {stage}: {name}");
+        }
+        // 45 frames gives the viewport resize time to land before capture.
+        if frames >= 45 && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo12_dir.clone().unwrap();
+            let name = SHOTS[stage].0;
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo12Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo12Shot {
                 stage,
                 frames,
                 requested,

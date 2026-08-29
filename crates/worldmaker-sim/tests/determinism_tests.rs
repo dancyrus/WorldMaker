@@ -110,18 +110,29 @@ fn fixed_seed_reproduces_committed_hash() {
 /// 0x7680_b5da_d03d_486a / crust 0xebe0_d5a5_a29e_2745. Values from
 /// print_tectonic_goldens on Daniels-MacBook-Air; the phase-0 noise
 /// golden above verified UNMOVED in the same suite run.
-const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0xee3c_1341_0e60_7b05;
-const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xaa22_f87a_dacd_7acd;
+/// ALL FOUR regenerated 2026-08-28 for WO-0012 S1 — the EIGHTH sanctioned
+/// golden move (announced in the WO): conservative land transport replaced
+/// the re-rasterized crust content with parcel transport (continental
+/// content moves with the plate, never copies), retiring the WO-0008
+/// same-plate inventory guard and rerouting merge volume through the
+/// underthrust budget — trajectories change from the first commit of the
+/// first plate by design, a whole-world move. Old WO-0011 values
+/// 0xee3c_1341_0e60_7b05 / 0xaa22_f87a_dacd_7acd / crust
+/// 0x1a9b_7e90_1e25_4785 / lithology 0x0580_68b5_b4f4_1de9. Values from
+/// print_tectonic_goldens on Daniels-MacBook-Air; the phase-0 noise golden
+/// above verified UNMOVED in the same suite run.
+const GOLDEN_TECTONIC_ELEVATION_L6_SEED42: u64 = 0x44a7_5a11_6ac6_3a4c;
+const GOLDEN_TECTONIC_PLATES_L6_SEED42: u64 = 0xbd8c_f36f_dc50_46a2;
 /// Pinned at WO-0003 close (S4 audit): the harness had recorded this hash in
 /// every results JSON but no test asserted it, leaving crust type free to
 /// drift cross-platform unnoticed. Regenerated with the pair above.
-const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0x1a9b_7e90_1e25_4785;
+const GOLDEN_TECTONIC_CRUST_TYPE_L6_SEED42: u64 = 0xf5b0_036d_ffa6_46c5;
 /// WO-0009 S2: the per-cell GLiM lithology tracer, NEW with this session.
 /// The seventh sanctioned golden move was budgeted for it but turned out a
 /// no-op: lithology is a passive tracer (no RNG draws, no dynamics reads),
 /// so all three goldens above verified UNMOVED when it landed — this
 /// golden was added, none moved (decision log, WO-0009 S2).
-const GOLDEN_TECTONIC_LITHOLOGY_L6_SEED42: u64 = 0x0580_68b5_b4f4_1de9;
+const GOLDEN_TECTONIC_LITHOLOGY_L6_SEED42: u64 = 0x9091_587b_c45e_869b;
 
 /// Golden-regeneration aid: prints the three tectonic hashes for the
 /// current build. Used exactly once per sanctioned golden move.
