@@ -1,0 +1,80 @@
+{
+  "machine": "Daniels-MacBook-Air",
+  "date": "2026-08-29",
+  "app_version": "0.1.0",
+  "metrics": {
+    "config": {
+      "keyframe": "last",
+      "level": 6,
+      "morpho_my": 30.0,
+      "river_threshold_m3s": 2000.0,
+      "span_my": 500.0
+    },
+    "seed_42": {
+      "basin_count": 1774,
+      "basins_min_100_cells": 31,
+      "benchmark_table_6_4_bands_km_per_km2": {
+        "coarse": [
+          0.0,
+          5.0
+        ],
+        "medium": [
+          5.0,
+          14.0
+        ],
+        "note": "recorded, not gated: Table 6.4 counts sub-cell streams no ≥100 km grid can resolve"
+      },
+      "channel_density_km_per_km2": 0.009683374436001261,
+      "drawn_drainage_density_km_per_km2": 0.0009590749323242695,
+      "drawn_network_km": 184870.4154247792,
+      "endorheic_basins": 0,
+      "hypsometry": {
+        "ashman_d": 8.4817219330702,
+        "bimodal": true,
+        "mode_high_m": 122.3786886669317,
+        "mode_low_m": -5167.196259797678
+      },
+      "lake_cells": 2247,
+      "lake_count": 593,
+      "land_area_km2": 192759094.40856212,
+      "longest_river_km": 4244.160317055817,
+      "max_strahler_order": 3,
+      "river_cells": 2180,
+      "river_segments": 844,
+      "river_threshold_m3s": 2000.0
+    },
+    "seed_cyrus": {
+      "basin_count": 1274,
+      "basins_min_100_cells": 35,
+      "benchmark_table_6_4_bands_km_per_km2": {
+        "coarse": [
+          0.0,
+          5.0
+        ],
+        "medium": [
+          5.0,
+          14.0
+        ],
+        "note": "recorded, not gated: Table 6.4 counts sub-cell streams no ≥100 km grid can resolve"
+      },
+      "channel_density_km_per_km2": 0.009684869313663377,
+      "drawn_drainage_density_km_per_km2": 0.0010144952087699484,
+      "drawn_network_km": 189249.49324858165,
+      "endorheic_basins": 0,
+      "hypsometry": {
+        "ashman_d": 8.855477464610441,
+        "bimodal": true,
+        "mode_high_m": 123.25377469655868,
+        "mode_low_m": -5011.326290215358
+      },
+      "lake_cells": 2239,
+      "lake_count": 621,
+      "land_area_km2": 186545477.60559878,
+      "longest_river_km": 2897.816223550323,
+      "max_strahler_order": 2,
+      "river_cells": 2170,
+      "river_segments": 788,
+      "river_threshold_m3s": 2000.0
+    }
+  }
+}
