@@ -1,5 +1,5 @@
 //! Diagnostic probe for the within-plate LAND striping artifact
-//! (Cowork investigation, 2026-08-28, cloud clone only — NOT committed).
+//! (Cowork investigation, 2026-08-28; committed by WO-0012 S1 step 1).
 //! Dan's app shows parallel dashed trains of land cells across plate
 //! interiors at 2 Gy. Candidate mechanisms:
 //!   M1 arc-band sweep: the 150-250 km arc band is anchored to the trench;
@@ -11,6 +11,8 @@
 //!   M3 advection duplication: the gather can source two destination
 //!      cells from one source cell, copying island crust; repeated commits
 //!      smear an island into a dashed train (cont_gained_by_advection).
+//!      CONFIRMED as the dominant mechanism; fixed by WO-0012 S1's
+//!      conservative parcel transport.
 //!
 //! Measures every 100 My:
 //!   land%      crust_type==1 share of the sphere
@@ -23,11 +25,17 @@
 //!              from any CURRENT trench cell — stranded relics
 //!   d(arc/adv/cls|rgap/cons/rift)  counter deltas since last sample
 //!
-//! Run: cargo test -p worldmaker-sim --release land_striping_probe -- --ignored --nocapture
+//! Diagnostic run (Dan's app settings, seed cyrus):
+//!   cargo test -p worldmaker-sim --release land_striping_probe -- --ignored --nocapture
+//! WO-0012 S1 step-4 measurement (3 seeds x 2 plate configs, JSON to
+//! docs/results; env WM_STRIPING_VARIANT / WM_STRIPING_OUT override the
+//! variant tag and output path so a before-fix build can record too):
+//!   cargo test -p worldmaker-sim --release land_striping_measure -- --ignored --nocapture
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use serde_json::json;
 use worldmaker_core::hash::seed_from_text;
 use worldmaker_core::Grid;
 use worldmaker_sim::tectonics::{SimState, TectonicsParams, F_TRENCH};
@@ -60,9 +68,16 @@ fn quantize(s: &mut SimState) {
     }
 }
 
-fn run(label: &str, plate_count: u32, land_fraction: f32, hotspot_count: u32) {
+/// One 2 Gy L6 run; prints the sample table and returns it as JSON.
+fn run(
+    label: &str,
+    seed_text: &str,
+    plate_count: u32,
+    land_fraction: f32,
+    hotspot_count: u32,
+) -> serde_json::Value {
     let grid = Arc::new(Grid::build(6));
-    let seed = seed_from_text("cyrus");
+    let seed = seed_from_text(seed_text);
     let params = TectonicsParams {
         plate_count,
         land_fraction,
@@ -80,10 +95,17 @@ fn run(label: &str, plate_count: u32, land_fraction: f32, hotspot_count: u32) {
     let mut sim = SimState::setup(seed, &grid, &params);
     quantize(&mut sim);
 
-    println!("=== {label}: plates {plate_count}, land {land_fraction}, hotspots {hotspot_count}, L6 cyrus 2 Gy ===");
-    println!("t_My  land%  comps  tiny  chainC  chain%  far%   d_arc  d_adv  d_cls | d_rgap d_cons d_rift");
+    println!(
+        "=== {label}: seed {seed_text}, plates {plate_count}, land {land_fraction}, \
+         hotspots {hotspot_count}, L6 2 Gy ==="
+    );
+    println!(
+        "t_My  land%  comps  tiny  chainC  chain%  far%   d_arc  d_adv  d_cls | \
+         d_rgap d_cons d_rift  d_mrg"
+    );
 
-    let mut prev = [0u64; 6];
+    let mut prev = [0u64; 13];
+    let mut samples: Vec<serde_json::Value> = Vec::new();
 
     for step_idx in 0..total_steps {
         // On sampled steps, snapshot the land mask to classify this step's
@@ -96,9 +118,9 @@ fn run(label: &str, plate_count: u32, land_fraction: f32, hotspot_count: u32) {
             None
         };
         sim.step(seed, step_idx);
+        let mut step_coast = 0u32;
+        let mut step_debris = 0u32;
         if let Some(pl) = &prev_land {
-            let mut coast = 0u32;
-            let mut debris = 0u32;
             for c in 0..n {
                 if sim.crust_type[c] == 1 && !pl[c] {
                     let adj = grid
@@ -106,13 +128,13 @@ fn run(label: &str, plate_count: u32, land_fraction: f32, hotspot_count: u32) {
                         .iter()
                         .any(|&nb| pl[nb as usize]);
                     if adj {
-                        coast += 1;
+                        step_coast += 1;
                     } else {
-                        debris += 1;
+                        step_debris += 1;
                     }
                 }
             }
-            println!("      step-gains: coastline {coast}, isolated-debris {debris}");
+            println!("      step-gains: coastline {step_coast}, isolated-debris {step_debris}");
         }
         if (step_idx + 1) % STEPS_PER_KEYFRAME == 0 {
             quantize(&mut sim);
@@ -202,34 +224,144 @@ fn run(label: &str, plate_count: u32, land_fraction: f32, hotspot_count: u32) {
             sim.cont_lost_to_ridge_gap,
             sim.cont_lost_to_consumption,
             sim.cont_lost_to_rift,
+            sim.parcels_merged,
+            sim.suture_count,
+            sim.breakup_count,
+            sim.underthrust_removed_q as u64,
+            sim.underthrust_deposited_q as u64,
+            sim.underthrust_spilled_q as u64,
+            sim.underthrust_incorporated_q as u64,
         ];
         let d: Vec<u64> = cur.iter().zip(prev.iter()).map(|(a, b)| a - b).collect();
         prev = cur;
 
+        // Slow-plate / weld context (m8 diagnostics): which plates sit
+        // below the liveliness floor, and the live welds.
+        let slow: Vec<String> = sim
+            .plates
+            .iter()
+            .filter(|p| p.alive && p.speed_deg_my < 0.05)
+            .map(|p| format!("{}@{:.3}", p.id, p.speed_deg_my))
+            .collect();
+        let welds: Vec<String> = sim
+            .welds
+            .iter()
+            .map(|w| format!("{}<-{}", w.winner, w.loser))
+            .collect();
+        if !slow.is_empty() || !welds.is_empty() {
+            println!(
+                "      slow: [{}] welds: [{}] cc-timers: {}",
+                slow.join(" "),
+                welds.join(" "),
+                sim.collisions.len()
+            );
+        }
+
+        let t_my = ((step_idx + 1) as f32 * DT_MY) as u32;
+        let land_pct = 100.0 * land_cells as f32 / n as f32;
+        let chain_pct = 100.0 * chain_cells.len() as f32 / land_cells.max(1) as f32;
+        let far_pct = 100.0 * far as f32 / chain_cells.len().max(1) as f32;
         println!(
-            "{:5}  {:4.1}  {:5}  {:4}  {:6}  {:5.1}  {:5.1}  {:6} {:6} {:6} | {:6} {:6} {:6}",
-            ((step_idx + 1) as f32 * DT_MY) as u32,
-            100.0 * land_cells as f32 / n as f32,
-            comps,
-            tiny,
-            chain_comps,
-            100.0 * chain_cells.len() as f32 / land_cells.max(1) as f32,
-            100.0 * far as f32 / chain_cells.len().max(1) as f32,
-            d[0],
-            d[1],
-            d[2],
-            d[3],
-            d[4],
-            d[5],
+            "{:5}  {:4.1}  {:5}  {:4}  {:6}  {:5.1}  {:5.1}  {:6} {:6} {:6} | {:6} {:6} {:6} {:6} | su {} bk {} | uq rm {} dep {} sp {} inc {}",
+            t_my, land_pct, comps, tiny, chain_comps, chain_pct, far_pct,
+            d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12],
+        );
+        samples.push(json!({
+            "t_my": t_my,
+            "land_pct": land_pct,
+            "components_count": comps,
+            "tiny_components_count": tiny,
+            "chain_components_count": chain_comps,
+            "chain_pct": chain_pct,
+            "far_chain_pct": far_pct,
+            "d_arc_count": d[0],
+            "d_advection_count": d[1],
+            "d_closure_count": d[2],
+            "d_ridge_gap_count": d[3],
+            "d_consumption_count": d[4],
+            "d_rift_count": d[5],
+            "d_merge_count": d[6],
+            "d_suture_count": d[7],
+            "d_breakup_count": d[8],
+            "d_underthrust_removed_q": d[9],
+            "d_underthrust_deposited_q": d[10],
+            "d_underthrust_spilled_q": d[11],
+            "d_underthrust_incorporated_q": d[12],
+            "step_gain_coastline_count": step_coast,
+            "step_gain_isolated_debris_count": step_debris,
+        }));
+    }
+    println!(
+        "end: rifts started {} failed {} linked {} breakups {} sutures {} ledger {}",
+        sim.rift_start_count,
+        sim.rift_failed_count,
+        sim.rift_link_count,
+        sim.breakup_count,
+        sim.suture_count,
+        sim.rifts.len()
+    );
+    for r in &sim.rifts {
+        println!(
+            "  rift plate {} kind {:?} done {}/{} started {} My, {} cells",
+            r.plate,
+            r.kind,
+            r.done_a,
+            r.done_b,
+            r.started_my,
+            r.cells.len()
         );
     }
+    json!({
+        "config": {
+            "level": 6,
+            "seed": seed_text,
+            "span_my": 2000.0,
+            "plate_count": plate_count,
+            "land_fraction": land_fraction,
+            "hotspot_count": hotspot_count,
+        },
+        "samples": samples,
+    })
+}
+
+#[test]
+#[ignore = "dev probe: 24-plate consolidation check"]
+fn consolidation_probe() {
+    run("shape-config", "42", 24, 0.40, 6);
 }
 
 #[test]
 #[ignore = "dev probe: land striping series"]
 fn land_striping_probe() {
     // (a) Dan's in-app settings from the report.
-    run("dan-app", 12, 0.29, 6);
+    run("dan-app", "cyrus", 12, 0.29, 6);
     // (b) hotspots off: isolates arc + advection mechanisms.
-    run("no-hotspots", 12, 0.29, 0);
+    run("no-hotspots", "cyrus", 12, 0.29, 0);
+}
+
+/// WO-0012 S1 step 4: the measurement Dan's S2 gate ruling reads. Three
+/// seeds at both plate configs, machine-labelled JSON to docs/results.
+#[test]
+#[ignore = "measurement run: WO-0012 S1 step 4"]
+fn land_striping_measure() {
+    let variant =
+        std::env::var("WM_STRIPING_VARIANT").unwrap_or_else(|_| "after_fix".to_owned());
+    let mut runs: Vec<serde_json::Value> = Vec::new();
+    for seed_text in ["cyrus", "42", "7"] {
+        for &(plates, land) in &[(12u32, 0.29f32), (24, 0.40)] {
+            let label = format!("{variant} {seed_text} p{plates}");
+            runs.push(run(&label, seed_text, plates, land, 6));
+        }
+    }
+    let metrics = json!({ "variant": variant, "runs": runs });
+    let path = std::env::var("WM_STRIPING_OUT").unwrap_or_else(|_| {
+        format!(
+            "{}/../../docs/results/land-striping-wo0012-{}.json",
+            env!("CARGO_MANIFEST_DIR"),
+            worldmaker_io::results::machine_name()
+        )
+    });
+    let file = worldmaker_io::ResultsFile::new(&worldmaker_io::results::today_utc_iso(), metrics);
+    file.write(std::path::Path::new(&path)).unwrap();
+    eprintln!("wrote {path}");
 }
