@@ -21,6 +21,10 @@ use worldmaker_sim::tectonics::{PlateState, F_BND_CONVERGENT, F_BND_DIVERGENT};
 pub struct BoundaryChain {
     pub btype: u8,
     pub pts: Vec<[f32; 3]>,
+    /// Per-point ribbon width scale (multiplies the uniform half-width).
+    /// Empty = 1.0 everywhere (boundary chains and arrows); rivers
+    /// (WO-0009 S3) fill it with their sqrt(Q) taper, one entry per point.
+    pub widths: Vec<f32>,
     pub closed: bool,
 }
 
@@ -280,7 +284,12 @@ pub fn extract(grid: &Grid, plate_id: &[u16], flags: &[u16]) -> BoundarySet {
             for _ in 0..2 {
                 pts = chaikin_once(&pts, closed);
             }
-            BoundaryChain { btype, pts, closed }
+            BoundaryChain {
+                btype,
+                pts,
+                widths: Vec::new(),
+                closed,
+            }
         })
         .collect();
     BoundarySet { chains }
@@ -399,11 +408,13 @@ fn push_arrow(chains: &mut Vec<BoundaryChain>, base: [f32; 3], dir: [f32; 3], ar
     chains.push(BoundaryChain {
         btype: BTYPE_ARROW,
         pts: vec![base, tip],
+        widths: Vec::new(),
         closed: false,
     });
     chains.push(BoundaryChain {
         btype: BTYPE_ARROW,
         pts: vec![wl, tip, wr],
+        widths: Vec::new(),
         closed: false,
     });
 }

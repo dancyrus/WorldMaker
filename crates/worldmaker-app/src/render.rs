@@ -209,6 +209,8 @@ pub fn layer_flags(layer: Layer, debug_cell_bounds: bool, debug_legacy_bands: bo
         Layer::Thickness => 3,
         Layer::Overlay => 4,
         Layer::Lithology => 5,
+        Layer::Discharge => 6,
+        Layer::Sediment => 7,
     };
     id | if debug_cell_bounds {
         LF_DEBUG_CELL_BOUNDS
@@ -252,7 +254,8 @@ struct FlatUniforms {
 // ----- plate-boundary ribbons (d3a §8) -----
 
 /// Globe ribbon vertex: this point, the next point (for the screen-space
-/// direction), side (+/-1) and the boundary type. Stride 32.
+/// direction), side (+/-1), the boundary type and the per-point width
+/// scale (1.0 for boundaries/arrows; rivers taper by sqrt(Q)). Stride 36.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct BndVertex3 {
@@ -260,9 +263,10 @@ struct BndVertex3 {
     q: [f32; 3],
     side: f32,
     btype: f32,
+    wscale: f32,
 }
 
-/// Flat ribbon vertex in projected normalized map coordinates. Stride 24.
+/// Flat ribbon vertex in projected normalized map coordinates. Stride 28.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct BndVertex2 {
@@ -270,6 +274,7 @@ struct BndVertex2 {
     q: [f32; 2],
     side: f32,
     btype: f32,
+    wscale: f32,
 }
 
 fn extrapolate3(last: [f32; 3], prev: [f32; 3]) -> [f32; 3] {
@@ -317,17 +322,20 @@ fn build_globe_ribbons(set: &BoundarySet) -> (Vec<BndVertex3>, Vec<u32>) {
                 extrapolate3(ch.pts[n - 1], ch.pts[n - 2])
             };
             let bt = ch.btype as f32;
+            let w = ch.widths.get(j).copied().unwrap_or(1.0);
             vs.push(BndVertex3 {
                 p,
                 q,
                 side: 1.0,
                 btype: bt,
+                wscale: w,
             });
             vs.push(BndVertex3 {
                 p,
                 q,
                 side: -1.0,
                 btype: bt,
+                wscale: w,
             });
         }
         ribbon_indices(&mut is, base, n, ch.closed);
@@ -356,19 +364,23 @@ fn build_flat_ribbons(
         [v[0] / len, v[1] / len, v[2] / len]
     };
 
-    let mut polylines: Vec<(u8, Vec<[f32; 2]>, bool)> = Vec::new();
+    // (btype, projected points with per-point width scale, closed).
+    type FlatPolyline = (u8, Vec<([f32; 2], f32)>, bool);
+    let mut polylines: Vec<FlatPolyline> = Vec::new();
     for ch in &set.chains {
         let n = ch.pts.len();
         if n < 2 {
             continue;
         }
-        let mut pieces: Vec<Vec<[f32; 2]>> = Vec::new();
-        let mut cur: Vec<[f32; 2]> = vec![project(ch.pts[0])];
+        let width_at = |j: usize| ch.widths.get(j).copied().unwrap_or(1.0);
+        let mut pieces: Vec<Vec<([f32; 2], f32)>> = Vec::new();
+        let mut cur: Vec<([f32; 2], f32)> = vec![(project(ch.pts[0]), width_at(0))];
         let mut split_any = false;
         let edges = if ch.closed { n } else { n - 1 };
         for e in 0..edges {
             let u = ch.pts[e];
             let v = ch.pts[(e + 1) % n];
+            let (wu, wv) = (width_at(e), width_at((e + 1) % n));
             let (_, lon_u) = unit_to_latlon(u);
             let (_, lon_v) = unit_to_latlon(v);
             if (lon_u - lon_v).abs() > PI {
@@ -391,13 +403,14 @@ fn build_flat_ribbons(
                     let sign = if lon_u > 0.0 { 1.0 } else { -1.0 };
                     let (x_out, y_edge) = proj.project(lat_c, sign * PI);
                     let (x_in, _) = proj.project(lat_c, -sign * PI);
-                    cur.push([x_out, y_edge]);
+                    let wc = wu + (wv - wu) * t;
+                    cur.push(([x_out, y_edge], wc));
                     pieces.push(std::mem::take(&mut cur));
-                    cur.push([x_in, y_edge]);
+                    cur.push(([x_in, y_edge], wc));
                     split_any = true;
                 }
             }
-            cur.push(project(v));
+            cur.push((project(v), wv));
         }
         if ch.closed {
             if split_any {
@@ -432,13 +445,13 @@ fn build_flat_ribbons(
         }
         let base = vs.len() as u32;
         for j in 0..n {
-            let p = pts[j];
+            let (p, w) = pts[j];
             let q = if closed {
-                pts[(j + 1) % n]
+                pts[(j + 1) % n].0
             } else if j + 1 < n {
-                pts[j + 1]
+                pts[j + 1].0
             } else {
-                extrapolate2(pts[n - 1], pts[n - 2])
+                extrapolate2(pts[n - 1].0, pts[n - 2].0)
             };
             let btf = bt as f32;
             vs.push(BndVertex2 {
@@ -446,12 +459,14 @@ fn build_flat_ribbons(
                 q,
                 side: 1.0,
                 btype: btf,
+                wscale: w,
             });
             vs.push(BndVertex2 {
                 p,
                 q,
                 side: -1.0,
                 btype: btf,
+                wscale: w,
             });
         }
         ribbon_indices(&mut is, base, n, closed);
@@ -695,7 +710,7 @@ impl SceneResources {
             cull_mode: None,
             ..Default::default()
         };
-        let vec_attr = |dims: wgpu::VertexFormat, floats: u64| -> [wgpu::VertexAttribute; 4] {
+        let vec_attr = |dims: wgpu::VertexFormat, floats: u64| -> [wgpu::VertexAttribute; 5] {
             [
                 wgpu::VertexAttribute {
                     format: dims,
@@ -716,6 +731,11 @@ impl SceneResources {
                     format: wgpu::VertexFormat::Float32,
                     offset: 8 * floats + 4,
                     shader_location: 3,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 8 * floats + 8,
+                    shader_location: 4,
                 },
             ]
         };

@@ -25,8 +25,8 @@ struct ShadeParams {
     seed_lo: u32,
     seed_hi: u32,
     // bits 0..=3 layer id (0 elevation, 1 plates, 2 crust age, 3 thickness,
-    // 4 overlay, 5 lithology); bit 8 debug true-cell boundaries; bit 9
-    // debug legacy boundary bands.
+    // 4 overlay, 5 lithology, 6 discharge, 7 sediment); bit 8 debug
+    // true-cell boundaries; bit 9 debug legacy boundary bands.
     layer_flags: u32,
     // Render-detail fBm octaves.
     octaves: u32,
@@ -47,6 +47,10 @@ const LF_DEBUG_BANDS: u32 = 512u; // 1 << 9
 const CAT_RANK_MASK: u32 = 0xFFu;
 const CAT_BND_SHIFT: u32 = 8u;
 const CAT_CONTINENT: u32 = 65536u; // 1 << 16
+// WO-0009 S3: lake fill on the Elevation layer (standing water at spill
+// level) and the Discharge layer's ocean mask.
+const CAT_LAKE: u32 = 131072u; // 1 << 17
+const CAT_WATER: u32 = 262144u; // 1 << 18
 // Overlay layer (WO-0006 S3): bits 20..=27 carry the slab plate's color
 // index; the scalar carries the slab fade (0 = no slab under this cell).
 const CAT_SLAB_SHIFT: u32 = 20u;
@@ -240,6 +244,26 @@ fn resolve_fragment(
         // Lithology (WO-0009 S2): categorical GLiM class, winner cell only
         // — crisp true-cell shapes like Plates. LUT row 6, texel = class.
         color = lut_texel(6u, cat_win & CAT_RANK_MASK);
+    } else if layer == 6u {
+        // Discharge (WO-0009 S3): log-scaled viridis on land; ocean cells
+        // fixed-dark and masked out of the interpolation so river mouths
+        // stay bright to the coast (same masking as crust-age continents).
+        if (cat_win & CAT_WATER) != 0u {
+            color = lut_texel(5u, 11u);
+        } else {
+            let m = vec3<f32>(
+                select(1.0, 0.0, (v0.y & CAT_WATER) != 0u),
+                select(1.0, 0.0, (v1.y & CAT_WATER) != 0u),
+                select(1.0, 0.0, (v2.y & CAT_WATER) != 0u),
+            );
+            let wm = w * m;
+            let t = dot(wm, s) / max(wm.x + wm.y + wm.z, 1e-6);
+            color = lut_ramp(2u, t);
+        }
+    } else if layer == 7u {
+        // Sediment (WO-0009 S3, debug): log-scaled batlow everywhere —
+        // seafloor deposition is the point of looking.
+        color = lut_ramp(3u, dot(w, s));
     } else {
         // Elevation: the rasterizer interpolates the VALUE (via w), render
         // detail adds sub-cell relief, then the live sea level thresholds
@@ -266,6 +290,12 @@ fn resolve_fragment(
             color = lut_ramp(0u, sqrt(clamp(-e / 6000.0, 0.0, 1.0)));
         } else {
             color = lut_ramp(1u, e / 5500.0);
+        }
+        // Lake fill (WO-0009 S3): standing water at spill level draws a
+        // flat, crisp winner-cell fill over the hypsometric land — render
+        // detail never ripples a lake surface.
+        if (cat_win & CAT_LAKE) != 0u && e > 0.0 {
+            color = lut_texel(5u, 10u);
         }
     }
 
@@ -654,8 +684,10 @@ fn fs_flat(in: FlatVsOut) -> @location(0) vec4<f32> {
 // segment. Globe vertices are unit vectors; flat vertices are projected
 // normalized map coordinates (CPU-projected, antimeridian pre-split).
 // Colors come from palette LUT row 5 (texel 0 trench, 1 ridge,
-// 2 transform; velocity arrows arrive as btype 9 -> texel 8, white);
-// alpha-blended over the fill with fwidth-AA edges.
+// 2 transform; velocity arrows arrive as btype 9 -> texel 8, white;
+// rivers btype 10 -> texel 9, blue); alpha-blended over the fill with
+// fwidth-AA edges. Each vertex carries a width scale (1.0 for boundaries
+// and arrows; rivers taper by sqrt of discharge, WO-0009 S3).
 
 struct BndVsOut {
     @builtin(position) pos: vec4<f32>,
@@ -682,6 +714,7 @@ fn vs_bnd_globe(
     @location(1) q: vec3<f32>,
     @location(2) side: f32,
     @location(3) btype: f32,
+    @location(4) wscale: f32,
 ) -> BndVsOut {
     let cam_p = (globe_u.rot * vec4<f32>(p, 1.0)).xyz;
     let cam_q = (globe_u.rot * vec4<f32>(q, 1.0)).xyz;
@@ -690,7 +723,7 @@ fn vs_bnd_globe(
     let px_q = vec2<f32>(cam_q.x * globe_u.params.x, cam_q.y * globe_u.params.y) * half_vp;
     let dir = ribbon_dir(px_q, px_p);
     let perp = vec2<f32>(-dir.y, dir.x);
-    let px = px_p + perp * side * globe_u.bnd.x;
+    let px = px_p + perp * side * globe_u.bnd.x * wscale;
     var out: BndVsOut;
     // Drawn after the globe fill in the same pass (no depth buffer), so z
     // only needs to be inside the clip volume.
@@ -707,6 +740,7 @@ fn vs_bnd_flat(
     @location(1) q: vec2<f32>,
     @location(2) side: f32,
     @location(3) btype: f32,
+    @location(4) wscale: f32,
 ) -> BndVsOut {
     let px_p = vec2<f32>(
         flat_u.center_px.x + p.x * flat_u.half_px.x,
@@ -718,7 +752,7 @@ fn vs_bnd_flat(
     );
     let dir = ribbon_dir(px_q, px_p);
     let perp = vec2<f32>(-dir.y, dir.x);
-    let px = px_p + perp * side * flat_u.bnd.x;
+    let px = px_p + perp * side * flat_u.bnd.x * wscale;
     // Framebuffer pixels -> viewport NDC (the viewport is the canvas rect).
     let rect_min = vec2<f32>(flat_u.tex.z, flat_u.tex.w);
     let sz = max(vec2<f32>(flat_u.bnd.y, flat_u.bnd.z), vec2<f32>(1.0, 1.0));
