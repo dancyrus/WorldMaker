@@ -33,15 +33,23 @@ pub enum Layer {
     Overlay,
     /// WO-0009 S2: per-cell GLiM lithology class, categorical.
     Lithology,
+    /// WO-0009 S3: river discharge (m³/s), log-scaled sequential viridis;
+    /// ocean cells draw a fixed neutral so the land network carries the map.
+    Discharge,
+    /// WO-0009 S3: deposited sediment thickness (m), log-scaled batlow —
+    /// a debug layer for the transport ledger's footprint.
+    Sediment,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 8] = [
+    pub const ALL: [Layer; 10] = [
         Layer::Elevation,
         Layer::Plates,
         Layer::CrustAge,
         Layer::Thickness,
         Layer::Lithology,
+        Layer::Discharge,
+        Layer::Sediment,
         Layer::PlateVelocity,
         Layer::VelocityField,
         Layer::Overlay,
@@ -53,6 +61,8 @@ impl Layer {
             Layer::CrustAge => "Crust age",
             Layer::Thickness => "Thickness",
             Layer::Lithology => "Lithology",
+            Layer::Discharge => "Discharge",
+            Layer::Sediment => "Sediment",
             Layer::PlateVelocity => "Plate velocity",
             Layer::VelocityField => "Velocity field",
             Layer::Overlay => "Overlay",
@@ -241,6 +251,16 @@ pub fn batlow(t: f32) -> [f32; 3] {
     ramp(&BATLOW, t)
 }
 
+/// River ribbon color (legend swatch; LUT row 5 texel 9).
+pub fn river_color() -> [f32; 3] {
+    RIVER_BLUE
+}
+
+/// Lake fill color (legend swatch; LUT row 5 texel 10).
+pub fn lake_color() -> [f32; 3] {
+    LAKE_FILL
+}
+
 /// Phase 0's hypsometric palette, ported from the old WGSL.
 pub fn hypsometric(elev_rel_m: f32) -> [f32; 3] {
     let e = elev_rel_m;
@@ -272,16 +292,49 @@ const OUTSIDE_MAP: [f32; 3] = [0.10, 0.11, 0.13];
 /// Velocity arrows on the two velocity layers (WO-0004): white, drawn
 /// through the boundary-ribbon path as btype `boundaries::BTYPE_ARROW`.
 const ARROW_WHITE: [f32; 3] = rgb(255, 255, 255);
+/// River ribbons (WO-0009 S3, LUT row 5 texel 9): a saturated channel blue,
+/// distinct from both hypsometric ocean blues and the lake fill.
+const RIVER_BLUE: [f32; 3] = rgb(45, 110, 235);
+/// Lake fill at spill level (texel 10): teal-green, deliberately away from
+/// the ocean ramp's blue axis so closed basins read at a glance.
+const LAKE_FILL: [f32; 3] = rgb(64, 168, 176);
+/// Ocean cells on the Discharge layer (texel 11): near-black neutral so the
+/// log ramp is spent entirely on the land network.
+const DISCHARGE_OCEAN: [f32; 3] = rgb(24, 28, 40);
 
 /// Continent flag in the category word (bit 16, frozen in d3a §2.2).
 pub const CAT_CONTINENT: u32 = 1 << 16;
+/// Lake flag (bit 17, WO-0009 S3): terrain view on and lake_depth > 0 —
+/// the Elevation shader fills these crisp at the winner cell.
+pub const CAT_LAKE: u32 = 1 << 17;
+/// Water flag for the Discharge layer (bit 18): ocean under the displayed
+/// surface; masked out of the ramp interpolation like crust-age continents.
+pub const CAT_WATER: u32 = 1 << 18;
+
+/// Discharge → ramp coordinate: log₁₀ over a fixed 10..10⁶ m³/s span, so
+/// the mapping (and the legend's ticks) are seed- and level-independent.
+/// 10⁶ comfortably clears Earth's largest river (Amazon ~2·10⁵, Table 6.2).
+pub fn discharge_t(q_m3s: f32) -> f32 {
+    ((q_m3s.max(1e-3).log10() - 1.0) / 5.0).clamp(0.0, 1.0)
+}
+
+/// Sediment thickness → ramp coordinate: log₁₀(1+m) over 0..3000 m.
+pub const SEDIMENT_MAX_M: f32 = 3000.0;
+pub fn sediment_t(m: f32) -> f32 {
+    ((1.0 + m.max(0.0)).log10() / (1.0 + SEDIMENT_MAX_M).log10()).clamp(0.0, 1.0)
+}
 
 /// The terrain stage's per-cell overrides (WO-0009 S2): when the viewed
 /// era has an eroded terrain computed, Elevation shades the post-erosion
-/// surface and Lithology shows the deposition-stamped classes.
+/// surface (lakes filled at spill level, WO-0009 S3) and Lithology shows
+/// the deposition-stamped classes; Discharge and Sediment read the stage's
+/// water fields.
 pub struct TerrainView<'a> {
     pub elev_m: &'a [f32],
     pub lithology: &'a [u8],
+    pub discharge_m3s: &'a [f32],
+    pub sediment_m: &'a [f32],
+    pub lake_depth_m: &'a [f32],
 }
 
 /// Bake one keyframe into per-cell shading records for the active layer
@@ -306,7 +359,13 @@ pub fn bake_values_with(
     terrain: Option<TerrainView>,
 ) -> Vec<[u32; 2]> {
     let n = kf.elev_m.len();
-    let terrain = terrain.filter(|t| t.elev_m.len() == n && t.lithology.len() == n);
+    let terrain = terrain.filter(|t| {
+        t.elev_m.len() == n
+            && t.lithology.len() == n
+            && t.discharge_m3s.len() == n
+            && t.sediment_m.len() == n
+            && t.lake_depth_m.len() == n
+    });
     let terrain = &terrain;
 
     let mut out: Vec<[u32; 2]> = Vec::with_capacity(n);
@@ -334,6 +393,16 @@ pub fn bake_values_with(
                 }
                 // Categorical: the class rides the category word.
                 Layer::Lithology => 0.0,
+                // WO-0009 S3 water layers: ramp coordinates from the
+                // terrain fields; zero (dark end) without a terrain run.
+                Layer::Discharge => match terrain {
+                    Some(t) => discharge_t(t.discharge_m3s[c]),
+                    None => 0.0,
+                },
+                Layer::Sediment => match terrain {
+                    Some(t) => sediment_t(t.sediment_m[c]),
+                    None => 0.0,
+                },
                 Layer::Overlay => {
                     // Slab fade: 1.0 the step it went under, 0.0 at the
                     // detachment age — detached slabs fade out into the
@@ -366,6 +435,28 @@ pub fn bake_values_with(
                 // Bits 20..=27: the slab plate's color index (same stable
                 // id % 48 rule), read by the shader's Overlay branch.
                 cat |= ((kf.slab_plate[c] as u32 % PLATE_COLORS.len() as u32) & 0xFF) << 20;
+            }
+            if layer == Layer::Elevation {
+                // Lake fill (WO-0009 S3): terrain view on and standing
+                // water at spill level — the shader fills these crisp.
+                if let Some(t) = terrain {
+                    if t.lake_depth_m[c] > 0.0 {
+                        cat |= CAT_LAKE;
+                    }
+                }
+            }
+            if layer == Layer::Discharge {
+                // Ocean mask: under the displayed surface the ramp is
+                // meaningless (every wet cell collects its own precip), so
+                // the shader draws these fixed-dark and masks them out of
+                // the land interpolation.
+                let wet = match terrain {
+                    Some(t) => t.elev_m[c] <= 0.0,
+                    None => kf.elev_m[c] < 0,
+                };
+                if wet {
+                    cat |= CAT_WATER;
+                }
             }
             let bnd: u32 = if flags & F_BND_CONVERGENT != 0 {
                 1
@@ -403,7 +494,8 @@ pub const LUT_ROWS: u32 = 8;
 ///   4  48 plate colors in texels 0..48; oceanic-darkened ×0.55 in 64..112
 ///   5  fixed colors: 0 trench, 1 ridge, 2 transform, 3 age-continent,
 ///      4 paint-continent, 5 paint-ocean, 6 hotspot, 7 outside-map
-///      background, 8 velocity-arrow white
+///      background, 8 velocity-arrow white, 9 river blue, 10 lake fill,
+///      11 discharge-ocean neutral (9–11: WO-0009 S3)
 ///   6  16 lithology colors in texels 0..16 (WO-0009 S2)
 ///   7  reserved (zero)
 pub fn bake_palette_lut() -> Vec<u8> {
@@ -434,6 +526,9 @@ pub fn bake_palette_lut() -> Vec<u8> {
         HOTSPOT_MARK,
         OUTSIDE_MAP,
         ARROW_WHITE,
+        RIVER_BLUE,
+        LAKE_FILL,
+        DISCHARGE_OCEAN,
     ]
     .iter()
     .enumerate()
@@ -512,6 +607,9 @@ mod tests {
             HOTSPOT_MARK,
             OUTSIDE_MAP,
             ARROW_WHITE,
+            RIVER_BLUE,
+            LAKE_FILL,
+            DISCHARGE_OCEAN,
         ];
         for (i, c) in fixed.iter().enumerate() {
             assert_eq!(texel(5, i), pack3(*c));
@@ -523,7 +621,7 @@ mod tests {
         for i in 112..256 {
             assert_eq!(texel(4, i), 0);
         }
-        for i in 9..256 {
+        for i in 12..256 {
             assert_eq!(texel(5, i), 0);
         }
         for (i, c) in LITHOLOGY_COLORS.iter().enumerate() {
@@ -542,7 +640,7 @@ mod tests {
     /// variant is added, forcing this test — and ALL — to be updated.
     #[test]
     fn layer_all_lists_every_variant_once() {
-        const VARIANT_COUNT: usize = 8;
+        const VARIANT_COUNT: usize = 10;
         assert_eq!(Layer::ALL.len(), VARIANT_COUNT);
         for l in Layer::ALL {
             match l {
@@ -551,6 +649,8 @@ mod tests {
                 | Layer::CrustAge
                 | Layer::Thickness
                 | Layer::Lithology
+                | Layer::Discharge
+                | Layer::Sediment
                 | Layer::PlateVelocity
                 | Layer::VelocityField
                 | Layer::Overlay => {}

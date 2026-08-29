@@ -147,6 +147,13 @@ pub struct Script {
     /// with its legend (`lithology.png`). Split view, Eckert IV; seed and
     /// preset come from the CLI.
     pub wo9_s2_dir: Option<PathBuf>,
+    /// `--wo9-s3-shots`: the WO-0009 S3 river set — a dendritic-network
+    /// close-up centered on the highest-order confluence
+    /// (`dendritic-network.png`) and a lake district
+    /// (`lake-district.png`), flat view, Eckert IV, Elevation layer with
+    /// erosion + rivers on and legends visible. Seed and preset come from
+    /// the CLI.
+    pub wo9_s3_dir: Option<PathBuf>,
     /// `--wo10-shot`: the WO-0010 proof shot — `startup.png` in this
     /// directory, capturing the untouched interactive startup state
     /// (Draft, Flat, Eckert IV) once the first world lands. Deliberately
@@ -199,6 +206,7 @@ impl Script {
             || self.wo8_s2_dir.is_some()
             || self.wo9_dir.is_some()
             || self.wo9_s2_dir.is_some()
+            || self.wo9_s3_dir.is_some()
             || self.wo11_dir.is_some()
             || self.perf_out.is_some()
     }
@@ -275,6 +283,14 @@ enum ScriptState {
         frames: u32,
         requested: bool,
     },
+    /// WO-0009 S3 river/lake close-up set (step 7). `centered` flips once
+    /// the terrain run landed and the flat view was aimed at the feature.
+    Wo9S3Shot {
+        stage: usize,
+        frames: u32,
+        requested: bool,
+        centered: bool,
+    },
     /// WO-0010 proof shot (step 6): the untouched interactive startup.
     Wo10Shot {
         frames: u32,
@@ -323,13 +339,22 @@ struct SimJob {
 /// recompute exactly when the stage's own cache key moves.
 struct TerrainSlot {
     out: Arc<worldmaker_sim::terrain::TerrainOutput>,
+    /// The extracted river network for this run (WO-0009 S3), computed on
+    /// the same worker so a rebake only rebuilds chains, never re-walks
+    /// the flow tree.
+    rivers: Arc<crate::rivers::RiverSet>,
     kf_index: usize,
     key: u64,
 }
 
 /// A terrain run in flight on a worker thread.
 struct TerrainJob {
-    rx: mpsc::Receiver<(Arc<worldmaker_sim::terrain::TerrainOutput>, usize)>,
+    #[allow(clippy::type_complexity)]
+    rx: mpsc::Receiver<(
+        Arc<worldmaker_sim::terrain::TerrainOutput>,
+        Arc<crate::rivers::RiverSet>,
+        usize,
+    )>,
     key: u64,
 }
 
@@ -369,6 +394,10 @@ pub struct WorldApp {
     // the next one.
     morpho_my: f32,
     show_terrain: bool,
+    /// Rivers overlay toggle (WO-0009 S3): draw the extracted network's
+    /// smoothed polylines over the active layer whenever a terrain run is
+    /// displayed.
+    show_rivers: bool,
     terrain: Option<TerrainSlot>,
     terrain_job: Option<TerrainJob>,
 
@@ -405,6 +434,9 @@ pub struct WorldApp {
     /// every rebake; the Elevation legend is additionally rebuilt per frame
     /// so its sea marker rides the live slider.
     legend_spec: Option<legend::LegendSpec>,
+    /// Rivers-overlay legend (WO-0009 S3): present exactly when river
+    /// polylines are being drawn; rendered under the layer legend.
+    rivers_legend: Option<legend::LegendSpec>,
     /// The legend panel's last measured width — the Split-view seam-overlap
     /// test reads it (hide only if the panel would cross the seam).
     legend_width: f32,
@@ -569,6 +601,7 @@ impl WorldApp {
             hotspot_overlay: None,
             morpho_my: 30.0,
             show_terrain: true,
+            show_rivers: true,
             terrain: None,
             terrain_job: None,
             viewing_kf: 0,
@@ -585,6 +618,7 @@ impl WorldApp {
             solved_land_key: None,
             hold_shoreline: false,
             legend_spec: None,
+            rivers_legend: None,
             legend_width: 0.0,
             detail,
             detail_octaves,
@@ -665,6 +699,13 @@ impl WorldApp {
                     stage: 0,
                     frames: 0,
                     requested: false,
+                }
+            } else if script.wo9_s3_dir.is_some() {
+                ScriptState::Wo9S3Shot {
+                    stage: 0,
+                    frames: 0,
+                    requested: false,
+                    centered: false,
                 }
             } else if script.wo10_dir.is_some() {
                 ScriptState::Wo10Shot {
@@ -871,11 +912,13 @@ impl WorldApp {
         std::thread::spawn(move || {
             let t0 = Instant::now();
             let out = worldmaker_sim::terrain::run_terrain(&grid, &kf, seed, morpho);
+            let rivers = crate::rivers::extract(&out, crate::rivers::RIVER_MIN_DISCHARGE_M3S);
             log::info!(
-                "terrain run finished in {:.2} s (era {kf_index}, {morpho} My)",
-                t0.elapsed().as_secs_f64()
+                "terrain run finished in {:.2} s (era {kf_index}, {morpho} My, {} river segments)",
+                t0.elapsed().as_secs_f64(),
+                rivers.segments.len()
             );
-            let _ = tx.send((Arc::new(out), kf_index));
+            let _ = tx.send((Arc::new(out), Arc::new(rivers), kf_index));
         });
         self.terrain_job = Some(TerrainJob { rx, key });
     }
@@ -884,9 +927,10 @@ impl WorldApp {
     fn poll_terrain_job(&mut self) {
         let Some(job) = &self.terrain_job else { return };
         match job.rx.try_recv() {
-            Ok((out, kf_index)) => {
+            Ok((out, rivers, kf_index)) => {
                 self.terrain = Some(TerrainSlot {
                     out,
+                    rivers,
                     kf_index,
                     key: job.key,
                 });
@@ -940,13 +984,15 @@ impl WorldApp {
         // is on and current, Elevation shades the post-erosion surface and
         // Lithology the deposition-stamped classes (legend included).
         let terrain = self.terrain_for_view().map(|t| t.out.clone());
+        let rivers = self.terrain_for_view().map(|t| t.rivers.clone());
+        let mut new_rivers_legend = None;
         let (values, boundaries) = if let Some(history) = &self.history {
             let kf = &history.keyframes[self.viewing_kf.min(history.keyframes.len() - 1)];
             new_legend = Some(legend::legend_spec_with(
                 self.layer,
                 kf,
                 display_sea,
-                terrain.as_ref().map(|t| &t.lithology[..]),
+                terrain.as_deref(),
             ));
             self.values_gen += 1;
             // Smoothed boundary polylines are Plates-layer styling (d3a §8):
@@ -954,7 +1000,7 @@ impl WorldApp {
             // the two velocity layers (which draw Plates underneath,
             // WO-0004), empty everywhere else. Velocity arrows ride the same
             // chain set, so they re-extract per viewed keyframe (step 8).
-            let boundaries = if self.layer.shades_as_plates() {
+            let mut set = if self.layer.shades_as_plates() {
                 let mut set = crate::boundaries::extract(&self.grid, &kf.plate_id, &kf.flags);
                 match self.layer {
                     Layer::PlateVelocity => {
@@ -977,13 +1023,28 @@ impl WorldApp {
                     }
                     _ => {}
                 }
-                Arc::new(set)
+                set
             } else {
-                Arc::new(BoundarySet::empty())
+                BoundarySet::empty()
             };
+            // Rivers overlay (WO-0009 S3): the extracted network rides the
+            // same ribbon path over whatever layer is active.
+            if self.show_rivers {
+                if let (Some(t), Some(r)) = (&terrain, &rivers) {
+                    set.chains
+                        .extend(crate::rivers::to_chains(r, &self.grid, t));
+                    let max_order = r.segments.iter().map(|s| s.order).max().unwrap_or(0);
+                    new_rivers_legend =
+                        Some(legend::rivers_legend_spec(r.threshold_m3s, max_order));
+                }
+            }
+            let boundaries = Arc::new(set);
             let tv = terrain.as_ref().map(|t| layers::TerrainView {
                 elev_m: &t.elev_m,
                 lithology: &t.lithology,
+                discharge_m3s: &t.discharge_m3s,
+                sediment_m: &t.sediment_m,
+                lake_depth_m: &t.lake_depth_m,
             });
             (
                 Arc::new(layers::bake_values_with(self.layer, kf, tv)),
@@ -1027,6 +1088,8 @@ impl WorldApp {
         // values above.
         if let Some(spec) = new_legend {
             self.legend_spec = Some(spec);
+            // Rides the same trigger: present exactly when rivers drew.
+            self.rivers_legend = new_rivers_legend;
         }
     }
 
@@ -1281,6 +1344,7 @@ impl WorldApp {
                 return;
             }
         }
+        let rivers_spec = &self.rivers_legend;
         let area = egui::Area::new(egui::Id::new("layer-legend"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::LEFT_BOTTOM)
@@ -1292,6 +1356,14 @@ impl WorldApp {
                         .id_salt("legend-header")
                         .default_open(true)
                         .show(ui, |ui| legend::legend_body(ui, spec));
+                    // Rivers-overlay legend (WO-0009 S3): a second section
+                    // whenever the network is drawn.
+                    if let Some(rs) = rivers_spec {
+                        egui::CollapsingHeader::new(rs.title)
+                            .id_salt("rivers-legend-header")
+                            .default_open(true)
+                            .show(ui, |ui| legend::legend_body(ui, rs));
+                    }
                 });
             });
         self.legend_width = area.response.rect.width();
@@ -1650,6 +1722,17 @@ impl WorldApp {
                     if ui.checkbox(&mut self.show_terrain, "Erosion").changed() {
                         self.needs_bake = true;
                     }
+                    // Rivers overlay (WO-0009 S3): draws only while the
+                    // eroded view is on (the network comes from that run).
+                    if ui
+                        .add_enabled(
+                            self.show_terrain,
+                            egui::Checkbox::new(&mut self.show_rivers, "Rivers"),
+                        )
+                        .changed()
+                    {
+                        self.needs_bake = true;
+                    }
                     if self.terrain_job.is_some() {
                         ui.weak("eroding…");
                     }
@@ -1875,6 +1958,7 @@ impl WorldApp {
             ScriptState::Wo8Shot { .. } => self.drive_wo8(ctx),
             ScriptState::Wo9Shot { .. } => self.drive_wo9(ctx),
             ScriptState::Wo9S2Shot { .. } => self.drive_wo9_s2(ctx),
+            ScriptState::Wo9S3Shot { .. } => self.drive_wo9_s3(ctx),
             ScriptState::Wo10Shot { .. } => self.drive_wo10(ctx),
             ScriptState::Wo11Shot { .. } => self.drive_wo11(ctx),
             ScriptState::Perf { .. } => self.drive_perf(),
@@ -2118,6 +2202,134 @@ impl WorldApp {
                 stage,
                 frames,
                 requested,
+            };
+        }
+    }
+
+    /// WO-0009 S3 river set (step 7): a dendritic-network close-up
+    /// centered on the highest-Strahler confluence and a lake district
+    /// centered on the densest lake cluster. Flat view, Eckert IV,
+    /// Elevation layer, erosion + rivers on, legends visible. Both stages
+    /// wait for the terrain worker, then aim the flat view, then capture.
+    fn drive_wo9_s3(&mut self, ctx: &egui::Context) {
+        const SHOTS: [&str; 2] = ["dendritic-network", "lake-district"];
+        const ZOOM: f32 = 6.0;
+        let (stage, frames, requested, centered) = match &self.script_state {
+            ScriptState::Wo9S3Shot {
+                stage,
+                frames,
+                requested,
+                centered,
+            } => (*stage, *frames, *requested, *centered),
+            _ => return,
+        };
+        let mut frames = frames + 1;
+        let mut requested = requested;
+        let mut centered = centered;
+        let name = SHOTS[stage];
+        if frames == 1 {
+            if stage == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1600.0, 900.0)));
+            }
+            self.view_mode = ViewMode::Flat;
+            self.projection = Projection::EckertIv;
+            self.viewing_kf = self.present_kf;
+            self.layer = Layer::Elevation;
+            self.show_terrain = true;
+            self.show_rivers = true;
+            self.needs_bake = true;
+            log::info!("wo9-s3 screenshot stage {stage}: {name}");
+        }
+        // Aim the flat view once the terrain run (and its river network)
+        // is actually displayed; the capture countdown restarts then so
+        // the deferred pan has settled frames to land.
+        if !centered {
+            if let Some(slot) = self.terrain_for_view() {
+                let out = slot.out.clone();
+                let rivers = slot.rivers.clone();
+                let n = out.elev_m.len();
+                let target = if stage == 0 {
+                    // The highest-Strahler river cell; discharge breaks
+                    // ties, so the view lands on the master confluence.
+                    let mut best: Option<(usize, u8, f32)> = None;
+                    for c in 0..n {
+                        let s = rivers.strahler[c];
+                        if s == 0 {
+                            continue;
+                        }
+                        let q = out.discharge_m3s[c];
+                        if best.is_none_or(|(_, bs, bq)| s > bs || (s == bs && q > bq)) {
+                            best = Some((c, s, q));
+                        }
+                    }
+                    best.map(|(c, _, _)| c)
+                } else {
+                    // The lake cell with the most lake cells within 2 rings.
+                    let lake = |c: usize| out.lake_depth_m[c] > 0.0;
+                    let mut best: Option<(usize, i32)> = None;
+                    for c in 0..n {
+                        if !lake(c) {
+                            continue;
+                        }
+                        let mut near = 0i32;
+                        for &nb in self.grid.neighbors_of(c as u32) {
+                            if lake(nb as usize) {
+                                near += 1;
+                            }
+                            for &nb2 in self.grid.neighbors_of(nb) {
+                                if nb2 as usize != c && lake(nb2 as usize) {
+                                    near += 1;
+                                }
+                            }
+                        }
+                        if best.is_none_or(|(_, b)| near > b) {
+                            best = Some((c, near));
+                        }
+                    }
+                    best.map(|(c, _)| c)
+                };
+                if let Some(c) = target {
+                    self.flat_center_target = Some((self.grid.lat[c], self.grid.lon[c], ZOOM));
+                } else {
+                    log::warn!("wo9-s3 stage {stage}: no target feature found; capturing as-is");
+                }
+                centered = true;
+                frames = 1;
+            }
+        }
+        if frames >= 45 && centered && !requested {
+            requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let dir = self.script.wo9_s3_dir.clone().unwrap();
+            if let Err(e) = save_color_image(&image, &dir.join(format!("{name}.png"))) {
+                log::error!("failed to save screenshot {name}: {e:#}");
+            } else {
+                log::info!("saved screenshot {name}.png");
+            }
+            self.script_state = if stage + 1 < SHOTS.len() {
+                ScriptState::Wo9S3Shot {
+                    stage: stage + 1,
+                    frames: 0,
+                    requested: false,
+                    centered: false,
+                }
+            } else {
+                ScriptState::Closing
+            };
+        } else {
+            self.script_state = ScriptState::Wo9S3Shot {
+                stage,
+                frames,
+                requested,
+                centered,
             };
         }
     }

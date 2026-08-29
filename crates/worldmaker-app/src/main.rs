@@ -9,6 +9,7 @@ mod layers;
 mod legend;
 mod pending_edits;
 mod render;
+mod rivers;
 mod worldgen;
 
 use std::path::PathBuf;
@@ -32,6 +33,7 @@ struct Args {
     wo8_s2_dir: Option<PathBuf>,
     wo9_dir: Option<PathBuf>,
     wo9_s2_dir: Option<PathBuf>,
+    wo9_s3_dir: Option<PathBuf>,
     wo10_dir: Option<PathBuf>,
     wo11_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
@@ -55,6 +57,7 @@ fn parse_args() -> Args {
         wo8_s2_dir: None,
         wo9_dir: None,
         wo9_s2_dir: None,
+        wo9_s3_dir: None,
         wo10_dir: None,
         wo11_dir: None,
         perf_out: None,
@@ -88,6 +91,9 @@ fn parse_args() -> Args {
             // the top bar at 1440 px, no bottom panel).
             "--wo9-shots" => out.wo9_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--wo9-s2-shots" => out.wo9_s2_dir = take_value(&a, args.next()).map(PathBuf::from),
+            // WO-0009 S3 river shots (dendritic-network.png,
+            // lake-district.png).
+            "--wo9-s3-shots" => out.wo9_s3_dir = take_value(&a, args.next()).map(PathBuf::from),
             // WO-0010 proof shot (startup.png): the untouched interactive
             // startup state, captured once the first world lands.
             "--wo10-shot" => out.wo10_dir = take_value(&a, args.next()).map(PathBuf::from),
@@ -383,6 +389,7 @@ fn main() {
         && args.wo8_s2_dir.is_none()
         && args.wo9_dir.is_none()
         && args.wo9_s2_dir.is_none()
+        && args.wo9_s3_dir.is_none()
         && args.wo10_dir.is_none()
     {
         return;
@@ -415,6 +422,7 @@ fn main() {
         wo8_s2_dir: args.wo8_s2_dir,
         wo9_dir: args.wo9_dir,
         wo9_s2_dir: args.wo9_s2_dir,
+        wo9_s3_dir: args.wo9_s3_dir,
         wo10_dir: args.wo10_dir,
         wo11_dir: args.wo11_dir,
         perf_out: args.perf_out,

@@ -7,6 +7,7 @@
 
 use eframe::egui;
 use worldmaker_sim::tectonics::{lithology, Keyframe, SLAB_DETACH_MY};
+use worldmaker_sim::terrain::TerrainOutput;
 
 use crate::layers::{self, Layer};
 
@@ -82,14 +83,15 @@ pub fn legend_spec(layer: Layer, kf: &Keyframe, sea_level_m: f32) -> LegendSpec 
     legend_spec_with(layer, kf, sea_level_m, None)
 }
 
-/// [`legend_spec`] with an optional displayed-lithology override
-/// (WO-0009 S2): when the terrain view is on, the Lithology legend counts
-/// the deposition-stamped classes actually on screen (`su` included).
+/// [`legend_spec`] with the optional displayed terrain run (WO-0009 S2/S3):
+/// when the terrain view is on, the Lithology legend counts the
+/// deposition-stamped classes actually on screen (`su` included) and the
+/// Discharge legend marks the viewed world's largest river.
 pub fn legend_spec_with(
     layer: Layer,
     kf: &Keyframe,
     sea_level_m: f32,
-    lith_override: Option<&[u8]>,
+    terrain: Option<&TerrainOutput>,
 ) -> LegendSpec {
     match layer {
         Layer::Elevation => {
@@ -225,7 +227,7 @@ pub fn legend_spec_with(
         Layer::Lithology => {
             // Only the classes actually present in the displayed field
             // (WO-0009 S2 step 3), largest area first, id tie-break.
-            let lith = lith_override.unwrap_or(&kf.lithology);
+            let lith = terrain.map_or(&kf.lithology[..], |t| &t.lithology[..]);
             let n = lith.len().max(1);
             let mut counts = [0usize; lithology::CLASS_COUNT];
             for &l in lith {
@@ -255,6 +257,77 @@ pub fn legend_spec_with(
                 kind: LegendKind::Swatches {
                     rows,
                     more_count: 0,
+                },
+            }
+        }
+        Layer::Discharge => {
+            // Log-scaled viridis over the fixed 10..10⁶ m³/s span
+            // (layers::discharge_t — the same mapping the bake uses), with
+            // the viewed world's largest river marked when a terrain run
+            // is displayed.
+            let colors = (0..RAMP_SAMPLES)
+                .map(|i| {
+                    let t = (i as f32 + 0.5) / RAMP_SAMPLES as f32;
+                    layers::viridis(t)
+                })
+                .collect();
+            let ticks = [
+                (10.0f32, "10 m³/s"),
+                (1.0e3, "1 k"),
+                (1.0e5, "100 k"),
+                (1.0e6, "1 M"),
+            ]
+            .iter()
+            .map(|&(q, label)| (layers::discharge_t(q), label.to_string()))
+            .collect();
+            let marker = terrain.and_then(|t| {
+                let max_q = t
+                    .discharge_m3s
+                    .iter()
+                    .zip(&t.elev_m)
+                    .filter(|&(_, &e)| e > 0.0)
+                    .map(|(&q, _)| q)
+                    .fold(0.0f32, f32::max);
+                (max_q > 0.0).then(|| {
+                    (
+                        layers::discharge_t(max_q),
+                        format!("largest {:.0} m³/s", max_q),
+                    )
+                })
+            });
+            LegendSpec {
+                title: "Discharge",
+                kind: LegendKind::Ramp {
+                    colors,
+                    ticks,
+                    marker,
+                },
+            }
+        }
+        Layer::Sediment => {
+            // Log-scaled batlow over 0..SEDIMENT_MAX_M (layers::sediment_t).
+            let colors = (0..RAMP_SAMPLES)
+                .map(|i| {
+                    let t = (i as f32 + 0.5) / RAMP_SAMPLES as f32;
+                    layers::batlow(t)
+                })
+                .collect();
+            let ticks = [
+                (0.0f32, "0 m"),
+                (10.0, "10 m"),
+                (100.0, "100 m"),
+                (1000.0, "1 km"),
+                (layers::SEDIMENT_MAX_M, "3 km"),
+            ]
+            .iter()
+            .map(|&(m, label)| (layers::sediment_t(m), label.to_string()))
+            .collect();
+            LegendSpec {
+                title: "Sediment",
+                kind: LegendKind::Ramp {
+                    colors,
+                    ticks,
+                    marker: None,
                 },
             }
         }
@@ -289,6 +362,30 @@ pub fn legend_spec_with(
                 },
             }
         }
+    }
+}
+
+/// The Rivers-overlay legend (WO-0009 S3): shown under the layer legend
+/// whenever the overlay toggle is on and a terrain run is displayed.
+/// `max_order` is the network's largest Strahler order.
+pub fn rivers_legend_spec(threshold_m3s: f32, max_order: u8) -> LegendSpec {
+    LegendSpec {
+        title: "Rivers",
+        kind: LegendKind::Swatches {
+            rows: vec![
+                SwatchRow {
+                    color: layers::river_color(),
+                    label: format!(
+                        "river ≥ {threshold_m3s:.0} m³/s, width ∝ √Q (order ≤ {max_order})"
+                    ),
+                },
+                SwatchRow {
+                    color: layers::lake_color(),
+                    label: "lake (filled to spill level)".into(),
+                },
+            ],
+            more_count: 0,
+        },
     }
 }
 
