@@ -654,7 +654,12 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
     // §9 metric 8 (WO-0006 S3): the slow clock pauses — without resetting —
     // while the plate sits in a continent-continent collision (it carries a
     // §3 pair timer), and the violation is > 200 My of slow time outside
-    // such collisions. Sutured plates are dead and drop out.
+    // such collisions. Sutured plates are dead and drop out. A LIVE WELD
+    // exempts both parties the same way (WO-0012 S1 repair): a mid-weld
+    // pair is the matured §3 collision itself, but WO-0011 S2 stopped
+    // running its pair timer, so the exemption's original timer test
+    // missed exactly the most collision-locked state (measured: a weld
+    // loser slaved to a slow winner flagged after 210 My of grinding).
     let mut speed_violations = Vec::new();
     let mut slow_my = vec![0.0f32; np];
     let mut flagged = vec![false; np];
@@ -664,7 +669,8 @@ pub fn liveliness(hist: &TectonicsHistory) -> LivelinessReport {
             if !p.alive {
                 slow_my[pid] = 0.0;
             } else if p.speed_deg_my < LIVELINESS_SPEED_FLOOR {
-                let exempt = kf.collisions.iter().any(|t| t.a == p.id || t.b == p.id);
+                let exempt = kf.collisions.iter().any(|t| t.a == p.id || t.b == p.id)
+                    || kf.welds.iter().any(|w| w.winner == p.id || w.loser == p.id);
                 if exempt {
                     continue; // pause, don't reset
                 }
@@ -1644,12 +1650,18 @@ impl PhysicsTracker {
             }
             // Metric 8: identical rule to `liveliness` above — the slow
             // clock pauses (not resets) while the plate is in a
-            // continent-continent collision (it carries a §3 pair timer).
+            // continent-continent collision (a §3 pair timer OR a live
+            // weld, whose pair runs no timer since WO-0011 S2 — the
+            // WO-0012 S1 exemption repair; see `liveliness`).
             if p.speed_deg_my < LIVELINESS_SPEED_FLOOR {
                 let exempt = sim
                     .collisions
                     .iter()
-                    .any(|t| t.a == pid as u32 || t.b == pid as u32);
+                    .any(|t| t.a == pid as u32 || t.b == pid as u32)
+                    || sim
+                        .welds
+                        .iter()
+                        .any(|w| w.winner == pid as u32 || w.loser == pid as u32);
                 if !exempt {
                     self.slow_my[pid] += dt;
                     if self.slow_my[pid] > LIVELINESS_SLOW_MAX_MY && !self.slow_flagged[pid] {

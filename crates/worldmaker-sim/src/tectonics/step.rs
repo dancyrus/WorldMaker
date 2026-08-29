@@ -106,6 +106,15 @@ const ISLAND_ARC_CONVERT_KM: f32 = 20.0;
 /// cratons — Tarim and Sichuan stop the Himalayan front).
 const W_BASE_KM: f32 = 260.0;
 const W_MAX_CELLS: u32 = 8;
+/// Foreland-loading reach (WO-0012 S1): how far from the deformation zone
+/// the unspent foreland budget may travel — through the plates' own
+/// continent — to convert their nearest coastal ocean (escape tectonics
+/// plus orogen-fed sediment progradation; Himalaya → Bengal fan is this
+/// scale). The old one-ring shelf only converted where the zone itself
+/// touched sea, so mid-continent collisions spilled ~2/3 of every budget
+/// and the consumed AREA never returned (measured: the s1 continental-area
+/// gate bled to −22% over 2 Gy — decision log).
+const FORELAND_REACH_KM: f32 = 1500.0;
 /// The zone walk stops where strength reaches cratonic grade.
 const CRATON_STOP: f32 = 1.5;
 /// Gravitational spreading (lower-crustal channel flow, Tibet): one
@@ -187,6 +196,19 @@ pub const RELIC_BASIN_KEEP_CELLS: u32 = 12;
 /// at least this fraction of its bordering continental cells belong to
 /// the two plates.
 const RELIC_ENCLOSED_FRACTION: f32 = 0.8;
+/// Closure CONVERSION applies only to basins up to this fraction of the
+/// sphere (~4x the Mediterranean) — the mechanic's own doc scale
+/// ("Mediterranean-style terminal closure", relic seas). WO-0012 S1: with
+/// conservative land transport the trajectories changed and one run
+/// enclosed a 27%-of-sphere ocean between two supercontinent halves; the
+/// unbounded rule then minted 11k cells of continent out of open ocean in
+/// 200 My (measured, decision log). An ocean at that scale closes by
+/// ordinary subduction; it still blocks suture condition 3 (`ocean_closed`
+/// is deliberately uncapped — the ocean IS still there).
+const RELIC_BASIN_MAX_FRACTION: f32 = 0.02;
+/// Absolute floor under the fraction cap so the toy-sphere (L3) synthetic
+/// basins the unit tests build still close — at L6+ the fraction governs.
+const RELIC_BASIN_CAP_FLOOR_CELLS: u32 = 64;
 
 // ----- lithosphere strength (WO-0006 S2, model §4) -----
 // S(c) = S_type · g_age · g_suture · thickness penalties · g_insulation.
@@ -377,9 +399,11 @@ struct CellOut {
 /// Pre-advect snapshot of the mutable per-cell fields, refreshed at the
 /// top of `advect` each step. `regularize_boundaries` (WO-0011 S1) reads
 /// it two ways: previous owners define this step's flip candidates, and
-/// the previous columns are the revert source (a rejected flip means the
-/// boundary did not move here, so the cell keeps its old owner AND its
-/// old crust).
+/// the previous columns are the revert source for previously-OCEAN cells
+/// (a rejected flip means the boundary did not move here). Continental
+/// columns are never restored from it (WO-0012 S1): land content follows
+/// the parcel map, so a revert keeps the old owner but the parcel-decided
+/// crust.
 #[derive(Default)]
 struct PrevCells {
     plate: Vec<u32>,
@@ -540,6 +564,13 @@ pub struct SimState {
     /// Pre-advect cell state (see [`PrevCells`]); scratch, never keyframed —
     /// it is rebuilt at the top of every `advect`.
     prev: PrevCells,
+    /// Conservative land-transport parcel map (WO-0012 S1): for each cell,
+    /// the previous LAND cell whose crust column landed here this step, or
+    /// NONE. Continental content in the gather comes from this map alone —
+    /// a coastline is carried by the plate, never re-rasterized against it.
+    /// Scratch, rebuilt every `advect`; `regularize_boundaries` reads it the
+    /// same step so ownership reverts never duplicate a moved column.
+    parcel: Vec<u32>,
     pub(super) hotspot_hints: Vec<u32>,
 
     // Cumulative continental-inventory flows (cells), for the acceptance
@@ -580,6 +611,10 @@ pub struct SimState {
     /// Sliver-debris cells captured by their surrounding plate
     /// (cumulative, WO-0011 S1 diagnostic).
     pub sliver_captured: u64,
+    /// Land parcels merged into their destination because the probe found
+    /// no unclaimed cell (cumulative, WO-0012 S1 diagnostic) — the
+    /// convergence-shortening subset of `cont_lost_to_consumption`.
+    pub parcels_merged: u64,
 
     // ----- crust-volume ledger (WO-0008 S2) -----
     // Continental crustal volume in exact quantized units of
@@ -672,6 +707,7 @@ impl SimState {
             class: vec![ClassOut::default(); n],
             bfs_depth: vec![u16::MAX; n],
             prev: PrevCells::default(),
+            parcel: Vec::new(),
             hotspot_hints: Vec::new(),
             cont_lost_to_ridge_gap: 0,
             cont_lost_to_consumption: 0,
@@ -692,6 +728,7 @@ impl SimState {
             regularize_reverted: 0,
             craton_transfer_violations: 0,
             sliver_captured: 0,
+            parcels_merged: 0,
             vol_advect_q: 0,
             vol_closure_q: 0,
             vol_arc_q: 0,
@@ -1094,6 +1131,130 @@ impl SimState {
             fwd.push(m);
         }
 
+        // ----- WO-0012 S1: conservative land-transport parcel pass -----
+        // Continental crust is MATERIAL: every previous land cell emits one
+        // parcel that lands under its plate's committed rotation, and the
+        // gather below takes continental CONTENT from this map alone —
+        // ownership resolution stays exactly as it is. Contested
+        // destinations resolve in two phases so displacement never chains:
+        // proposals first (a resident — a parcel staying on its own cell —
+        // keeps it; otherwise the lowest source id wins), then each losing
+        // parcel takes the nearest cell NOBODY proposed, breadth-first
+        // within a short radius. Nearest-cell rasterization of a rigid
+        // rotation makes collision/hole PAIRS — a rigid plate cannot
+        // compress its own interior, so the colliding parcel's material
+        // belongs in the hole beside it. (Measured, L6 seed cyrus 2 Gy:
+        // the WO's one-ring first-come probe left 15.8k merges, 93%
+        // same-plate, and drained half the continental area — its
+        // steal-and-displace chains pushed the holes 4-24 cells out;
+        // proposal-splitting keeps them local. Decision log.) A parcel
+        // with no hole in reach MERGES into its destination — real
+        // convergence shortening, its volume booked explicitly after the
+        // gather. Serial in cell-id order, fixed CCW/discovery order —
+        // deterministic.
+        let mut parcel = std::mem::take(&mut self.parcel);
+        parcel.clear();
+        parcel.resize(n, NONE);
+        let mut merges: Vec<(u32, u32)> = Vec::new(); // (dst, src), id order
+        let mut proposals: Vec<(u32, u32)> = Vec::new(); // (dst, src), id order
+        let mut prop_count: Vec<u8> = vec![0; n];
+        for c in 0..n {
+            if self.crust_type[c] != 1 {
+                continue;
+            }
+            let d = dense_of_id[self.plate_id[c] as usize] as usize;
+            let dst = if committing[d] {
+                let dst_pos = mat3_mul(&fwd[d], self.grid.positions[c]);
+                self.grid.nearest_cell(dst_pos, Some(c as u32))
+            } else {
+                c as u32
+            };
+            prop_count[dst as usize] = prop_count[dst as usize].saturating_add(1);
+            if dst == c as u32 {
+                parcel[dst as usize] = c as u32; // resident: keeps its cell
+            }
+            proposals.push((dst, c as u32));
+        }
+        let mut pending: Vec<(u32, u32)> = Vec::new(); // losers, id order
+        for &(dst, src) in &proposals {
+            let du = dst as usize;
+            if parcel[du] == NONE {
+                parcel[du] = src;
+            } else if parcel[du] != src {
+                pending.push((dst, src));
+            }
+        }
+        // Losers back up by contest kind. A SAME-plate contest (the winner
+        // parcel belongs to the loser's own plate) is rasterization noise —
+        // a rigid plate cannot compress its own interior — so the loser
+        // backs up to the nearest un-proposed cell of its OWN plate, with a
+        // wide reach (the block backs up instead of vanishing). A
+        // CROSS-plate contest is real convergence: only a short local
+        // reach absorbs boundary aliasing, and a saturated front MERGES —
+        // shortening that thickens (booked after the gather).
+        const PARCEL_PROBE_HOPS_SAME: u16 = 16;
+        const PARCEL_PROBE_HOPS_CROSS: u16 = 4;
+        let mut probe_seen: Vec<u32> = vec![NONE; n]; // stamped by src cell
+        let mut probe_queue: VecDeque<(u32, u16)> = VecDeque::new();
+        for &(dst, src) in &pending {
+            let p = self.plate_id[src as usize];
+            let winner = parcel[dst as usize];
+            let same = winner != NONE && self.plate_id[winner as usize] == p;
+            let max_hops = if same {
+                PARCEL_PROBE_HOPS_SAME
+            } else {
+                PARCEL_PROBE_HOPS_CROSS
+            };
+            let mut claimed_at = NONE;
+            probe_queue.clear();
+            probe_seen[dst as usize] = src;
+            probe_queue.push_back((dst, 0));
+            while let Some((cur, hops)) = probe_queue.pop_front() {
+                if hops >= max_hops {
+                    continue;
+                }
+                for &nb in self.grid.neighbors_of(cur) {
+                    let nbu = nb as usize;
+                    if probe_seen[nbu] == src {
+                        continue;
+                    }
+                    probe_seen[nbu] = src;
+                    // A same-plate back-up stays on its own plate — both
+                    // the path and the claimed cell.
+                    if same && self.plate_id[nbu] != p {
+                        continue;
+                    }
+                    if prop_count[nbu] == 0
+                        && parcel[nbu] == NONE
+                        // ...and never onto YOUNG ocean: that is opening
+                        // floor — a rift corridor mid-split or a fresh
+                        // spreading gap. Displaced land backing into a
+                        // corridor re-fills it faster than oceanization
+                        // empties it, no split ever completes, and welds
+                        // consolidate unopposed (measured: the 24-plate
+                        // shape run collapsed to 4 plates, largest 78% of
+                        // the sphere — the same failure the retired
+                        // WO-0008 guard's gap-first partition prevented).
+                        && !(self.crust_type[nbu] == 0
+                            && self.crust_age[nbu] < CORRIDOR_MAX_AGE_MY)
+                    {
+                        claimed_at = nb;
+                        break;
+                    }
+                    probe_queue.push_back((nb, hops + 1));
+                }
+                if claimed_at != NONE {
+                    break;
+                }
+            }
+            if claimed_at != NONE {
+                parcel[claimed_at as usize] = src;
+            } else {
+                merges.push((dst, src));
+            }
+        }
+        self.parcel = parcel;
+
         // Per-pair subduction polarity (WO-0008 S1 seam rule, half 2):
         // between two soft crusts, WHICH side subducts is decided once per
         // unordered plate pair per step — the side with the older (denser)
@@ -1191,6 +1352,7 @@ impl SimState {
         let inv_ref = &inv;
         let id_of_dense_ref = &id_of_dense;
         let dense_of_id_ref = &dense_of_id;
+        let parcel_ref = &self.parcel;
         // Plate speeds for the continent-continent overlap rule: the cell
         // resolves to the slower plate (§7 cause removal — no frozen cells).
         let speeds: Vec<f32> = self.plates.iter().map(|p| p.speed_deg_my).collect();
@@ -1444,27 +1606,154 @@ impl SimState {
                         }
                     }
                 };
-                // Continental balance (WO-0008 S1 step 6): continental
-                // crust at or above SUBDUCTIBLE_CONT_KM is never erased at
-                // a consuming margin. Where another plate would replace it
-                // with oceanic crust, the cell's continental content
-                // survives and transfers to the winner instead — terrane
-                // accretion (Wrangellia-style docking): buoyant continent
-                // does not go down the slab.
-                if out.ctype == 0
-                    && out.plate != plate_id[c]
-                    && prev_ctype[c] == 1
-                    && prev_thick[c] >= SUBDUCTIBLE_CONT_KM
-                {
-                    CellOut {
-                        plate: out.plate,
-                        ..keep_cell(c, 0, out.collided)
+                // Conservative land transport (WO-0012 S1): ownership above
+                // stands untouched; continental CONTENT comes from the
+                // parcel map alone. A cell no parcel claimed can never copy
+                // land from a source — that source's material moved with
+                // its own parcel, and copying it is exactly the
+                // duplication that smeared islands into dashed trains — so
+                // a land-sourced copy resolves to a previous-ocean column
+                // instead: the first prev-ocean cell of the same plate on
+                // the cell's own CCW ring, else the first prev-ocean cell
+                // of any plate, else fresh ridge-style crust (a transient
+                // rasterization hole).
+                let base = if out.ctype == 1 {
+                    let mut pick = NONE;
+                    for &nb in grid.neighbors_of(c as u32) {
+                        let nbu = nb as usize;
+                        if prev_ctype[nbu] == 0 && plate_id[nbu] == out.plate {
+                            pick = nb;
+                            break;
+                        }
+                    }
+                    if pick == NONE {
+                        for &nb in grid.neighbors_of(c as u32) {
+                            if prev_ctype[nb as usize] == 0 {
+                                pick = nb;
+                                break;
+                            }
+                        }
+                    }
+                    if pick != NONE {
+                        let s = pick as usize;
+                        CellOut {
+                            ctype: 0,
+                            age: prev_age[s],
+                            thick: prev_thick[s],
+                            orog: prev_orog[s],
+                            rift: prev_rift[s],
+                            build: prev_build[s],
+                            lith: prev_lith[s],
+                            slab_plate: prev_slab_plate[s],
+                            slab_since: prev_slab_since[s],
+                            suture_at: prev_suture[s],
+                            ..out
+                        }
+                    } else {
+                        CellOut {
+                            ctype: 0,
+                            age: 0.0,
+                            thick: OCEAN_THICKNESS_KM,
+                            orog: 0.0,
+                            rift: 0.0,
+                            build: 0.0,
+                            lith: super::lithology::VB,
+                            slab_plate: SLAB_NONE,
+                            slab_since: 0.0,
+                            suture_at: NEVER_SUTURED,
+                            ..out
+                        }
                     }
                 } else {
                     out
+                };
+                let claim = parcel_ref[c];
+                if claim == NONE {
+                    base
+                } else {
+                    let s = claim as usize;
+                    let p_plate = plate_id[s];
+                    if prev_thick[s] < SUBDUCTIBLE_CONT_KM && base.subducted == p_plate {
+                        // Soft continental parcel at a margin actively
+                        // consuming its own plate at this cell: it goes
+                        // down with the slab — the real subduction-
+                        // consumption path. The slab segment carries the
+                        // parcel's age (it IS the column that went under).
+                        CellOut {
+                            subducted_age: prev_age[s],
+                            ..base
+                        }
+                    } else {
+                        // The parcel lands with its full column. On a cell
+                        // another plate won this is the WO-0008 terrane-
+                        // accretion transfer (Wrangellia-style docking);
+                        // buoyant continent books no slab entry against
+                        // its own plate.
+                        let (subducted, subducted_age) = if base.subducted == p_plate {
+                            (NONE, 0.0)
+                        } else {
+                            (base.subducted, base.subducted_age)
+                        };
+                        CellOut {
+                            ctype: 1,
+                            features: base.features & !F_RIDGE,
+                            age: prev_age[s],
+                            thick: prev_thick[s],
+                            orog: prev_orog[s],
+                            rift: prev_rift[s],
+                            build: prev_build[s],
+                            lith: prev_lith[s],
+                            subducted,
+                            subducted_age,
+                            slab_plate: prev_slab_plate[s],
+                            slab_since: prev_slab_since[s],
+                            suture_at: prev_suture[s],
+                            ..base
+                        }
+                    }
                 }
             })
             .collect_into_vec(&mut outs);
+
+        // WO-0012 S1: repair reverts below un-do OWNERSHIP only — content
+        // follows the parcel outcome regardless of which plate wins the
+        // cell. A parcel-claimed cell keeps (or regains) its parcel column,
+        // a consumed verdict being un-done included; a cell whose previous
+        // land moved away as a parcel stays ocean (restoring the old column
+        // would duplicate the land); only a previously-ocean cell restores
+        // its full previous column (the advect-revert convention for
+        // re-rasterized ocean).
+        let revert_out = |outs: &mut Vec<CellOut>, cu: usize| {
+            if parcel_ref[cu] != NONE {
+                let s = parcel_ref[cu] as usize;
+                outs[cu] = CellOut {
+                    plate: plate_id[cu],
+                    ctype: 1,
+                    features: 0,
+                    age: prev_age[s],
+                    thick: prev_thick[s],
+                    orog: prev_orog[s],
+                    rift: prev_rift[s],
+                    build: prev_build[s],
+                    lith: prev_lith[s],
+                    subducted: NONE,
+                    subducted_age: 0.0,
+                    collided: NONE,
+                    slab_plate: prev_slab_plate[s],
+                    slab_since: prev_slab_since[s],
+                    suture_at: prev_suture[s],
+                };
+            } else if prev_ctype[cu] == 0 {
+                outs[cu] = keep_cell(cu, 0, NONE);
+            } else {
+                let o = &mut outs[cu];
+                o.plate = plate_id[cu];
+                o.features = 0;
+                o.subducted = NONE;
+                o.subducted_age = 0.0;
+                o.collided = NONE;
+            }
+        };
 
         // Seam rule, half 3 (WO-0008 S1): connectivity-preserving
         // consumption. A per-cell gather can pinch off pieces of a plate —
@@ -1534,13 +1823,13 @@ impl SimState {
                     for &c in &comp_cells[ci] {
                         let cu = c as usize;
                         if outs[cu].plate != plate_id[cu] {
-                            outs[cu] = keep_cell(cu, 0, NONE);
+                            revert_out(&mut outs, cu);
                             reverted = true;
                         }
                         for &nb in grid.neighbors_of(c) {
                             let nbu = nb as usize;
                             if plate_id[nbu] == p && outs[nbu].plate != p {
-                                outs[nbu] = keep_cell(nbu, 0, NONE);
+                                revert_out(&mut outs, nbu);
                                 reverted = true;
                             }
                         }
@@ -1559,59 +1848,73 @@ impl SimState {
             }
         }
 
-        // Continental inventory guard (WO-0008 S1 step 6): a jammed plate
-        // keeps rotating (the commit already happened) but its front is
-        // denied, so each committed step its trailing edge sheds hard
-        // continental cells that nothing replaces — the jam grind that
-        // drained continents (measured: −59% to −97% of continental area
-        // over 2 Gy). Physically the pinned material stays put and the
-        // convergence shortens the crust (S2's ledger turns that into
-        // thickness). So, per committed plate: when this step destroyed
-        // more of the plate's hard continental cells (same-plate
-        // continent → ocean) than the plate gained in new continental
-        // cells, revert the excess losses in ascending id order — the
-        // block backs up instead of vanishing. A freely moving continent
-        // is untouched (gains balance losses); rasterization drift is
-        // healed as a side effect. Serial, id-ordered — deterministic.
+        // The WO-0008 same-plate continental inventory guard retired here
+        // (WO-0012 S1, step 2.4): conservation is now structural — a
+        // plate's land count changes only through real processes, so there
+        // is no rasterization drift left for the guard to heal, and its
+        // gain/loss netting was itself part of the churn it patched.
+
+        // WO-0012 S1 step 3: parcels that found no cell to back into merge
+        // into their destination — convergence shortening thickens crust
+        // instead of deleting it, and no cell is created. A CROSS-plate
+        // merge funds the two plates' underthrust budget (apply_collisions
+        // distributes it into the pair's contact zone this same step and
+        // its foreland conversions return the consumed AREA; a pair with
+        // no contact spills, booked) — the pair-timer gate the old margin
+        // capture used is dropped here, because the t = 0 whole-plate
+        // continents jam at first contact steps before any timer exists
+        // and the loss went unfunded (measured: ~1.8k cells in the first
+        // 100 My). A SAME-plate merge (a jammed plate grinding against
+        // its own denied front) books directly into the destination
+        // column up to the thickness cap; craton destinations and any
+        // overflow spill through the underthrust ledger so removed ==
+        // deposited + spilled stays exact. Serial, recorded order.
         {
-            let np = self.plates.len();
-            let mut gains = vec![0u32; np];
-            let mut losses: Vec<Vec<u32>> = vec![Vec::new(); np];
-            for (c, o) in outs.iter().enumerate() {
-                let p = o.plate as usize;
-                // A gain is any new continental cell under the plate's
-                // flag: ocean converting at the front, or a cross-plate
-                // acquisition (a jam win or docking terrane). Since
-                // WO-0008 S2 the jam grind is FUNDED — cross-plate
-                // consumption is captured as underthrust budget and
-                // deposited into the collision zone the same step — so
-                // counting acquisitions no longer lets collisions leak
-                // volume; excluding them (the S1 rule) made the guard
-                // revert trailing losses whose columns had ALSO been
-                // deposited, duplicating crust.
-                if o.ctype == 1 && (prev_ctype[c] == 0 || plate_id[c] != o.plate) {
-                    gains[p] += 1;
-                } else if o.ctype == 0 && plate_id[c] == o.plate && prev_ctype[c] == 1 {
-                    losses[p].push(c as u32);
-                }
-            }
-            for p in 0..np {
-                let excess = losses[p].len().saturating_sub(gains[p] as usize);
-                if excess == 0 {
+            let cap_q = (THICKNESS_CAP_KM * 100.0).round() as i64;
+            for &(dst, src) in &merges {
+                let (du, su) = (dst as usize, src as usize);
+                let q = (self.thickness[su] * 100.0).round() as i64;
+                self.cont_lost_to_consumption += 1;
+                self.parcels_merged += 1;
+                if q <= 0 {
                     continue;
                 }
-                // Revert gap-ridge losses FIRST (stable partition, id order
-                // within each half): the jam grind on a whole-continent
-                // plate shows up as trailing gap-ridge cells, while an
-                // in-plate rift corridor translating with its plate makes
-                // paired single-cover losses and gains — reverting those
-                // would re-fill the corridor with continent and no split
-                // could ever complete (measured: splits went to zero).
-                let (gap, other): (Vec<u32>, Vec<u32>) = losses[p]
-                    .iter()
-                    .partition(|&&c| outs[c as usize].features & F_RIDGE != 0);
-                for &c in gap.iter().chain(other.iter()).take(excess) {
-                    outs[c as usize] = keep_cell(c as usize, 0, NONE);
+                let p_plate = self.plate_id[su];
+                let winner = self.parcel[du];
+                let w_plate = if winner != NONE {
+                    self.plate_id[winner as usize]
+                } else {
+                    outs[du].plate
+                };
+                if p_plate != w_plate {
+                    let (a, b) = (p_plate.min(w_plate), p_plate.max(w_plate));
+                    self.underthrust_removed_q += q;
+                    match self
+                        .underthrust_budget
+                        .iter_mut()
+                        .find(|e| e.0 == a && e.1 == b)
+                    {
+                        Some(e) => e.2 += q,
+                        None => self.underthrust_budget.push((a, b, q)),
+                    }
+                } else if outs[du].ctype == 1
+                    && outs[du].age.min(outs[du].orog) < OROGENY_RELAX_MAX_AGE_MY
+                {
+                    let before = (outs[du].thick * 100.0).round() as i64;
+                    let add = q.min((cap_q - before).max(0));
+                    outs[du].thick = ((before + add) as f32) * 0.01;
+                    let overflow = q - add;
+                    if overflow > 0 {
+                        self.underthrust_removed_q += overflow;
+                        self.underthrust_spilled_q += overflow;
+                    }
+                } else {
+                    // Destination lost its land this step (a consumed
+                    // claim), or carries craton-regime crust — deformation
+                    // stops at cratons everywhere in this model — so the
+                    // merged column has nowhere to go and spills.
+                    self.underthrust_removed_q += q;
+                    self.underthrust_spilled_q += q;
                 }
             }
         }
@@ -1627,39 +1930,46 @@ impl SimState {
         let mut consumed_cells = vec![0u32; np];
         let mut consumed_age_sum = vec![0.0f32; np];
         for (c, o) in outs.iter().enumerate() {
-            // Inventory flows (self.crust_type[c] still holds the previous
-            // value at this point in the serial scatter).
-            match (self.crust_type[c], o.ctype) {
-                (1, 0) if o.features & F_RIDGE != 0 => self.cont_lost_to_ridge_gap += 1,
-                (1, 0) => self.cont_lost_to_consumption += 1,
-                (0, 1) => self.cont_gained_by_advection += 1,
-                _ => {}
+            // Inventory diagnostics (WO-0012 S1). Continental content is
+            // parcel-determined, so LAND on a cell no parcel claimed is a
+            // re-rasterization regression: `cont_gained_by_advection`
+            // counts exactly that, reads ~0 by construction, and S2 arms
+            // it. A parcel-claimed cell resolving as ocean is a soft
+            // parcel consumed at a margin — the real subduction-
+            // consumption path (merges booked above count there too).
+            // `cont_lost_to_ridge_gap` no longer increments: land is
+            // never replaced by ridge fill, it moves; rift oceanization
+            // books to `cont_lost_to_rift` as before.
+            let claim = self.parcel[c];
+            if o.ctype == 1 && claim == NONE {
+                self.cont_gained_by_advection += 1;
             }
-            // Underthrusting capture (WO-0008 S2): continental volume this
-            // cell loses to ANOTHER plate at a tracked continent-continent
-            // contact goes into that pair's budget — apply_collisions
-            // deposits it in the pair's distributed zone this same step
-            // (India's crust does not vanish under Tibet; it thickens it).
-            if self.crust_type[c] == 1 && o.plate != self.plate_id[c] {
-                // The removed crust is the loser's WHOLE column: the
-                // winner's incoming content is a conserved shift of its
-                // own crust, while the loser's column goes down as the
-                // underthrust slab (all of India's crust feeds Tibet,
-                // not just the thickness difference).
-                let prev_q = (self.thickness[c] * 100.0).round() as i64;
+            if claim != NONE && o.ctype == 0 {
+                self.cont_lost_to_consumption += 1;
+                // Underthrusting capture (WO-0008 S2, parcel form): the
+                // consumed parcel's column at a tracked continent-
+                // continent contact goes into that pair's budget —
+                // apply_collisions deposits it in the pair's distributed
+                // zone this same step (India's crust does not vanish
+                // under Tibet; it thickens it). Untracked losses go down
+                // the slab. The source reads from the pre-advect snapshot:
+                // this serial scatter has already overwritten lower ids.
+                let su = claim as usize;
+                let p_plate = self.prev.plate[su];
+                let q = (self.prev.thick[su] * 100.0).round() as i64;
+                let (a, b) = (p_plate.min(o.plate), p_plate.max(o.plate));
+                if q > 0
+                    && p_plate != o.plate
+                    && self.collisions.iter().any(|t| t.a == a && t.b == b)
                 {
-                    let (a, b) = (self.plate_id[c].min(o.plate), self.plate_id[c].max(o.plate));
-                    if prev_q > 0 && self.collisions.iter().any(|t| t.a == a && t.b == b) {
-                        let lost = prev_q;
-                        self.underthrust_removed_q += lost;
-                        match self
-                            .underthrust_budget
-                            .iter_mut()
-                            .find(|e| e.0 == a && e.1 == b)
-                        {
-                            Some(e) => e.2 += lost,
-                            None => self.underthrust_budget.push((a, b, lost)),
-                        }
+                    self.underthrust_removed_q += q;
+                    match self
+                        .underthrust_budget
+                        .iter_mut()
+                        .find(|e| e.0 == a && e.1 == b)
+                    {
+                        Some(e) => e.2 += q,
+                        None => self.underthrust_budget.push((a, b, q)),
                     }
                 }
             }
@@ -2066,12 +2376,11 @@ impl SimState {
                 }
                 if self.prev.ctype[c] == 0 && self.crust_type[c] == 1 {
                     // Continental crust arriving across the boundary is
-                    // accretion, not noise — and the continental balance
-                    // guard (WO-0008 S1 step 6) has already spent this
-                    // gain to retain a trailing loss elsewhere on the
-                    // plate, so un-doing it here bleeds continent
-                    // (measured: −23% continental area over 2 Gy at seed
-                    // 42 vs the armed ±15%).
+                    // accretion, not noise: the flip stands. (Under
+                    // WO-0012 S1 a revert would keep the parcel column
+                    // anyway — content follows the parcel — but the
+                    // ownership decision itself is unchanged from
+                    // WO-0011.)
                     continue;
                 }
                 // Connectivity-safe reverts only: a revert must rejoin the
@@ -2373,54 +2682,36 @@ impl SimState {
     }
 
     /// Un-do one of this step's ownership flips: the boundary did not move
-    /// here, so the cell keeps its previous owner and its previous column
-    /// (the advect-revert convention — features cleared; classification
-    /// re-derives them after this pass). Mirrors and un-books the scatter
-    /// pass's inventory and underthrust entries for this cell so the
-    /// ledger stays truthful and nothing double-deposits.
+    /// here, so the cell keeps its previous owner (features cleared;
+    /// classification re-derives them after this pass). Content follows
+    /// the parcel outcome regardless of the owner (WO-0012 S1): a
+    /// parcel-claimed cell keeps its parcel column — a consumed-parcel
+    /// cell never reaches here, its flip carries the consumption record
+    /// and is exempt — and a cell whose previous land moved away as a
+    /// parcel stays ocean (restoring the old column would duplicate the
+    /// land). Only a previously-ocean cell restores its full previous
+    /// column, the advect-revert convention for re-rasterized ocean. The
+    /// advect bookings are parcel-keyed, so an ownership revert has
+    /// nothing to un-book.
     fn revert_flip(&mut self, c: usize) {
         let cur = self.plate_id[c] as usize;
         let prevp = self.prev.plate[c];
-        // Un-book the underthrust capture exactly where advect booked it
-        // (same condition, same pair, same quantized column).
-        let outp = self.outs[c].plate;
-        if self.prev.ctype[c] == 1 && outp != prevp {
-            let prev_q = (self.prev.thick[c] * 100.0).round() as i64;
-            let (a, b) = (prevp.min(outp), prevp.max(outp));
-            if prev_q > 0 && self.collisions.iter().any(|t| t.a == a && t.b == b) {
-                self.underthrust_removed_q -= prev_q;
-                if let Some(e) = self
-                    .underthrust_budget
-                    .iter_mut()
-                    .find(|e| e.0 == a && e.1 == b)
-                {
-                    e.2 -= prev_q;
-                }
-            }
-        }
-        // Reverse the scatter's inventory flow for this cell. The (0, 1)
-        // gain case cannot reach here: continental-gain flips are exempt
-        // from reverts (the guard in the candidate scan), which is also
-        // what makes these u64 decrements underflow-safe.
-        match (self.prev.ctype[c], self.crust_type[c]) {
-            (1, 0) if self.features[c] & F_RIDGE != 0 => self.cont_lost_to_ridge_gap -= 1,
-            (1, 0) => self.cont_lost_to_consumption -= 1,
-            _ => {}
-        }
         self.plate_cells[cur] -= 1;
         self.plate_cells[prevp as usize] += 1;
         self.plate_id[c] = prevp;
-        self.crust_type[c] = self.prev.ctype[c];
-        self.crust_age[c] = self.prev.age[c];
-        self.thickness[c] = self.prev.thick[c];
-        self.orogeny_age[c] = self.prev.orog[c];
-        self.rift_age[c] = self.prev.rift[c];
-        self.buildup[c] = self.prev.build[c];
-        self.lithology[c] = self.prev.lith[c];
         self.features[c] = 0;
-        self.slab_plate[c] = self.prev.slab_plate[c];
-        self.slab_since_my[c] = self.prev.slab_since[c];
-        self.suture_at_my[c] = self.prev.suture_at[c];
+        if self.parcel[c] == NONE && self.prev.ctype[c] == 0 {
+            self.crust_type[c] = self.prev.ctype[c];
+            self.crust_age[c] = self.prev.age[c];
+            self.thickness[c] = self.prev.thick[c];
+            self.orogeny_age[c] = self.prev.orog[c];
+            self.rift_age[c] = self.prev.rift[c];
+            self.buildup[c] = self.prev.build[c];
+            self.lithology[c] = self.prev.lith[c];
+            self.slab_plate[c] = self.prev.slab_plate[c];
+            self.slab_since_my[c] = self.prev.slab_since[c];
+            self.suture_at_my[c] = self.prev.suture_at[c];
+        }
         self.regularize_reverted += 1;
     }
 
@@ -2918,24 +3209,46 @@ impl SimState {
             foreland_budget += remaining.max(0);
             let mut remaining = foreland_budget;
             if remaining > 0 {
-                // Foreland loading: oceanic same-plate cells adjacent to
-                // the zone (id order), converted one full column at a
-                // time.
-                let mut shelf: Vec<u32> = Vec::new();
+                // Foreland loading: the plates' nearest coastal ocean,
+                // reached by flooding outward from the zone through each
+                // plate's own continental crust up to FORELAND_REACH_KM
+                // (WO-0012 S1 — see the constant: the one-ring shelf
+                // spilled every mid-continent budget). Nearest coast
+                // converts first ((distance, id) order), one full column
+                // at a time; the flood stops at the first ocean ring, so
+                // a coast progrades ring by ring across steps.
+                let reach = ((FORELAND_REACH_KM / self.cell_spacing_km).round() as u16).clamp(1, 32);
+                let mut sdist = vec![u16::MAX; n];
+                let mut sq: VecDeque<u32> = VecDeque::new();
+                let mut shelf: Vec<(u16, u32)> = Vec::new();
                 for &(zc, _) in &zone {
-                    for &nb in self.grid.neighbors_of(zc) {
+                    if sdist[zc as usize] == u16::MAX {
+                        sdist[zc as usize] = 0;
+                        sq.push_back(zc);
+                    }
+                }
+                while let Some(c) = sq.pop_front() {
+                    let dc = sdist[c as usize];
+                    if dc >= reach {
+                        continue;
+                    }
+                    let p = self.plate_id[c as usize];
+                    for &nb in self.grid.neighbors_of(c) {
                         let nbu = nb as usize;
-                        if self.crust_type[nbu] == 0
-                            && self.plate_id[nbu] == self.plate_id[zc as usize]
-                            && !shelf.contains(&nb)
-                        {
-                            shelf.push(nb);
+                        if sdist[nbu] != u16::MAX || self.plate_id[nbu] != p {
+                            continue;
+                        }
+                        sdist[nbu] = dc + 1;
+                        if self.crust_type[nbu] == 0 {
+                            shelf.push((dc + 1, nb));
+                        } else {
+                            sq.push_back(nb);
                         }
                     }
                 }
                 shelf.sort_unstable();
                 let cont_q = (SUBDUCTIBLE_CONT_KM * 100.0).round() as i64;
-                for &sc in &shelf {
+                for &(_, sc) in &shelf {
                     let cu = sc as usize;
                     let before = (self.thickness[cu] * 100.0).round() as i64;
                     let need = cont_q - before;
@@ -2959,6 +3272,54 @@ impl SimState {
                     self.underthrust_deposited_q += need;
                     self.underthrust_incorporated_q += before;
                     if remaining <= 0 {
+                        break;
+                    }
+                }
+                // Foreland budget the coast search could not place goes
+                // BACK into the zone as thickness (WO-0012 S1): a
+                // collision with no reachable coast has nowhere to escape,
+                // so it thickens — gravitational spreading then walks the
+                // parked volume outward and re-converts shelf cells over
+                // time. Spilling it instead threw away 54% of the t = 0
+                // jam burst's volume in the first 100 My (measured) and
+                // the consumed area never came back. Only what the capped
+                // zone cannot hold still spills.
+                while remaining > 0 {
+                    let mut weight_sum = 0i64;
+                    for &(c, w) in &zone {
+                        if ((self.thickness[c as usize] * 100.0).round() as i64) < cap_q {
+                            weight_sum += w as i64;
+                        }
+                    }
+                    if weight_sum == 0 {
+                        break;
+                    }
+                    let mut deposited_any = false;
+                    for &(c, w) in &zone {
+                        if remaining <= 0 {
+                            break;
+                        }
+                        let cu = c as usize;
+                        let before = (self.thickness[cu] * 100.0).round() as i64;
+                        let room = cap_q - before;
+                        if room <= 0 {
+                            continue;
+                        }
+                        let share = (remaining * w as i64 / weight_sum)
+                            .clamp(1, room)
+                            .min(remaining);
+                        self.thickness[cu] = ((before + share) as f32) * 0.01;
+                        let after = (self.thickness[cu] * 100.0).round() as i64;
+                        let got = after - before;
+                        self.orogeny_age[cu] = 0.0;
+                        remaining -= got;
+                        self.underthrust_deposited_q += got;
+                        if got > 0 {
+                            self.lithology[cu] = super::lithology::MT;
+                            deposited_any = true;
+                        }
+                    }
+                    if !deposited_any {
                         break;
                     }
                 }
@@ -3154,8 +3515,20 @@ impl SimState {
             // the pair is locked (conditions 1 + 2), enclosed basins near
             // the contact are consumed at their margins — the terminal
             // closure that lets condition 3 eventually pass. Runs BEFORE
-            // condition 3 so this step's consumption counts.
-            if extent_ok && locked {
+            // condition 3 so this step's consumption counts. WO-0012 S1:
+            // it also keeps running while a previously-built lock clock is
+            // still DRAINING (the 2x-decay hysteresis) — the relic gate
+            // reads that clock, and a pair that lapsed with 700 My of
+            // accrued lock otherwise stops closing for the ~350 My drain
+            // while the gate still holds it accountable (measured, seed
+            // 42: fresh enclosures flagged all through the drain).
+            let old_locked = self
+                .collisions
+                .iter()
+                .find(|t| t.a == e.a && t.b == e.b)
+                .map(|t| t.locked_my)
+                .unwrap_or(0.0);
+            if (extent_ok && locked) || old_locked > 0.0 {
                 let rate_cmyr = mean_rel.max(CLASSIFY_CMYR);
                 self.consume_relic_basins(&e.contact_cells, e.a, e.b, rate_cmyr);
             }
@@ -3272,7 +3645,7 @@ impl SimState {
             return;
         }
         let n = self.grid.cell_count() as usize;
-        for i in 0..self.welds.len() {
+                for i in 0..self.welds.len() {
             let Weld { winner, loser, .. } = self.welds[i];
             let (wu, lu) = (winner as usize, loser as usize);
             // A loser consumed by another path (trench, second weld), or a
@@ -3472,24 +3845,43 @@ impl SimState {
     /// Oceanic cells within SUTURE_OCEAN_RINGS rings of the contact on
     /// either plate (serial BFS seeded in contact order): the shared
     /// window of condition 3 and relic-basin closure.
-    fn ocean_near_contact(&self, contact_cells: &[u32], a: u32, b: u32) -> Vec<u32> {
+    fn ocean_near_contact(&self, _contact_cells: &[u32], a: u32, b: u32, rings: u16) -> Vec<u32> {
         let n = self.grid.cell_count() as usize;
         let mut depth = vec![u16::MAX; n];
         let mut queue: VecDeque<u32> = VecDeque::new();
         let mut window_ocean: Vec<u32> = Vec::new();
-        for &c in contact_cells {
-            if depth[c as usize] != u16::MAX {
+        // Seed from the GEOMETRIC contact — continental cells of either
+        // plate touching the other plate's continent — exactly how the
+        // WO-0008 relic gate finds the window (metrics::
+        // oversized_enclosed_basin). Seeding from the pair timer's
+        // classification-derived contact list left gate-visible basins
+        // outside closure's reach on the WO-0012 trajectories (measured:
+        // a 136-cell enclosed basin held through a 134 My lock).
+        for c in 0..n {
+            if self.crust_type[c] != 1 {
                 continue;
             }
-            depth[c as usize] = 0;
-            queue.push_back(c);
-            if self.crust_type[c as usize] == 0 {
-                window_ocean.push(c);
+            let p = self.plate_id[c];
+            let other = if p == a {
+                b
+            } else if p == b {
+                a
+            } else {
+                continue;
+            };
+            let touches = self
+                .grid
+                .neighbors_of(c as u32)
+                .iter()
+                .any(|&nb| self.plate_id[nb as usize] == other && self.crust_type[nb as usize] == 1);
+            if touches {
+                depth[c] = 0;
+                queue.push_back(c as u32);
             }
         }
         while let Some(c) = queue.pop_front() {
             let dc = depth[c as usize];
-            if dc >= SUTURE_OCEAN_RINGS {
+            if dc >= rings {
                 continue;
             }
             for &nb in self.grid.neighbors_of(c) {
@@ -3558,7 +3950,7 @@ impl SimState {
     /// the same test relic-basin closure uses, so whatever blocks here is
     /// what closure is consuming. Serial BFS in fixed order.
     fn ocean_closed(&self, contact_cells: &[u32], a: u32, b: u32) -> bool {
-        let window_ocean = self.ocean_near_contact(contact_cells, a, b);
+        let window_ocean = self.ocean_near_contact(contact_cells, a, b, SUTURE_OCEAN_RINGS);
         let n = self.grid.cell_count() as usize;
         let mut visited = vec![false; n];
         let mut queue: VecDeque<u32> = VecDeque::new();
@@ -3592,8 +3984,19 @@ impl SimState {
     /// plate's own margin (Mediterranean-style terminal closure). A basin
     /// is never consumed below `RELIC_BASIN_KEEP_CELLS`: what remains is a
     /// relic sea (Caspian / Black Sea). Serial and id-ordered.
+    ///
+    /// WO-0012 S1: closure looks CLOSURE_OCEAN_RINGS deep — wider than the
+    /// 2-ring suture window (a basin being terminally closed recedes out
+    /// of 2 rings as its near margin converts, and the flood then lost
+    /// sight of it mid-consumption; measured: the synthetic enclosed-basin
+    /// test stalled at 42 cells) but NOT the whole shared border: eating
+    /// every far pocket along two giants' mutual coastline unblocked
+    /// suture condition 3 world-wide and welds consolidated the 24-plate
+    /// shape world to 4 plates (measured). Suture condition 3
+    /// (`ocean_closed`) keeps its 2-ring window.
     fn consume_relic_basins(&mut self, contact_cells: &[u32], a: u32, b: u32, rate_cmyr: f32) {
-        let window_ocean = self.ocean_near_contact(contact_cells, a, b);
+        const CLOSURE_OCEAN_RINGS: u16 = 8;
+        let window_ocean = self.ocean_near_contact(contact_cells, a, b, CLOSURE_OCEAN_RINGS);
         if window_ocean.is_empty() {
             return;
         }
@@ -3617,28 +4020,45 @@ impl SimState {
             if size <= RELIC_BASIN_KEEP_CELLS {
                 continue; // already a relic sea
             }
+            if size > ((n as f32 * RELIC_BASIN_MAX_FRACTION) as u32).max(RELIC_BASIN_CAP_FLOOR_CELLS)
+            {
+                continue; // a major ocean, not a relic basin: subduction owns it
+            }
             if border == 0 || (border_ab as f32) < RELIC_ENCLOSED_FRACTION * border as f32 {
                 continue; // open ocean or another pair's basin
             }
-            // Margin cells of the pair's own crust, ascending id.
+            // Margin cells of the basin touching continent, ascending id —
+            // ANY owner: an enclosed basin can consist of a trapped third
+            // plate's ocean (the pair's own margin list is then empty and
+            // the basin survived forever, tripping the WO-0008 relic gate
+            // on the WO-0012 trajectories); the pair's convergence crushes
+            // trapped microplate ocean all the same (Mediterranean-style),
+            // and each consumed cell already books to its own plate.
             let mut margin: Vec<u32> = region
                 .iter()
                 .copied()
                 .filter(|&c| {
-                    let p = self.plate_id[c as usize];
-                    (p == a || p == b)
-                        && self
-                            .grid
-                            .neighbors_of(c)
-                            .iter()
-                            .any(|&nb| self.crust_type[nb as usize] == 1)
+                    self.grid
+                        .neighbors_of(c)
+                        .iter()
+                        .any(|&nb| self.crust_type[nb as usize] == 1)
                 })
                 .collect();
             margin.sort_unstable();
             if margin.is_empty() {
                 continue;
             }
-            let want = ((margin.len() as f32 * frac).round() as u32).max(2);
+            // Rate: margin advance at the pair's convergence, floored at
+            // two cells — and at size/8 per step (WO-0012 S1): terminal
+            // closure of an ENCLOSED pocket is geologically fast, and the
+            // WO-0008 relic gate's two-sample grace demands a basin be
+            // gone within one 20 My sample gap; a big pocket enclosed
+            // late (continents bridging around open ocean) otherwise
+            // outlives the grace at margin rate alone (measured, seed 42:
+            // a 208-cell fresh enclosure flagged at the very next sample).
+            let want = ((margin.len() as f32 * frac).round() as u32)
+                .max(2)
+                .max(size / 8);
             let n_consume = want.min(size - RELIC_BASIN_KEEP_CELLS) as usize;
             // (plate, cells, age sum) for the slab segments, id-ordered.
             let mut consumed: Vec<(u32, u32, f32)> = Vec::new();
@@ -4915,11 +5335,18 @@ mod tests {
             s.plates.iter().any(|p| !p.slab.is_empty()),
             "internal subduction must feed the slab ledger"
         );
-        // Left locked long enough, the margin keeps retreating (and once
-        // the basin is consumed below the cap or out of the window, the
-        // weld resolves the collision — terminal closure).
+        // Left locked long enough, the margin keeps retreating — or, with
+        // the WO-0012 S1 terminal-closure rate floor, the basin is already
+        // down at the relic cap (either way the block resolves).
         suture_steps(&mut s, 30);
-        assert!(s.cont_gained_by_closure > eaten_early);
+        let ocean_left = s.crust_type.iter().filter(|&&t| t == 0).count() as u32;
+        assert!(
+            s.cont_gained_by_closure > eaten_early || ocean_left <= RELIC_BASIN_KEEP_CELLS,
+            "closure stalled: eaten {} then {}, {} ocean cells left",
+            eaten_early,
+            s.cont_gained_by_closure,
+            ocean_left
+        );
     }
 
     /// A basin small enough to be consumed down to the relic cap stops

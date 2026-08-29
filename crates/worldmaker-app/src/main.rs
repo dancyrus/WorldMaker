@@ -36,6 +36,7 @@ struct Args {
     wo9_s3_dir: Option<PathBuf>,
     wo10_dir: Option<PathBuf>,
     wo11_dir: Option<PathBuf>,
+    wo12_dir: Option<PathBuf>,
     perf_out: Option<PathBuf>,
     determinism_out: Option<PathBuf>,
     tectonics_out: Option<PathBuf>,
@@ -60,6 +61,7 @@ fn parse_args() -> Args {
         wo9_s3_dir: None,
         wo10_dir: None,
         wo11_dir: None,
+        wo12_dir: None,
         perf_out: None,
         determinism_out: None,
         tectonics_out: None,
@@ -98,6 +100,9 @@ fn parse_args() -> Args {
             // startup state, captured once the first world lands.
             "--wo10-shot" => out.wo10_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--wo11-shots" => out.wo11_dir = take_value(&a, args.next()).map(PathBuf::from),
+            // WO-0012 S1 anti-striping verdict shots (land-0053/0600/2000:
+            // Elevation layer at Dan's striping-report settings).
+            "--wo12-shots" => out.wo12_dir = take_value(&a, args.next()).map(PathBuf::from),
             "--perf-out" => out.perf_out = take_value(&a, args.next()).map(PathBuf::from),
             "--determinism-out" => {
                 out.determinism_out = take_value(&a, args.next()).map(PathBuf::from)
@@ -425,6 +430,7 @@ fn main() {
         wo9_s3_dir: args.wo9_s3_dir,
         wo10_dir: args.wo10_dir,
         wo11_dir: args.wo11_dir,
+        wo12_dir: args.wo12_dir,
         perf_out: args.perf_out,
         grid_build_ms,
         seed: args.seed,
