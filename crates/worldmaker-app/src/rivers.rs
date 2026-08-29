@@ -344,10 +344,7 @@ mod tests {
                 assert_eq!(set.strahler[c], 1, "source cell {c} not order 1");
             } else {
                 let m = donors.iter().map(|&d| set.strahler[d]).max().unwrap();
-                let at_max = donors
-                    .iter()
-                    .filter(|&&d| set.strahler[d] == m)
-                    .count();
+                let at_max = donors.iter().filter(|&&d| set.strahler[d] == m).count();
                 let expect = if at_max >= 2 { m + 1 } else { m };
                 assert_eq!(
                     set.strahler[c], expect,
@@ -367,7 +364,10 @@ mod tests {
                 assert!((d - 1.0).abs() < 1e-3, "chain point off the sphere");
             }
             for &w in &ch.widths {
-                assert!((1.0..=WIDTH_MAX_SCALE).contains(&w), "width {w} out of range");
+                assert!(
+                    (1.0..=WIDTH_MAX_SCALE).contains(&w),
+                    "width {w} out of range"
+                );
             }
         }
     }
@@ -385,10 +385,9 @@ mod tests {
     const EARTH_R_KM: f64 = 6371.0;
 
     fn geodesic_km(a: [f32; 3], b: [f32; 3]) -> f64 {
-        let dot = (a[0] as f64 * b[0] as f64
-            + a[1] as f64 * b[1] as f64
-            + a[2] as f64 * b[2] as f64)
-            .clamp(-1.0, 1.0);
+        let dot =
+            (a[0] as f64 * b[0] as f64 + a[1] as f64 * b[1] as f64 + a[2] as f64 * b[2] as f64)
+                .clamp(-1.0, 1.0);
         dot.acos() * EARTH_R_KM
     }
 
@@ -461,10 +460,8 @@ mod tests {
         for seg in &set.segments {
             let land_cells = &seg.cells[..seg.cells.len() - usize::from(seg.enters_water)];
             for w in land_cells.windows(2) {
-                drawn_km += geodesic_km(
-                    grid.positions[w[0] as usize],
-                    grid.positions[w[1] as usize],
-                );
+                drawn_km +=
+                    geodesic_km(grid.positions[w[0] as usize], grid.positions[w[1] as usize]);
             }
         }
         let mut channel_km = 0.0f64;
